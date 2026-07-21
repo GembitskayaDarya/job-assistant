@@ -11,18 +11,14 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class OpenAiAssistantService {
 
-    private static final String SYSTEM_PROMPT =
-            "You are a helpful assistant that gives concise, practical advice on job applications, "
-                    + "cover letters, and interview preparation.";
-
     private final OpenAIClient openAIClient;
     private final OpenAiProperties openAiProperties;
 
-    public String generateCoverLetterSuggestion(String jobDescription) {
+    public String getChatCompletion(String systemPrompt, String userPrompt) {
         ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
                 .model(openAiProperties.model())
-                .addSystemMessage(SYSTEM_PROMPT)
-                .addUserMessage("Draft a short cover letter opening paragraph for this job description:\n" + jobDescription)
+                .addSystemMessage(systemPrompt)
+                .addUserMessage(userPrompt)
                 .build();
 
         ChatCompletion completion = openAIClient.chat().completions().create(params);
