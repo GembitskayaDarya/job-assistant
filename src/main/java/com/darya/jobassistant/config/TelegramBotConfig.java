@@ -1,7 +1,7 @@
 package com.darya.jobassistant.config;
 
 import com.darya.jobassistant.telegram.JobAssistantTelegramBot;
-import com.darya.jobassistant.tracking.service.ApplicationService;
+import com.darya.jobassistant.telegram.command.CommandRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -16,20 +16,20 @@ import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 public class TelegramBotConfig {
 
     private final TelegramProperties telegramProperties;
-    private final ApplicationService applicationService;
 
     @Bean
-    public JobAssistantTelegramBot jobAssistantTelegramBot() {
+    public JobAssistantTelegramBot jobAssistantTelegramBot(CommandRegistry commandRegistry) {
         return new JobAssistantTelegramBot(
                 telegramProperties.token(),
                 telegramProperties.username(),
-                applicationService);
+                commandRegistry);
     }
 
     @Bean
     public TelegramBotsApi telegramBotsApi(JobAssistantTelegramBot jobAssistantTelegramBot) throws TelegramApiException {
         TelegramBotsApi telegramBotsApi = new TelegramBotsApi(DefaultBotSession.class);
         telegramBotsApi.registerBot(jobAssistantTelegramBot);
+        jobAssistantTelegramBot.registerCommandsWithTelegram();
         return telegramBotsApi;
     }
 }
