@@ -1,5 +1,6 @@
 package com.darya.jobassistant.exception;
 
+import com.darya.jobassistant.integrations.jobsource.JobSourceException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -16,6 +17,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(NotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(HttpStatus.NOT_FOUND, ex.getMessage()));
+    }
+
+    @ExceptionHandler(JobSourceException.class)
+    public ResponseEntity<Map<String, Object>> handleJobSourceFailure(JobSourceException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorBody(HttpStatus.BAD_GATEWAY, ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
