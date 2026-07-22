@@ -1,8 +1,7 @@
 package com.darya.jobassistant.telegram.command;
 
-import com.darya.jobassistant.vacancies.dto.VacancyResponse;
+import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.vacancies.service.JobSearchService;
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +24,7 @@ public class SearchCommand implements TelegramCommand {
 
     @Override
     public String description() {
-        return "Search open vacancies by keyword, e.g. /search backend";
+        return "Search open jobs by keyword, e.g. /search backend";
     }
 
     @Override
@@ -35,14 +34,14 @@ public class SearchCommand implements TelegramCommand {
             return BotResponse.text("Please provide a keyword, e.g. /search backend");
         }
 
-        List<VacancyResponse> vacancies = jobSearchService.search(keyword);
-        if (vacancies.isEmpty()) {
-            return BotResponse.text("No vacancies found for \"%s\".".formatted(keyword));
+        List<JobOffer> jobs = jobSearchService.search(keyword);
+        if (jobs.isEmpty()) {
+            return BotResponse.text("No jobs found for \"%s\".".formatted(keyword));
         }
 
-        String text = vacancies.stream()
+        String text = jobs.stream()
                 .limit(MAX_RESULTS)
-                .map(this::formatVacancy)
+                .map(this::formatJob)
                 .collect(Collectors.joining("\n\n"));
         return new BotResponse(text, ParseMode.MARKDOWN, null);
     }
@@ -52,29 +51,16 @@ public class SearchCommand implements TelegramCommand {
         return parts.length < 2 ? "" : parts[1].trim();
     }
 
-    private String formatVacancy(VacancyResponse vacancy) {
-        StringBuilder message = new StringBuilder("*%s*".formatted(escape(vacancy.title())));
-        if (vacancy.companyName() != null) {
-            message.append(" @ ").append(escape(vacancy.companyName()));
+    private String formatJob(JobOffer job) {
+        StringBuilder message = new StringBuilder("*%s*".formatted(escape(job.title())));
+        if (job.company() != null) {
+            message.append(" @ ").append(escape(job.company()));
         }
-        String salary = formatSalary(vacancy.salaryMin(), vacancy.salaryMax(), vacancy.currency());
-        if (salary != null) {
-            message.append("\n").append(salary);
+        if (job.salary() != null) {
+            message.append("\n").append(escape(job.salary()));
         }
-        if (vacancy.url() != null) {
-            message.append("\n").append(vacancy.url());
-        }
+        message.append("\n").append(job.url());
         return message.toString();
-    }
-
-    private String formatSalary(BigDecimal min, BigDecimal max, String currency) {
-        if (min == null && max == null) {
-            return null;
-        }
-        String range = min != null && max != null
-                ? "%s - %s".formatted(min.toPlainString(), max.toPlainString())
-                : (min != null ? min : max).toPlainString();
-        return currency != null ? "%s %s".formatted(range, currency) : range;
     }
 
     private String escape(String text) {
