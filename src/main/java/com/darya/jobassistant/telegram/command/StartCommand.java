@@ -1,13 +1,17 @@
 package com.darya.jobassistant.telegram.command;
 
+import com.darya.jobassistant.telegram.user.UserService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.ParseMode;
+import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 
 @Component
+@RequiredArgsConstructor
 public class StartCommand implements TelegramCommand {
 
     private static final String WELCOME_MESSAGE = """
@@ -26,6 +30,8 @@ public class StartCommand implements TelegramCommand {
 
             Pick a starting point below, or send `/help` for the full command list.""";
 
+    private final UserService userService;
+
     @Override
     public String name() {
         return "/start";
@@ -38,6 +44,8 @@ public class StartCommand implements TelegramCommand {
 
     @Override
     public BotResponse execute(Message message) {
+        User sender = message.getFrom();
+        userService.registerOrUpdate(sender.getId(), sender.getUserName(), sender.getFirstName(), sender.getLastName());
         return new BotResponse(WELCOME_MESSAGE, ParseMode.MARKDOWN, welcomeKeyboard());
     }
 
