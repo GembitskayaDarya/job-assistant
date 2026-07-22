@@ -1,4 +1,4 @@
-package com.darya.jobassistant.openai;
+package com.darya.jobassistant.integrations.ai.openai;
 
 import com.darya.jobassistant.config.OpenAiProperties;
 import com.openai.client.OpenAIClient;

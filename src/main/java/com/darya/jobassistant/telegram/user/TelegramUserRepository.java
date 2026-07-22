@@ -1,6 +1,5 @@
-package com.darya.jobassistant.telegram.repository;
+package com.darya.jobassistant.telegram.user;
 
-import com.darya.jobassistant.telegram.entity.TelegramUser;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;

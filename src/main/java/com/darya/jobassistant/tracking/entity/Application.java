@@ -2,7 +2,7 @@ package com.darya.jobassistant.tracking.entity;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.entity.BaseEntity;
-import com.darya.jobassistant.telegram.entity.TelegramUser;
+import com.darya.jobassistant.telegram.user.TelegramUser;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

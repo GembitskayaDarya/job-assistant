@@ -8,8 +8,8 @@ import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.exception.ApplicationNotFoundException;
-import com.darya.jobassistant.telegram.entity.TelegramUser;
-import com.darya.jobassistant.telegram.repository.TelegramUserRepository;
+import com.darya.jobassistant.telegram.user.TelegramUser;
+import com.darya.jobassistant.telegram.user.TelegramUserRepository;
 import com.darya.jobassistant.tracking.dto.ApplicationRequest;
 import com.darya.jobassistant.tracking.dto.ApplicationResponse;
 import com.darya.jobassistant.tracking.entity.Application;
@@ -26,7 +26,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
-class ApplicationServiceImplTest {
+class ApplicationServiceTest {
 
     @Mock
     private ApplicationRepository applicationRepository;
@@ -37,11 +37,11 @@ class ApplicationServiceImplTest {
     @Mock
     private ApplicationMapper applicationMapper;
 
-    private ApplicationServiceImpl applicationService;
+    private ApplicationService applicationService;
 
     @BeforeEach
     void setUp() {
-        applicationService = new ApplicationServiceImpl(applicationRepository, telegramUserRepository, applicationMapper);
+        applicationService = new ApplicationService(applicationRepository, telegramUserRepository, applicationMapper);
     }
 
     @Test

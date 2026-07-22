@@ -1,4 +1,4 @@
-package com.darya.jobassistant.telegram.entity;
+package com.darya.jobassistant.telegram.user;
 
 import com.darya.jobassistant.entity.BaseEntity;
 import jakarta.persistence.Column;

@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
-import com.darya.jobassistant.telegram.entity.TelegramUser;
-import com.darya.jobassistant.telegram.repository.TelegramUserRepository;
+import com.darya.jobassistant.telegram.user.TelegramUser;
+import com.darya.jobassistant.telegram.user.TelegramUserRepository;
 import com.darya.jobassistant.tracking.entity.Application;
 import com.darya.jobassistant.tracking.entity.ApplicationStatus;
 import java.time.LocalDate;
