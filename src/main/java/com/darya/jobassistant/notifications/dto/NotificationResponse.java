@@ -7,7 +7,7 @@ import java.util.UUID;
 
 public record NotificationResponse(
         UUID id,
-        UUID telegramUserId,
+        UUID userId,
         UUID applicationId,
         UUID interviewId,
         NotificationType type,

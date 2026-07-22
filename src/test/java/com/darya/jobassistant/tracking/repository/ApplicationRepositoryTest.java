@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
-import com.darya.jobassistant.telegram.user.TelegramUser;
-import com.darya.jobassistant.telegram.user.TelegramUserRepository;
+import com.darya.jobassistant.telegram.user.User;
+import com.darya.jobassistant.telegram.user.UserRepository;
 import com.darya.jobassistant.tracking.entity.Application;
 import com.darya.jobassistant.tracking.entity.ApplicationStatus;
 import java.time.LocalDate;
@@ -35,17 +35,17 @@ class ApplicationRepositoryTest {
     private CompanyRepository companyRepository;
 
     @Autowired
-    private TelegramUserRepository telegramUserRepository;
+    private UserRepository userRepository;
 
     @Test
-    void findByTelegramUserChatId_returnsOnlyMatchingApplications() {
+    void findByUserTelegramId_returnsOnlyMatchingApplications() {
         Company acme = companyRepository.save(Company.builder().name("Acme").build());
         Company globex = companyRepository.save(Company.builder().name("Globex").build());
-        TelegramUser user = telegramUserRepository.save(TelegramUser.builder().chatId(111L).build());
+        User user = userRepository.save(User.builder().telegramId(111L).build());
 
         applicationRepository.save(Application.builder()
                 .company(acme)
-                .telegramUser(user)
+                .user(user)
                 .status(ApplicationStatus.APPLIED)
                 .appliedDate(LocalDate.now())
                 .build());
@@ -55,7 +55,7 @@ class ApplicationRepositoryTest {
                 .appliedDate(LocalDate.now())
                 .build());
 
-        List<Application> results = applicationRepository.findByTelegramUserChatId(111L);
+        List<Application> results = applicationRepository.findByUserTelegramId(111L);
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getCompany().getName()).isEqualTo("Acme");

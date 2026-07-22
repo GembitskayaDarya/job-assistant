@@ -10,15 +10,15 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 
 @Entity
-@Table(name = "telegram_user")
+@Table(name = "users")
 @Getter
 @Setter
 @NoArgsConstructor
 @SuperBuilder
-public class TelegramUser extends BaseEntity {
+public class User extends BaseEntity {
 
-    @Column(name = "chat_id", nullable = false, unique = true)
-    private Long chatId;
+    @Column(name = "telegram_id", nullable = false, unique = true)
+    private Long telegramId;
 
     @Column(name = "username")
     private String username;
@@ -28,4 +28,10 @@ public class TelegramUser extends BaseEntity {
 
     @Column(name = "last_name")
     private String lastName;
+
+    @Column(name = "language")
+    private String language;
+
+    @Column(name = "timezone")
+    private String timezone;
 }

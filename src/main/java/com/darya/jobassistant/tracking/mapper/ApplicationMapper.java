@@ -15,9 +15,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * Resolves {@code companyId}/{@code vacancyId} into managed entities. The Telegram user
- * relation is intentionally left untouched here — linking/creating a {@code TelegramUser}
- * from a raw chat id is a find-or-create write operation owned by the service layer.
+ * Resolves {@code companyId}/{@code vacancyId} into managed entities. The user
+ * relation is intentionally left untouched here — linking/creating a {@code User}
+ * from a raw Telegram id is a find-or-create write operation owned by the service layer.
  */
 @Component
 @RequiredArgsConstructor
@@ -55,7 +55,7 @@ public class ApplicationMapper implements EntityMapper<Application, ApplicationR
                 entity.getCompany().getName(),
                 vacancy != null ? vacancy.getId() : null,
                 vacancy != null ? vacancy.getTitle() : null,
-                entity.getTelegramUser() != null ? entity.getTelegramUser().getChatId() : null,
+                entity.getUser() != null ? entity.getUser().getTelegramId() : null,
                 entity.getStatus(),
                 entity.getAppliedDate(),
                 entity.getNotes(),

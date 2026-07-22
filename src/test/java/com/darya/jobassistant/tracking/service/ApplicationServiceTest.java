@@ -8,8 +8,8 @@ import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.exception.ApplicationNotFoundException;
-import com.darya.jobassistant.telegram.user.TelegramUser;
-import com.darya.jobassistant.telegram.user.TelegramUserRepository;
+import com.darya.jobassistant.telegram.user.User;
+import com.darya.jobassistant.telegram.user.UserRepository;
 import com.darya.jobassistant.tracking.dto.ApplicationRequest;
 import com.darya.jobassistant.tracking.dto.ApplicationResponse;
 import com.darya.jobassistant.tracking.entity.Application;
@@ -32,7 +32,7 @@ class ApplicationServiceTest {
     private ApplicationRepository applicationRepository;
 
     @Mock
-    private TelegramUserRepository telegramUserRepository;
+    private UserRepository userRepository;
 
     @Mock
     private ApplicationMapper applicationMapper;
@@ -41,11 +41,11 @@ class ApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        applicationService = new ApplicationService(applicationRepository, telegramUserRepository, applicationMapper);
+        applicationService = new ApplicationService(applicationRepository, userRepository, applicationMapper);
     }
 
     @Test
-    void create_registersNewTelegramUserWhenChatIdProvided() {
+    void create_registersNewUserWhenTelegramChatIdProvided() {
         UUID companyId = UUID.randomUUID();
         UUID applicationId = UUID.randomUUID();
         Company acme = Company.builder().id(companyId).name("Acme").build();
@@ -57,9 +57,9 @@ class ApplicationServiceTest {
                 applicationId, companyId, "Acme", null, null, 111L, ApplicationStatus.APPLIED, request.appliedDate(), null, null, null);
 
         when(applicationMapper.toEntity(request)).thenReturn(entity);
-        when(telegramUserRepository.findByChatId(111L)).thenReturn(Optional.empty());
-        when(telegramUserRepository.save(any(TelegramUser.class)))
-                .thenReturn(TelegramUser.builder().id(UUID.randomUUID()).chatId(111L).build());
+        when(userRepository.findByTelegramId(111L)).thenReturn(Optional.empty());
+        when(userRepository.save(any(User.class)))
+                .thenReturn(User.builder().id(UUID.randomUUID()).telegramId(111L).build());
         when(applicationRepository.save(entity)).thenReturn(saved);
         when(applicationMapper.toResponse(saved)).thenReturn(response);
 
