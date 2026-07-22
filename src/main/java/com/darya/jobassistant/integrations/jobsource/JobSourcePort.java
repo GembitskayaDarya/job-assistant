@@ -6,5 +6,5 @@ public interface JobSourcePort {
 
     String sourceName();
 
-    List<JobPosting> fetchLatestPostings();
+    List<JobOffer> fetchLatestPostings();
 }

@@ -13,9 +13,9 @@ public record RemoteOkJobDto(
         String id,
         String company,
         String position,
+        String location,
         String description,
         String url,
-        String date,
         @JsonProperty("salary_min") BigDecimal salaryMin,
         @JsonProperty("salary_max") BigDecimal salaryMax
 ) {

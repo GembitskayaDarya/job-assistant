@@ -1,18 +1,21 @@
 package com.darya.jobassistant.integrations.jobsource.remoteok;
 
-import com.darya.jobassistant.integrations.jobsource.JobPosting;
+import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.integrations.jobsource.JobSourceException;
 import com.darya.jobassistant.integrations.jobsource.JobSourcePort;
-import java.time.LocalDate;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeParseException;
+import java.math.BigDecimal;
+import java.text.NumberFormat;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 @Slf4j
 @Component
@@ -31,12 +34,21 @@ public class RemoteOkJobSourceAdapter implements JobSourcePort {
     }
 
     @Override
-    public List<JobPosting> fetchLatestPostings() {
+    public List<JobOffer> fetchLatestPostings() {
         RemoteOkJobDto[] jobs = webClient.get()
                 .uri(remoteOkProperties.baseUrl())
                 .header(HttpHeaders.USER_AGENT, USER_AGENT)
                 .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, response -> response.bodyToMono(String.class)
+                        .defaultIfEmpty("")
+                        .flatMap(body -> Mono.error(new JobSourceException(
+                                "RemoteOK rejected the request: HTTP %d - %s"
+                                        .formatted(response.statusCode().value(), body)))))
+                .onStatus(HttpStatusCode::is5xxServerError, response -> Mono.error(new JobSourceException(
+                        "RemoteOK is currently unavailable: HTTP " + response.statusCode().value())))
                 .bodyToMono(RemoteOkJobDto[].class)
+                .onErrorMap(ex -> !(ex instanceof JobSourceException),
+                        ex -> new JobSourceException("Failed to fetch job postings from RemoteOK", ex))
                 .block();
 
         if (jobs == null) {
@@ -47,32 +59,34 @@ public class RemoteOkJobSourceAdapter implements JobSourcePort {
                 .filter(job -> StringUtils.hasText(job.company())
                         && StringUtils.hasText(job.position())
                         && StringUtils.hasText(job.url()))
-                .map(this::toJobPosting)
+                .map(this::toJobOffer)
                 .toList();
     }
 
-    private JobPosting toJobPosting(RemoteOkJobDto job) {
-        return new JobPosting(
-                job.company(),
+    private JobOffer toJobOffer(RemoteOkJobDto job) {
+        return new JobOffer(
+                job.id(),
                 job.position(),
+                job.company(),
+                job.location(),
+                formatSalary(job.salaryMin(), job.salaryMax()),
                 job.description(),
                 job.url(),
-                job.salaryMin(),
-                job.salaryMax(),
-                "USD",
-                parsePostedAt(job.date())
+                SOURCE_NAME
         );
     }
 
-    private LocalDate parsePostedAt(String date) {
-        if (!StringUtils.hasText(date)) {
+    private String formatSalary(BigDecimal min, BigDecimal max) {
+        if (min == null && max == null) {
             return null;
         }
-        try {
-            return OffsetDateTime.parse(date).toLocalDate();
-        } catch (DateTimeParseException e) {
-            log.debug("Could not parse RemoteOK posting date '{}'", date, e);
-            return null;
+        if (min != null && max != null) {
+            return "$%s - $%s".formatted(formatAmount(min), formatAmount(max));
         }
+        return "$%s".formatted(formatAmount(min != null ? min : max));
+    }
+
+    private String formatAmount(BigDecimal amount) {
+        return NumberFormat.getIntegerInstance(Locale.US).format(amount);
     }
 }

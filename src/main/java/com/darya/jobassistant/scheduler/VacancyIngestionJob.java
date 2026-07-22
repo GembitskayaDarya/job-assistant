@@ -2,7 +2,7 @@ package com.darya.jobassistant.scheduler;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
-import com.darya.jobassistant.integrations.jobsource.JobPosting;
+import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.integrations.jobsource.JobSourcePort;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.service.VacancyService;
@@ -35,36 +35,32 @@ public class VacancyIngestionJob {
     }
 
     private void ingestFrom(JobSourcePort jobSource) {
-        List<JobPosting> postings;
+        List<JobOffer> offers;
         try {
-            postings = jobSource.fetchLatestPostings();
+            offers = jobSource.fetchLatestPostings();
         } catch (Exception e) {
             log.warn("Failed to fetch postings from {}", jobSource.sourceName(), e);
             return;
         }
 
         int saved = 0;
-        for (JobPosting posting : postings) {
-            if (StringUtils.hasText(posting.url()) && !vacancyService.existsByUrl(posting.url())) {
-                saveVacancy(posting, jobSource.sourceName());
+        for (JobOffer offer : offers) {
+            if (StringUtils.hasText(offer.url()) && !vacancyService.existsByUrl(offer.url())) {
+                saveVacancy(offer, jobSource.sourceName());
                 saved++;
             }
         }
-        log.info("Ingested {} new vacancies from {} ({} fetched)", saved, jobSource.sourceName(), postings.size());
+        log.info("Ingested {} new vacancies from {} ({} fetched)", saved, jobSource.sourceName(), offers.size());
     }
 
-    private void saveVacancy(JobPosting posting, String sourceName) {
-        Company company = companyService.findOrCreateByName(posting.companyName());
+    private void saveVacancy(JobOffer offer, String sourceName) {
+        Company company = companyService.findOrCreateByName(offer.company());
         Vacancy vacancy = Vacancy.builder()
                 .company(company)
-                .title(posting.title())
-                .description(posting.description())
-                .url(posting.url())
-                .salaryMin(posting.salaryMin())
-                .salaryMax(posting.salaryMax())
-                .currency(posting.currency())
+                .title(offer.title())
+                .description(offer.description())
+                .url(offer.url())
                 .source(sourceName)
-                .postedAt(posting.postedAt())
                 .build();
         vacancyService.save(vacancy);
     }
