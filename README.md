@@ -168,6 +168,13 @@ directly):
 | `TELEGRAM_BOT_TOKEN`             | *(empty)*       | Telegram bot token from `@BotFather`               |
 | `OPENAI_API_KEY`                 | *(empty)*       | OpenAI API key                                    |
 | `OPENAI_MODEL`                   | `gpt-4o-mini`   | OpenAI model used for cover letter suggestions    |
+| `WEBCLIENT_TIMEOUT_MS`           | `20000`         | Connect/read/write/response timeout for the shared `WebClient` (ms) |
+| `WEBCLIENT_MAX_CONNECTIONS`      | `50`            | Max pooled connections for the shared `WebClient` |
+| `WEBCLIENT_MAX_IDLE_TIME_MS`     | `30000`         | Max idle time before a pooled connection is evicted (ms) |
+| `WEBCLIENT_MAX_LIFE_TIME_MS`     | `300000`        | Max lifetime of a pooled connection (ms)          |
+| `WEBCLIENT_PENDING_ACQUIRE_TIMEOUT_MS` | `10000`   | Max wait time to acquire a connection from the pool (ms) |
+| `WEBCLIENT_EVICT_IN_BACKGROUND_MS` | `60000`       | Interval for background eviction of idle connections (ms) |
+| `WEBCLIENT_MAX_IN_MEMORY_SIZE_BYTES` | `2097152`   | Max buffered response size for the `WebClient` codecs (bytes) |
 | `LOG_LEVEL_ROOT`                 | `INFO`          | Root logger level                                 |
 | `LOG_LEVEL_APP`                  | `INFO`          | Logger level for `com.darya.jobassistant`         |
 | `LOG_LEVEL_SQL`                  | `WARN`          | Logger level for `org.hibernate.SQL`              |

@@ -65,6 +65,15 @@ openai:
   api-key: ${OPENAI_API_KEY:}
   model: ${OPENAI_MODEL:gpt-4o-mini}
 
+webclient:
+  timeout-ms: ${WEBCLIENT_TIMEOUT_MS:20000}
+  max-connections: ${WEBCLIENT_MAX_CONNECTIONS:50}
+  max-idle-time-ms: ${WEBCLIENT_MAX_IDLE_TIME_MS:30000}
+  max-life-time-ms: ${WEBCLIENT_MAX_LIFE_TIME_MS:300000}
+  pending-acquire-timeout-ms: ${WEBCLIENT_PENDING_ACQUIRE_TIMEOUT_MS:10000}
+  evict-in-background-ms: ${WEBCLIENT_EVICT_IN_BACKGROUND_MS:60000}
+  max-in-memory-size-bytes: ${WEBCLIENT_MAX_IN_MEMORY_SIZE_BYTES:2097152}
+
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
