@@ -84,6 +84,7 @@ the core web flow. Database schema is version-controlled with Flyway migrations
 - **PostgreSQL** + **Flyway** for schema migrations
 - **Telegram Bots Java library** — Spring Boot long-polling starter (non-deprecated API)
 - **OpenAI Java SDK**
+- **springdoc-openapi** — Swagger UI / OpenAPI docs
 - **Lombok**
 - **JUnit 5**, **Mockito** + **Testcontainers** for integration tests
 - **Docker** / Docker Compose
@@ -107,6 +108,8 @@ export DB_PASSWORD=<your-local-postgres-password>
 ```
 
 The API is available at `http://localhost:8080/api/applications`.
+Swagger UI (interactive API docs) is available at `http://localhost:8080/swagger-ui.html`, with
+the raw OpenAPI spec at `http://localhost:8080/v3/api-docs`.
 
 ### Running tests
 
@@ -217,7 +220,6 @@ _Not yet available — add screenshots here as the project matures:_
       (models exist, no endpoints yet)
 - [ ] Pagination and filtering on `GET /api/applications`
 - [ ] Scheduled reminders for upcoming interviews via the `scheduler` package
-- [ ] OpenAPI/Swagger documentation for the REST API
 
 ## License
 
