@@ -125,7 +125,6 @@ docker run -p 8080:8080 --env-file .env job-assistant
 | `SERVER_PORT`                   | `8080`              | HTTP port                                     |
 | `TELEGRAM_ENABLED`              | `false`             | Enables the Telegram bot when `true`          |
 | `TELEGRAM_BOT_TOKEN`            | *(empty)*           | Telegram bot token from `@BotFather`          |
-| `TELEGRAM_BOT_USERNAME`         | *(empty)*           | Telegram bot username                         |
 | `OPENAI_API_KEY`                | *(empty)*           | OpenAI API key                                |
 | `OPENAI_MODEL`                  | `gpt-4o-mini`       | OpenAI model used for cover letter suggestions|
 | `LOG_LEVEL_ROOT`                | `INFO`              | Root logger level                             |

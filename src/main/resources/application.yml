@@ -60,7 +60,6 @@ management:
 telegram:
   enabled: ${TELEGRAM_ENABLED:false}
   token: ${TELEGRAM_BOT_TOKEN:}
-  username: ${TELEGRAM_BOT_USERNAME:}
 
 openai:
   api-key: ${OPENAI_API_KEY:}

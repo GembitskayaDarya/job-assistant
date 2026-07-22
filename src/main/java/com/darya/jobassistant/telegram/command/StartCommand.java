@@ -1,7 +1,7 @@
 package com.darya.jobassistant.telegram.command;
 
 import org.springframework.stereotype.Component;
-import org.telegram.telegrambots.meta.api.objects.Message;
+import org.telegram.telegrambots.meta.api.objects.message.Message;
 
 @Component
 public class StartCommand implements TelegramCommand {

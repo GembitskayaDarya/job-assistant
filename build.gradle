@@ -34,7 +34,8 @@ dependencies {
     implementation 'org.flywaydb:flyway-core'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 
-    implementation 'org.telegram:telegrambots:6.9.7.1'
+    implementation 'org.telegram:telegrambots-springboot-longpolling-starter:10.1.0'
+    implementation 'org.telegram:telegrambots-client:10.1.0'
 
     implementation 'com.openai:openai-java:2.5.0'
 
