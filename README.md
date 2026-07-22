@@ -86,7 +86,8 @@ running.
 
 ## Docker
 
-Build and run the full stack (app + PostgreSQL) with Docker Compose:
+Copy `.env.example` to `.env` and set `POSTGRES_PASSWORD` — Compose refuses to start without it,
+there's no hardcoded fallback. Then build and run the full stack with Docker Compose:
 
 ```bash
 docker compose up --build
@@ -94,13 +95,17 @@ docker compose up --build
 
 This starts:
 
-- `postgres` — PostgreSQL 16, database `job_assistant`, exposed on `5432`
-- `app` — the Spring Boot app, built from the local `Dockerfile`, exposed on `8080`
+- `postgres` — PostgreSQL 16, database `job_assistant`, bound to `127.0.0.1:5432` on the host
+  only (not exposed to the network); has a `pg_isready` healthcheck
+- `telegram-bot` — the Spring Boot app, built from the local `Dockerfile`, exposed on `8080`;
+  waits for `postgres` to report healthy before starting, and has its own healthcheck against
+  `/actuator/health`
 
 Check it's up:
 
 ```bash
 curl http://localhost:8080/actuator/health
+docker compose ps
 ```
 
 To run the app image standalone (e.g. against an external database):
@@ -118,7 +123,7 @@ docker run -p 8080:8080 --env-file .env job-assistant
 | `DB_PORT`                       | `5432`              | PostgreSQL port                               |
 | `DB_NAME`                       | `job_assistant`     | Database name                                 |
 | `DB_USERNAME`                   | `postgres`          | Database username                             |
-| `DB_PASSWORD`                   | `postgres`          | Database password                             |
+| `DB_PASSWORD`                   | *(required)*         | Database password — no default, must be set   |
 | `DB_POOL_MIN_IDLE`              | `2`                 | HikariCP minimum idle connections             |
 | `DB_POOL_MAX_SIZE`              | `10`                | HikariCP maximum pool size                    |
 | `DB_POOL_CONNECTION_TIMEOUT_MS` | `30000`             | HikariCP connection timeout (ms)              |
@@ -131,9 +136,18 @@ docker run -p 8080:8080 --env-file .env job-assistant
 | `LOG_LEVEL_APP`                 | `INFO`              | Logger level for `com.darya.jobassistant`     |
 | `LOG_LEVEL_SQL`                 | `WARN`              | Logger level for `org.hibernate.SQL`          |
 
-Copy `.env.example` to `.env` and fill in the Telegram/OpenAI values before running
-`docker compose up`. Database credentials for Compose are fixed in `docker-compose.yml`
-(`postgres` / `postgres` / `job_assistant`) — override them there if needed.
+The `DB_*` variables above are read by the Spring Boot app itself (used when running
+`./gradlew bootRun` or `docker run` directly). `docker-compose.yml` instead reads these and
+maps them onto `DB_*`/`POSTGRES_*` for the `postgres` container:
+
+| Variable            | Default            | Description                                         |
+|----------------------|---------------------|-------------------------------------------------------|
+| `POSTGRES_PASSWORD`  | *(required)*        | Password for both the `postgres` container and the app's `DB_PASSWORD` — Compose fails fast if unset |
+| `POSTGRES_USER`      | `postgres`          | Superuser for the `postgres` container and the app's `DB_USERNAME` |
+| `POSTGRES_DB`        | `job_assistant`     | Database created in the `postgres` container and the app's `DB_NAME` |
+
+Copy `.env.example` to `.env`, set `POSTGRES_PASSWORD`, and fill in the Telegram/OpenAI values
+before running `docker compose up`.
 
 ## Roadmap
 
