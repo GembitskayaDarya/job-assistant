@@ -8,5 +8,5 @@ public interface TelegramCommand {
 
     String description();
 
-    String execute(Message message);
+    BotResponse execute(Message message);
 }

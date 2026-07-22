@@ -1,6 +1,7 @@
 package com.darya.jobassistant.telegram;
 
 import com.darya.jobassistant.config.TelegramProperties;
+import com.darya.jobassistant.telegram.command.BotResponse;
 import com.darya.jobassistant.telegram.command.CommandRegistry;
 import com.darya.jobassistant.util.TelegramMessageUtils;
 import lombok.RequiredArgsConstructor;
@@ -57,21 +58,23 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
         }
     }
 
-    private String handleMessage(Message message) {
+    private BotResponse handleMessage(Message message) {
         String text = message.getText().trim();
         if (!text.startsWith("/")) {
-            return "Echo: " + text;
+            return BotResponse.text("Echo: " + text);
         }
         String commandName = text.split("\\s+", 2)[0];
         return commandRegistry.find(commandName)
                 .map(command -> command.execute(message))
-                .orElse("Sorry, I didn't understand that command. Send /help for a list of commands.");
+                .orElseGet(() -> BotResponse.text("Sorry, I didn't understand that command. Send /help for a list of commands."));
     }
 
-    private void sendMessage(Long chatId, String text) {
+    private void sendMessage(Long chatId, BotResponse response) {
         SendMessage sendMessage = SendMessage.builder()
                 .chatId(chatId)
-                .text(TelegramMessageUtils.truncate(text))
+                .text(TelegramMessageUtils.truncate(response.text()))
+                .parseMode(response.parseMode())
+                .replyMarkup(response.keyboard())
                 .build();
         try {
             telegramClient.execute(sendMessage);

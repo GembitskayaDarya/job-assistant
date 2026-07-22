@@ -25,8 +25,8 @@ public class ListCommand implements TelegramCommand {
     }
 
     @Override
-    public String execute(Message message) {
-        return formatApplications(applicationService.findByTelegramChatId(message.getChatId()));
+    public BotResponse execute(Message message) {
+        return BotResponse.text(formatApplications(applicationService.findByTelegramChatId(message.getChatId())));
     }
 
     private String formatApplications(List<ApplicationResponse> applications) {

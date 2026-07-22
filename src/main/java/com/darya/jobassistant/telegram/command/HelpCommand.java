@@ -25,10 +25,10 @@ public class HelpCommand implements TelegramCommand {
     }
 
     @Override
-    public String execute(Message message) {
-        return commandsProvider.getObject().stream()
+    public BotResponse execute(Message message) {
+        return BotResponse.text(commandsProvider.getObject().stream()
                 .sorted(Comparator.comparing(TelegramCommand::name))
                 .map(c -> "%s - %s".formatted(c.name(), c.description()))
-                .collect(Collectors.joining("\n"));
+                .collect(Collectors.joining("\n")));
     }
 }
