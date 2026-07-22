@@ -7,15 +7,17 @@ CREATE TABLE company (
     updated_at  TIMESTAMP    NOT NULL DEFAULT now()
 );
 
-CREATE TABLE telegram_user (
+CREATE TABLE users (
     id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    chat_id     BIGINT       NOT NULL,
+    telegram_id BIGINT       NOT NULL,
     username    VARCHAR(255),
     first_name  VARCHAR(255),
     last_name   VARCHAR(255),
+    language    VARCHAR(10),
+    timezone    VARCHAR(50),
     created_at  TIMESTAMP    NOT NULL DEFAULT now(),
     updated_at  TIMESTAMP    NOT NULL DEFAULT now(),
-    CONSTRAINT uk_telegram_user_chat_id UNIQUE (chat_id)
+    CONSTRAINT uk_users_telegram_id UNIQUE (telegram_id)
 );
 
 CREATE TABLE vacancy (
@@ -39,7 +41,7 @@ CREATE TABLE application (
     id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id        UUID         NOT NULL REFERENCES company (id),
     vacancy_id        UUID         REFERENCES vacancy (id),
-    telegram_user_id  UUID         REFERENCES telegram_user (id),
+    telegram_user_id  UUID         REFERENCES users (id),
     status            VARCHAR(50)  NOT NULL,
     applied_date      DATE         NOT NULL,
     notes             TEXT,
@@ -66,7 +68,7 @@ CREATE INDEX idx_interview_application_id ON interview (application_id);
 
 CREATE TABLE notification (
     id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    telegram_user_id  UUID         NOT NULL REFERENCES telegram_user (id),
+    telegram_user_id  UUID         NOT NULL REFERENCES users (id),
     application_id    UUID         REFERENCES application (id),
     interview_id      UUID         REFERENCES interview (id),
     type              VARCHAR(50)  NOT NULL,

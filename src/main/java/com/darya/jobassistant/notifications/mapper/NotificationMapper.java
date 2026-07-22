@@ -2,7 +2,7 @@ package com.darya.jobassistant.notifications.mapper;
 
 import com.darya.jobassistant.exception.ApplicationNotFoundException;
 import com.darya.jobassistant.exception.InterviewNotFoundException;
-import com.darya.jobassistant.exception.TelegramUserNotFoundException;
+import com.darya.jobassistant.exception.UserNotFoundException;
 import com.darya.jobassistant.interviews.entity.Interview;
 import com.darya.jobassistant.interviews.repository.InterviewRepository;
 import com.darya.jobassistant.mapper.EntityMapper;
@@ -10,8 +10,8 @@ import com.darya.jobassistant.notifications.dto.NotificationRequest;
 import com.darya.jobassistant.notifications.dto.NotificationResponse;
 import com.darya.jobassistant.notifications.entity.Notification;
 import com.darya.jobassistant.notifications.entity.NotificationStatus;
-import com.darya.jobassistant.telegram.user.TelegramUser;
-import com.darya.jobassistant.telegram.user.TelegramUserRepository;
+import com.darya.jobassistant.telegram.user.User;
+import com.darya.jobassistant.telegram.user.UserRepository;
 import com.darya.jobassistant.tracking.entity.Application;
 import com.darya.jobassistant.tracking.repository.ApplicationRepository;
 import java.util.UUID;
@@ -22,14 +22,14 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class NotificationMapper implements EntityMapper<Notification, NotificationRequest, NotificationResponse> {
 
-    private final TelegramUserRepository telegramUserRepository;
+    private final UserRepository userRepository;
     private final ApplicationRepository applicationRepository;
     private final InterviewRepository interviewRepository;
 
     @Override
     public Notification toEntity(NotificationRequest request) {
         return Notification.builder()
-                .telegramUser(resolveTelegramUser(request.telegramUserId()))
+                .user(resolveUser(request.userId()))
                 .application(resolveApplication(request.applicationId()))
                 .interview(resolveInterview(request.interviewId()))
                 .type(request.type())
@@ -41,7 +41,7 @@ public class NotificationMapper implements EntityMapper<Notification, Notificati
 
     @Override
     public void updateEntity(Notification entity, NotificationRequest request) {
-        entity.setTelegramUser(resolveTelegramUser(request.telegramUserId()));
+        entity.setUser(resolveUser(request.userId()));
         entity.setApplication(resolveApplication(request.applicationId()));
         entity.setInterview(resolveInterview(request.interviewId()));
         entity.setType(request.type());
@@ -56,7 +56,7 @@ public class NotificationMapper implements EntityMapper<Notification, Notificati
         Interview interview = entity.getInterview();
         return new NotificationResponse(
                 entity.getId(),
-                entity.getTelegramUser().getId(),
+                entity.getUser().getId(),
                 application != null ? application.getId() : null,
                 interview != null ? interview.getId() : null,
                 entity.getType(),
@@ -68,9 +68,9 @@ public class NotificationMapper implements EntityMapper<Notification, Notificati
         );
     }
 
-    private TelegramUser resolveTelegramUser(UUID telegramUserId) {
-        return telegramUserRepository.findById(telegramUserId)
-                .orElseThrow(() -> new TelegramUserNotFoundException(telegramUserId));
+    private User resolveUser(UUID userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException(userId));
     }
 
     private Application resolveApplication(UUID applicationId) {

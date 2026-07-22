@@ -8,7 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface NotificationRepository extends JpaRepository<Notification, UUID> {
 
-    List<Notification> findByTelegramUserId(UUID telegramUserId);
+    List<Notification> findByUserId(UUID userId);
 
     List<Notification> findByStatus(NotificationStatus status);
 }

@@ -2,7 +2,7 @@ package com.darya.jobassistant.tracking.entity;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.entity.BaseEntity;
-import com.darya.jobassistant.telegram.user.TelegramUser;
+import com.darya.jobassistant.telegram.user.User;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -36,7 +36,7 @@ public class Application extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "telegram_user_id")
-    private TelegramUser telegramUser;
+    private User user;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)

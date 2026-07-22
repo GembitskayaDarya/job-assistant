@@ -2,7 +2,7 @@ package com.darya.jobassistant.notifications.entity;
 
 import com.darya.jobassistant.entity.BaseEntity;
 import com.darya.jobassistant.interviews.entity.Interview;
-import com.darya.jobassistant.telegram.user.TelegramUser;
+import com.darya.jobassistant.telegram.user.User;
 import com.darya.jobassistant.tracking.entity.Application;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -28,7 +28,7 @@ public class Notification extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "telegram_user_id", nullable = false)
-    private TelegramUser telegramUser;
+    private User user;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "application_id")

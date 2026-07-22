@@ -56,7 +56,7 @@ com.darya.jobassistant
 ├── telegram                        Inbound delivery channel (the bot is the "UI")
 │   ├── JobAssistantTelegramBot.java
 │   ├── command/                    One class per slash command + CommandRegistry
-│   └── user/                       TelegramUser entity + repository (a subscriber, not an "integration")
+│   └── user/                       User entity + repository (telegram_id, profile, language/timezone — a subscriber, not an "integration")
 │
 ├── integrations/                   Ports & adapters boundary — see principles above
 │   └── ai/openai/OpenAiAssistantService.java   OpenAI chat completion wrapper (only AI provider today)

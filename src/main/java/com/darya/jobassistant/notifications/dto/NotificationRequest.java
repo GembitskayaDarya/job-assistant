@@ -8,7 +8,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 public record NotificationRequest(
-        @NotNull UUID telegramUserId,
+        @NotNull UUID userId,
         UUID applicationId,
         UUID interviewId,
         @NotNull NotificationType type,

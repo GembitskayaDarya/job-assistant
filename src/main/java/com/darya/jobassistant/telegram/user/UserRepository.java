@@ -4,7 +4,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface TelegramUserRepository extends JpaRepository<TelegramUser, UUID> {
+public interface UserRepository extends JpaRepository<User, UUID> {
 
-    Optional<TelegramUser> findByChatId(Long chatId);
+    Optional<User> findByTelegramId(Long telegramId);
 }

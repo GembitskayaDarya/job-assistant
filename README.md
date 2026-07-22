@@ -23,7 +23,7 @@ com.darya.jobassistant
 ├── mapper          EntityMapper<E, ReqD, ResD> — the shared entity/DTO mapping contract
 ├── util            Stateless helpers (e.g. Telegram message formatting)
 ├── scheduler       Scheduled jobs (reminders, periodic sync) — not yet implemented
-├── telegram        Telegram long-polling bot, slash commands, and the TelegramUser entity/repository
+├── telegram        Telegram long-polling bot, slash commands, and the User entity/repository
 ├── integrations    Ports/adapters for external systems — today just the OpenAI assistant wrapper
 ├── tracking        Application entity/dto/repository/service/controller/mapper (the core REST API)
 ├── companies       Company entity/dto/repository/mapper
@@ -35,7 +35,7 @@ com.darya.jobassistant
 `companies`, `vacancies`, `interviews`, and `notifications` currently expose their domain model
 (entity, repository, DTOs, mapper) but no REST endpoints yet — see Roadmap. `tracking` is the
 one domain with a full stack today: `ApplicationController` validates input and delegates to
-`ApplicationService`, which resolves `Company`/`Vacancy`/`TelegramUser` relations via their
+`ApplicationService`, which resolves `Company`/`Vacancy`/`User` relations via their
 mappers/repositories and persists through `ApplicationRepository`. `telegram` and `integrations`
 are peer integrations that call into `tracking`'s service layer but sit outside the core web
 flow. Database schema is version-controlled with Flyway migrations

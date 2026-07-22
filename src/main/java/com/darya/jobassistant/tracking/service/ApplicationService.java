@@ -1,8 +1,8 @@
 package com.darya.jobassistant.tracking.service;
 
 import com.darya.jobassistant.exception.ApplicationNotFoundException;
-import com.darya.jobassistant.telegram.user.TelegramUser;
-import com.darya.jobassistant.telegram.user.TelegramUserRepository;
+import com.darya.jobassistant.telegram.user.User;
+import com.darya.jobassistant.telegram.user.UserRepository;
 import com.darya.jobassistant.tracking.dto.ApplicationRequest;
 import com.darya.jobassistant.tracking.dto.ApplicationResponse;
 import com.darya.jobassistant.tracking.entity.Application;
@@ -20,12 +20,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class ApplicationService {
 
     private final ApplicationRepository applicationRepository;
-    private final TelegramUserRepository telegramUserRepository;
+    private final UserRepository userRepository;
     private final ApplicationMapper applicationMapper;
 
     public ApplicationResponse create(ApplicationRequest request) {
         Application entity = applicationMapper.toEntity(request);
-        entity.setTelegramUser(resolveTelegramUser(request.telegramChatId()));
+        entity.setUser(resolveUser(request.telegramChatId()));
         Application saved = applicationRepository.save(entity);
         return applicationMapper.toResponse(saved);
     }
@@ -46,7 +46,7 @@ public class ApplicationService {
 
     @Transactional(readOnly = true)
     public List<ApplicationResponse> findByTelegramChatId(Long telegramChatId) {
-        return applicationRepository.findByTelegramUserChatId(telegramChatId).stream()
+        return applicationRepository.findByUserTelegramId(telegramChatId).stream()
                 .map(applicationMapper::toResponse)
                 .toList();
     }
@@ -55,7 +55,7 @@ public class ApplicationService {
         Application entity = applicationRepository.findById(id)
                 .orElseThrow(() -> new ApplicationNotFoundException(id));
         applicationMapper.updateEntity(entity, request);
-        entity.setTelegramUser(resolveTelegramUser(request.telegramChatId()));
+        entity.setUser(resolveUser(request.telegramChatId()));
         return applicationMapper.toResponse(entity);
     }
 
@@ -66,11 +66,11 @@ public class ApplicationService {
         applicationRepository.deleteById(id);
     }
 
-    private TelegramUser resolveTelegramUser(Long chatId) {
-        if (chatId == null) {
+    private User resolveUser(Long telegramId) {
+        if (telegramId == null) {
             return null;
         }
-        return telegramUserRepository.findByChatId(chatId)
-                .orElseGet(() -> telegramUserRepository.save(TelegramUser.builder().chatId(chatId).build()));
+        return userRepository.findByTelegramId(telegramId)
+                .orElseGet(() -> userRepository.save(User.builder().telegramId(telegramId).build()));
     }
 }
