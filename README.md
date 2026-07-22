@@ -175,6 +175,10 @@ directly):
 | `WEBCLIENT_PENDING_ACQUIRE_TIMEOUT_MS` | `10000`   | Max wait time to acquire a connection from the pool (ms) |
 | `WEBCLIENT_EVICT_IN_BACKGROUND_MS` | `60000`       | Interval for background eviction of idle connections (ms) |
 | `WEBCLIENT_MAX_IN_MEMORY_SIZE_BYTES` | `2097152`   | Max buffered response size for the `WebClient` codecs (bytes) |
+| `JOBSOURCE_REMOTEOK_BASE_URL`    | `https://remoteok.com/api` | RemoteOK API endpoint polled for vacancies |
+| `JOBSOURCE_INGESTION_ENABLED`    | `false`         | Enables the scheduled vacancy ingestion job        |
+| `JOBSOURCE_INGESTION_FIXED_DELAY_MS` | `3600000`   | Delay between ingestion runs (ms)                  |
+| `JOBSOURCE_INGESTION_INITIAL_DELAY_MS` | `10000`   | Delay before the first ingestion run after startup (ms) |
 | `LOG_LEVEL_ROOT`                 | `INFO`          | Root logger level                                 |
 | `LOG_LEVEL_APP`                  | `INFO`          | Logger level for `com.darya.jobassistant`         |
 | `LOG_LEVEL_SQL`                  | `WARN`          | Logger level for `org.hibernate.SQL`              |

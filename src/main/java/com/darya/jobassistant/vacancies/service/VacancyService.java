@@ -1,5 +1,6 @@
 package com.darya.jobassistant.vacancies.service;
 
+import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,4 +16,12 @@ public class VacancyService {
 
     private final VacancyRepository vacancyRepository;
     private final VacancyMapper vacancyMapper;
+
+    public boolean existsByUrl(String url) {
+        return vacancyRepository.existsByUrl(url);
+    }
+
+    public void save(Vacancy vacancy) {
+        vacancyRepository.save(vacancy);
+    }
 }

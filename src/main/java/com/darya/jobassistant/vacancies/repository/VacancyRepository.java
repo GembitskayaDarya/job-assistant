@@ -10,4 +10,6 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
     List<Vacancy> findByCompanyId(UUID companyId);
 
     List<Vacancy> findByTitleContainingIgnoreCase(String title);
+
+    boolean existsByUrl(String url);
 }
