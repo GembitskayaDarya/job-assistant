@@ -13,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.retry.NonTransientAiException;
 
 @ExtendWith(MockitoExtension.class)
 class SpringAiJobAnalysisAdapterTest {
@@ -60,5 +61,35 @@ class SpringAiJobAnalysisAdapterTest {
                 .isInstanceOf(JobAnalysisException.class)
                 .hasMessage("Failed to obtain job analysis from AI provider")
                 .hasCause(mappingFailure);
+    }
+
+    @Test
+    void analyze_nonTransientAiExceptionFromProvider_isWrappedInJobAnalysisExceptionWithCause() {
+        NonTransientAiException providerFailure =
+                new NonTransientAiException("HTTP 429 - insufficient_quota");
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system("system prompt")).thenReturn(requestSpec);
+        when(requestSpec.user("user prompt")).thenReturn(requestSpec);
+        when(requestSpec.call()).thenReturn(callResponseSpec);
+        when(callResponseSpec.entity(JobAnalysis.class)).thenThrow(providerFailure);
+
+        assertThatThrownBy(() -> adapter.analyze("system prompt", "user prompt"))
+                .isInstanceOf(JobAnalysisException.class)
+                .isNotInstanceOf(NonTransientAiException.class)
+                .hasMessage("Failed to obtain job analysis from AI provider")
+                .hasCause(providerFailure);
+    }
+
+    @Test
+    void analyze_jobAnalysisExceptionFromProviderCall_isRethrownUnchangedNotDoubleWrapped() {
+        JobAnalysisException original = new JobAnalysisException("AI provider returned a blank summary");
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system("system prompt")).thenReturn(requestSpec);
+        when(requestSpec.user("user prompt")).thenReturn(requestSpec);
+        when(requestSpec.call()).thenReturn(callResponseSpec);
+        when(callResponseSpec.entity(JobAnalysis.class)).thenThrow(original);
+
+        assertThatThrownBy(() -> adapter.analyze("system prompt", "user prompt"))
+                .isSameAs(original);
     }
 }

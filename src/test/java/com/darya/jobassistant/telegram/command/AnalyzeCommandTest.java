@@ -139,11 +139,14 @@ class AnalyzeCommandTest {
         when(vacancyQueryService.getById(vacancyId)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenThrow(new JobAnalysisException("provider failed"));
+        RuntimeException providerFailure = new RuntimeException("HTTP 429 - insufficient_quota");
+        when(jobAnalysisService.analyze(profile, jobOffer))
+                .thenThrow(new JobAnalysisException("Failed to obtain job analysis from AI provider", providerFailure));
 
         BotResponse response = analyzeCommand.execute(message);
 
         assertThat(response.text()).isEqualTo("Unable to analyze this job right now. Please try again later.");
+        assertThat(response.text()).doesNotContain("429", "insufficient_quota", "HTTP", "NonTransientAiException");
         verify(jobAnalysisService, times(1)).analyze(profile, jobOffer);
         verify(jobMessageFormatter, never()).format(any(), any());
     }
