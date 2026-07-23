@@ -69,6 +69,14 @@ telegram:
   enabled: ${TELEGRAM_ENABLED:false}
   token: ${TELEGRAM_BOT_TOKEN:}
 
+candidate:
+  target-role: ${CANDIDATE_TARGET_ROLE:Senior Java Backend Developer}
+  skills: ${CANDIDATE_SKILLS:Java,Spring Boot,PostgreSQL,Kafka,Redis,AWS,Docker}
+  languages: ${CANDIDATE_LANGUAGES:English,Russian,Polish}
+  experience-years: ${CANDIDATE_EXPERIENCE_YEARS:6}
+  preferred-company-type: ${CANDIDATE_PREFERRED_COMPANY_TYPE:Product company}
+  preferred-location: ${CANDIDATE_PREFERRED_LOCATION:Remote Europe}
+
 jobsource:
   remoteok:
     base-url: ${JOBSOURCE_REMOTEOK_BASE_URL:https://remoteok.com/api}
