@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
+import com.darya.jobassistant.config.JpaAuditingConfig;
 import com.darya.jobassistant.telegram.user.User;
 import com.darya.jobassistant.telegram.user.UserRepository;
 import com.darya.jobassistant.tracking.entity.Application;
@@ -15,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -22,6 +24,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
+@Import(JpaAuditingConfig.class)
 class ApplicationRepositoryTest {
 
     @Container
