@@ -1,10 +1,10 @@
 package com.darya.jobassistant.integrations.ai.openai;
 
+import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -26,14 +26,10 @@ public class JobAnalysisService {
             Use only explicitly mentioned skills.
             """;
 
-    private final ChatClient chatClient;
+    private final JobAnalysisAiPort jobAnalysisAiPort;
 
     public JobAnalysis analyze(CandidateProfile profile, JobOffer job) {
-        return chatClient.prompt()
-                .system(SYSTEM_PROMPT)
-                .user(buildUserPrompt(profile, job))
-                .call()
-                .entity(JobAnalysis.class);
+        return jobAnalysisAiPort.analyze(SYSTEM_PROMPT, buildUserPrompt(profile, job));
     }
 
     private String buildUserPrompt(CandidateProfile profile, JobOffer job) {

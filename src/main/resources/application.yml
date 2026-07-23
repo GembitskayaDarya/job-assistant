@@ -69,10 +69,6 @@ telegram:
   enabled: ${TELEGRAM_ENABLED:false}
   token: ${TELEGRAM_BOT_TOKEN:}
 
-openai:
-  api-key: ${OPENAI_API_KEY:}
-  model: ${OPENAI_MODEL:gpt-4o-mini}
-
 jobsource:
   remoteok:
     base-url: ${JOBSOURCE_REMOTEOK_BASE_URL:https://remoteok.com/api}
