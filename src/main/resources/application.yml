@@ -34,6 +34,14 @@ spring:
     default-property-inclusion: non_null
     time-zone: UTC
 
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-4o-mini}
+          temperature: ${OPENAI_ANALYSIS_TEMPERATURE:0.2}
+
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
