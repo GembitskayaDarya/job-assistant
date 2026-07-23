@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
 
@@ -13,4 +14,7 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
     List<Vacancy> findByTitleContainingIgnoreCase(String title);
 
     Optional<Vacancy> findByUrl(String url);
+
+    @Query("select v from Vacancy v join fetch v.company where v.id = :id")
+    Optional<Vacancy> findByIdWithCompany(UUID id);
 }
