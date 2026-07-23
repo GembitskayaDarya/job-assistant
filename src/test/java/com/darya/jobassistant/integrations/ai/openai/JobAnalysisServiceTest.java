@@ -1,10 +1,12 @@
 package com.darya.jobassistant.integrations.ai.openai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import com.darya.jobassistant.candidates.CandidateProfile;
@@ -75,5 +77,71 @@ class JobAnalysisServiceTest {
         assertThat(userPrompt).contains("Acme Corp");
         assertThat(userPrompt).contains("120k-140k");
         assertThat(userPrompt).contains("Build backend services");
+    }
+
+    @Test
+    void analyze_throwsJobAnalysisExceptionWhenPortReturnsNull() {
+        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(null);
+
+        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
+                .isInstanceOf(JobAnalysisException.class);
+    }
+
+    @Test
+    void analyze_throwsJobAnalysisExceptionWhenScoreIsBelowZero() {
+        JobAnalysis invalid = new JobAnalysis(-1, List.of(), List.of(), List.of(), "Some summary");
+        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(invalid);
+
+        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
+                .isInstanceOf(JobAnalysisException.class);
+    }
+
+    @Test
+    void analyze_throwsJobAnalysisExceptionWhenScoreIsAboveHundred() {
+        JobAnalysis invalid = new JobAnalysis(101, List.of(), List.of(), List.of(), "Some summary");
+        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(invalid);
+
+        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
+                .isInstanceOf(JobAnalysisException.class);
+    }
+
+    @Test
+    void analyze_throwsJobAnalysisExceptionWhenSummaryIsBlank() {
+        JobAnalysis invalid = new JobAnalysis(50, List.of(), List.of(), List.of(), "   ");
+        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(invalid);
+
+        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
+                .isInstanceOf(JobAnalysisException.class);
+    }
+
+    @Test
+    void analyze_propagatesJobAnalysisExceptionThrownByPort() {
+        JobAnalysisException portFailure = new JobAnalysisException("Failed to obtain job analysis from AI provider");
+        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenThrow(portFailure);
+
+        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
+                .isSameAs(portFailure);
+    }
+
+    private CandidateProfile validProfile() {
+        return new CandidateProfile(
+                "Senior Java Backend Engineer",
+                List.of("Java", "Spring Boot", "Kafka"),
+                List.of("English", "Polish"),
+                6,
+                "Product company",
+                "Remote, Europe");
+    }
+
+    private JobOffer validJob() {
+        return new JobOffer(
+                "job-1",
+                "Backend Engineer",
+                "Acme Corp",
+                "Remote",
+                "120k-140k",
+                "Build backend services",
+                "https://example.com/job-1",
+                "remoteok");
     }
 }

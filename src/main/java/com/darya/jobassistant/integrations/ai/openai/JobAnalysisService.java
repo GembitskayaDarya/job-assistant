@@ -1,5 +1,6 @@
 package com.darya.jobassistant.integrations.ai.openai;
 
+import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import com.darya.jobassistant.candidates.CandidateProfile;
@@ -30,7 +31,21 @@ public class JobAnalysisService {
     private final JobAnalysisAiPort jobAnalysisAiPort;
 
     public JobAnalysis analyze(CandidateProfile profile, JobOffer job) {
-        return jobAnalysisAiPort.analyze(SYSTEM_PROMPT, buildUserPrompt(profile, job));
+        JobAnalysis analysis = jobAnalysisAiPort.analyze(SYSTEM_PROMPT, buildUserPrompt(profile, job));
+        validate(analysis);
+        return analysis;
+    }
+
+    private void validate(JobAnalysis analysis) {
+        if (analysis == null) {
+            throw new JobAnalysisException("AI provider returned no job analysis");
+        }
+        if (analysis.score() < 0 || analysis.score() > 100) {
+            throw new JobAnalysisException("AI provider returned an out-of-range score: " + analysis.score());
+        }
+        if (analysis.summary() == null || analysis.summary().isBlank()) {
+            throw new JobAnalysisException("AI provider returned a blank summary");
+        }
     }
 
     private String buildUserPrompt(CandidateProfile profile, JobOffer job) {
