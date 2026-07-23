@@ -1,0 +1,115 @@
+package com.darya.jobassistant.vacancies.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.darya.jobassistant.companies.entity.Company;
+import com.darya.jobassistant.companies.service.CompanyService;
+import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import java.util.Optional;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class VacancyIngestionServiceTest {
+
+    @Mock
+    private VacancyRepository vacancyRepository;
+
+    @Mock
+    private CompanyService companyService;
+
+    private VacancyIngestionService vacancyIngestionService;
+
+    @BeforeEach
+    void setUp() {
+        vacancyIngestionService = new VacancyIngestionService(vacancyRepository, companyService);
+    }
+
+    @Test
+    void persist_newUrl_resolvesCompanyAndSavesNewVacancy() {
+        JobOffer job = jobOffer("https://example.com/job-1");
+        Company company = Company.builder().name("Acme Corp").build();
+        when(vacancyRepository.findByUrl(job.url())).thenReturn(Optional.empty());
+        when(companyService.findOrCreateByName("Acme Corp")).thenReturn(company);
+        Vacancy savedVacancy = Vacancy.builder().id(UUID.randomUUID()).company(company).title(job.title()).build();
+        when(vacancyRepository.save(any(Vacancy.class))).thenReturn(savedVacancy);
+
+        Vacancy result = vacancyIngestionService.persist(job);
+
+        assertThat(result).isSameAs(savedVacancy);
+        assertThat(result.getId()).isNotNull();
+
+        ArgumentCaptor<Vacancy> vacancyCaptor = ArgumentCaptor.forClass(Vacancy.class);
+        verify(vacancyRepository).save(vacancyCaptor.capture());
+        Vacancy toSave = vacancyCaptor.getValue();
+        assertThat(toSave.getCompany()).isSameAs(company);
+        assertThat(toSave.getTitle()).isEqualTo(job.title());
+        assertThat(toSave.getDescription()).isEqualTo(job.description());
+        assertThat(toSave.getUrl()).isEqualTo(job.url());
+        assertThat(toSave.getSource()).isEqualTo(job.source());
+    }
+
+    @Test
+    void persist_existingUrl_returnsExistingVacancyUnchangedWithoutSavingOrResolvingCompany() {
+        JobOffer job = jobOffer("https://example.com/job-1");
+        Vacancy existing = Vacancy.builder().id(UUID.randomUUID()).title("Old title").build();
+        when(vacancyRepository.findByUrl(job.url())).thenReturn(Optional.of(existing));
+
+        Vacancy result = vacancyIngestionService.persist(job);
+
+        assertThat(result).isSameAs(existing);
+        assertThat(result.getTitle()).isEqualTo("Old title");
+        verify(vacancyRepository, never()).save(any());
+        verify(companyService, never()).findOrCreateByName(any());
+    }
+
+    @Test
+    void persist_repeatedEquivalentJobOffer_doesNotCreateDuplicateRecord() {
+        JobOffer job = jobOffer("https://example.com/job-1");
+        Vacancy existing = Vacancy.builder().id(UUID.randomUUID()).title(job.title()).build();
+        when(vacancyRepository.findByUrl(job.url())).thenReturn(Optional.of(existing));
+
+        Vacancy first = vacancyIngestionService.persist(job);
+        Vacancy second = vacancyIngestionService.persist(job);
+
+        assertThat(first).isSameAs(existing);
+        assertThat(second).isSameAs(existing);
+        verify(vacancyRepository, never()).save(any());
+    }
+
+    @Test
+    void persist_blankUrl_throwsWithoutTouchingRepositoryOrCompanyService() {
+        JobOffer job = new JobOffer("job-1", "Backend Engineer", "Acme", "Remote", null, "desc", "  ", "remoteok");
+
+        assertThatThrownBy(() -> vacancyIngestionService.persist(job))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(vacancyRepository, never()).findByUrl(any());
+        verify(vacancyRepository, never()).save(any());
+        verify(companyService, never()).findOrCreateByName(any());
+    }
+
+    private JobOffer jobOffer(String url) {
+        return new JobOffer(
+                "job-1",
+                "Backend Engineer",
+                "Acme Corp",
+                "Remote",
+                "120k-140k",
+                "Build backend services",
+                url,
+                "remoteok");
+    }
+}

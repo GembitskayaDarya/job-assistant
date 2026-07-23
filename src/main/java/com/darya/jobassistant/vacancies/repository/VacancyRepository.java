@@ -2,6 +2,7 @@ package com.darya.jobassistant.vacancies.repository;
 
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -11,5 +12,5 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
 
     List<Vacancy> findByTitleContainingIgnoreCase(String title);
 
-    boolean existsByUrl(String url);
+    Optional<Vacancy> findByUrl(String url);
 }
