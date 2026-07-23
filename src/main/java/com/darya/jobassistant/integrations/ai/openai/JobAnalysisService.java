@@ -39,6 +39,7 @@ public class JobAnalysisService {
     private String buildUserPrompt(CandidateProfile profile, JobOffer job) {
         return """
                 Candidate profile:
+                Target role: %s
                 Skills: %s
                 Languages: %s
                 Experience: %d years
@@ -52,6 +53,7 @@ public class JobAnalysisService {
                 Salary: %s
                 Description: %s
                 """.formatted(
+                orNotAvailable(profile.targetRole()),
                 joinOrNone(profile.skills()),
                 joinOrNone(profile.languages()),
                 profile.experienceYears(),

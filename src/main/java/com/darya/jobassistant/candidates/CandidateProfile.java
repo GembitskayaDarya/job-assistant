@@ -3,6 +3,7 @@ package com.darya.jobassistant.candidates;
 import java.util.List;
 
 public record CandidateProfile(
+        String targetRole,
         List<String> skills,
         List<String> languages,
         int experienceYears,
