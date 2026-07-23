@@ -1,6 +1,6 @@
 package com.darya.jobassistant.telegram.format;
 
-import com.darya.jobassistant.integrations.ai.openai.JobAnalysis;
+import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.util.TelegramMessageUtils;
 import java.util.List;

@@ -2,7 +2,7 @@ package com.darya.jobassistant.telegram.format;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.darya.jobassistant.integrations.ai.openai.JobAnalysis;
+import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import java.util.List;
 import org.junit.jupiter.api.Test;

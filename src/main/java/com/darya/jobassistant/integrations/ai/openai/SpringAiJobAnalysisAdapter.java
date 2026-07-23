@@ -1,5 +1,6 @@
 package com.darya.jobassistant.integrations.ai.openai;
 
+import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.client.ChatClient;
