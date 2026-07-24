@@ -85,6 +85,15 @@ jobsource:
     fixed-delay-ms: ${JOBSOURCE_INGESTION_FIXED_DELAY_MS:3600000}
     initial-delay-ms: ${JOBSOURCE_INGESTION_INITIAL_DELAY_MS:10000}
 
+job-monitoring:
+  enabled: ${JOB_MONITORING_ENABLED:false}
+  fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}
+  initial-delay: ${JOB_MONITORING_INITIAL_DELAY:1m}
+  keyword: ${JOB_MONITORING_KEYWORD:java backend}
+  minimum-score: ${JOB_MONITORING_MINIMUM_SCORE:70}
+  max-notifications: ${JOB_MONITORING_MAX_NOTIFICATIONS:5}
+  recipient-chat-id: ${JOB_MONITORING_RECIPIENT_CHAT_ID:}
+
 webclient:
   timeout-ms: ${WEBCLIENT_TIMEOUT_MS:20000}
   max-connections: ${WEBCLIENT_MAX_CONNECTIONS:50}

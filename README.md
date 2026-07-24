@@ -182,9 +182,25 @@ directly):
 | `JOBSOURCE_INGESTION_ENABLED`    | `false`         | Enables the scheduled vacancy ingestion job        |
 | `JOBSOURCE_INGESTION_FIXED_DELAY_MS` | `3600000`   | Delay between ingestion runs (ms)                  |
 | `JOBSOURCE_INGESTION_INITIAL_DELAY_MS` | `10000`   | Delay before the first ingestion run after startup (ms) |
+| `JOB_MONITORING_ENABLED`         | `false`         | Enables the scheduled monitoring job (fetch → analyze → notify) — requires `TELEGRAM_ENABLED=true` |
+| `JOB_MONITORING_FIXED_DELAY`     | `30m`           | Delay between monitoring runs, measured from the end of the previous run |
+| `JOB_MONITORING_INITIAL_DELAY`   | `1m`            | Delay before the first monitoring run after startup |
+| `JOB_MONITORING_KEYWORD`         | `java backend`  | Keyword used when fetching vacancies for this run  |
+| `JOB_MONITORING_MINIMUM_SCORE`   | `70`            | Minimum AI match score (0-100) to enter the notification backlog |
+| `JOB_MONITORING_MAX_NOTIFICATIONS` | `5`           | Max notifications sent per run (excess backlog candidates wait for the next run) |
+| `JOB_MONITORING_RECIPIENT_CHAT_ID` | *(required if enabled)* | Telegram chat id notifications are sent to — no default, must be set when `JOB_MONITORING_ENABLED=true` |
 | `LOG_LEVEL_ROOT`                 | `INFO`          | Root logger level                                 |
 | `LOG_LEVEL_APP`                  | `INFO`          | Logger level for `com.darya.jobassistant`         |
 | `LOG_LEVEL_SQL`                  | `WARN`          | Logger level for `org.hibernate.SQL`              |
+
+Automatic monitoring (`JOB_MONITORING_ENABLED=true`) polls RemoteOK on a fixed delay, keeps only
+source-independent Java Backend matches (`JavaBackendJobMatchPolicy`), and persists an AI analysis
+for each newly ingested vacancy. Only analyses scoring at or above `JOB_MONITORING_MINIMUM_SCORE`
+enter the durable notification backlog; the `notification_delivery` table's unique
+`(vacancy_id, recipient_chat_id)` constraint prevents the same vacancy from ever being notified
+twice to the same recipient, across runs and restarts. `JOB_MONITORING_MAX_NOTIFICATIONS` bounds
+how many backlog candidates are sent per run — candidates beyond that limit are not dropped, they
+simply remain in the backlog and are picked up (highest score first) on a later run.
 
 Read by `docker-compose.yml` to configure the `postgres` container, and mapped onto the
 `DB_*` variables above for the `telegram-bot` container:
