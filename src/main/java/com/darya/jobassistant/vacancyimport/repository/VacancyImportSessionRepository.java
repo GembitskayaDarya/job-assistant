@@ -32,6 +32,18 @@ public interface VacancyImportSessionRepository extends JpaRepository<VacancyImp
         return VacancyImportSessionMapper.toDomain(saved);
     }
 
+    /**
+     * Same as {@link #saveSession}, but flushes immediately so a unique-constraint violation
+     * (the active-session-per-chat-and-user partial index) surfaces to the caller right away
+     * instead of at some later, harder-to-attribute flush. Used by {@code VacancyImportService}
+     * when racing a concurrent {@code /add} for the same chat+user (see {@code UserService}'s
+     * {@code saveAndFlush} for the same pattern).
+     */
+    default VacancyImportSession saveAndFlushSession(VacancyImportSession session) {
+        VacancyImportSessionEntity saved = saveAndFlush(VacancyImportSessionMapper.toEntity(session));
+        return VacancyImportSessionMapper.toDomain(saved);
+    }
+
     default Optional<VacancyImportSession> findSessionById(UUID id) {
         return findById(id).map(VacancyImportSessionMapper::toDomain);
     }

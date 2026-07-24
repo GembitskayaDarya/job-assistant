@@ -85,6 +85,9 @@ jobsource:
     fixed-delay-ms: ${JOBSOURCE_INGESTION_FIXED_DELAY_MS:3600000}
     initial-delay-ms: ${JOBSOURCE_INGESTION_INITIAL_DELAY_MS:10000}
 
+vacancy-import:
+  session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}
+
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}
