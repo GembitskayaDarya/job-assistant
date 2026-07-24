@@ -6,6 +6,7 @@ import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.policy.JobOfferMatchPolicy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +24,7 @@ public class VacancyIngestionService {
 
     private final VacancyRepository vacancyRepository;
     private final CompanyService companyService;
+    private final JobOfferMatchPolicy jobOfferMatchPolicy;
 
     /**
      * Deduplicates by URL: an existing vacancy for the same URL is returned as-is,
@@ -36,11 +38,22 @@ public class VacancyIngestionService {
      * Batch counterpart used by automatic ingestion. Unlike {@link #persist(JobOffer)}, novelty
      * is decided atomically by the database via {@link VacancyRepository#saveIfAbsent} - there is
      * no preliminary existence check, so this is safe under concurrent ingestion callers.
+     *
+     * <p>Every fetched offer is checked against {@link JobOfferMatchPolicy} before company
+     * resolution or persistence; offers that don't match are skipped without creating a
+     * {@code Company} or {@code Vacancy} record. {@code fetchedCount} still reflects every offer
+     * passed in, so after filtering {@code fetchedCount == newlyPersisted + alreadyKnown} is no
+     * longer guaranteed - offers may have been filtered out or failed during per-offer processing.
      */
     public VacancyIngestionResult ingest(List<JobOffer> jobOffers) {
         List<Vacancy> persisted = new ArrayList<>();
         int alreadyKnown = 0;
         for (JobOffer jobOffer : jobOffers) {
+            if (!jobOfferMatchPolicy.matches(jobOffer)) {
+                log.debug("Filtered out job offer from {} (id={}, url={}): \"{}\"",
+                        jobOffer.source(), jobOffer.id(), jobOffer.url(), jobOffer.title());
+                continue;
+            }
             try {
                 VacancyPersistenceResult outcome = insertIfAbsent(jobOffer);
                 if (outcome.isInserted()) {

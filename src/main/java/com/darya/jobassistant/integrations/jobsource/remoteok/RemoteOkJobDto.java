@@ -3,6 +3,7 @@ package com.darya.jobassistant.integrations.jobsource.remoteok;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * RemoteOK's feed prepends a legal-notice object with none of these fields
@@ -17,6 +18,7 @@ public record RemoteOkJobDto(
         String description,
         String url,
         @JsonProperty("salary_min") BigDecimal salaryMin,
-        @JsonProperty("salary_max") BigDecimal salaryMax
+        @JsonProperty("salary_max") BigDecimal salaryMax,
+        List<String> tags
 ) {
 }

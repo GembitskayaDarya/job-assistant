@@ -3,11 +3,13 @@ package com.darya.jobassistant.vacancies.mapper;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import java.math.BigDecimal;
+import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * Vacancy has no distinct location field, so {@link JobOffer#location()} is always null here -
- * this preserves current model truth rather than inventing data.
+ * Vacancy has no distinct location or tags field, so {@link JobOffer#location()} is always null
+ * and {@link JobOffer#tags()} is always empty here - this preserves current model truth rather
+ * than inventing data.
  */
 @Component
 public class VacancyJobOfferMapper {
@@ -21,7 +23,8 @@ public class VacancyJobOfferMapper {
                 formatSalary(vacancy),
                 vacancy.getDescription(),
                 vacancy.getUrl(),
-                vacancy.getSource());
+                vacancy.getSource(),
+                List.of());
     }
 
     private String formatSalary(Vacancy vacancy) {

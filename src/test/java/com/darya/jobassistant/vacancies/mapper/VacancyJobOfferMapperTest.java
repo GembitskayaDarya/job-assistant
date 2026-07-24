@@ -38,6 +38,7 @@ class VacancyJobOfferMapperTest {
         assertThat(jobOffer.description()).isEqualTo("Great job");
         assertThat(jobOffer.url()).isEqualTo("https://example.com/job-1");
         assertThat(jobOffer.source()).isEqualTo("remoteok");
+        assertThat(jobOffer.tags()).isEmpty();
     }
 
     @Test

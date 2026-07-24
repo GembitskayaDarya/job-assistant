@@ -53,7 +53,8 @@ class RemoteOkJobSourceAdapterTest {
                             "description": "Build things",
                             "url": "https://remoteok.com/remote-jobs/123",
                             "salary_min": 50000,
-                            "salary_max": 90000
+                            "salary_max": 90000,
+                            "tags": ["java", "backend", "spring boot"]
                           }
                         ]
                         """));
@@ -70,6 +71,24 @@ class RemoteOkJobSourceAdapterTest {
         assertThat(offer.description()).isEqualTo("Build things");
         assertThat(offer.url()).isEqualTo("https://remoteok.com/remote-jobs/123");
         assertThat(offer.source()).isEqualTo("remoteok");
+        assertThat(offer.tags()).containsExactly("java", "backend", "spring boot");
+    }
+
+    @Test
+    void fetchLatestPostings_missingTags_mapsToEmptyImmutableList() {
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""
+                        [{"id": "1", "company": "Acme", "position": "Engineer", "url": "https://x"}]
+                        """));
+
+        List<JobOffer> offers = adapter.fetchLatestPostings();
+
+        JobOffer offer = offers.get(0);
+        assertThat(offer.tags()).isEmpty();
+        assertThatThrownBy(() -> offer.tags().add("java"))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

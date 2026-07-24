@@ -72,7 +72,8 @@ public class RemoteOkJobSourceAdapter implements JobSourcePort {
                 formatSalary(job.salaryMin(), job.salaryMax()),
                 job.description(),
                 job.url(),
-                SOURCE_NAME
+                SOURCE_NAME,
+                job.tags() == null ? List.of() : job.tags()
         );
     }
 
