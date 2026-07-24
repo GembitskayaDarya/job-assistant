@@ -9,10 +9,12 @@ import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.vacancyimport.config.VacancyImportProperties;
 import com.darya.jobassistant.vacancyimport.dto.CancelVacancyImportResult;
+import com.darya.jobassistant.vacancyimport.dto.ProvideVacancyUrlResult;
 import com.darya.jobassistant.vacancyimport.dto.StartVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportSession;
 import com.darya.jobassistant.vacancyimport.repository.VacancyImportSessionRepository;
+import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -158,6 +160,73 @@ class VacancyImportServiceTest {
 
         assertThat(first).isEqualTo(CancelVacancyImportResult.CANCELLED);
         assertThat(second).isEqualTo(CancelVacancyImportResult.NO_ACTIVE_SESSION);
+    }
+
+    @Test
+    void provideUrl_waitingForUrlAndValidUrl_transitionsToWaitingForDescriptionAndPersistsNormalizedUrl() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession active = VacancyImportSession.start(CHAT_ID, USER_ID, CLOCK, TTL);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ProvideVacancyUrlResult result = service.provideUrl(CHAT_ID, USER_ID, "HTTPS://Example.com/job/123#top");
+
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+        assertThat(active.getSourceUrl()).isEqualTo("https://example.com/job/123");
+        assertThat(result).isEqualTo(new ProvideVacancyUrlResult.Accepted(active.getId(), URI.create("https://example.com/job/123")));
+        verify(repository).saveSession(active);
+    }
+
+    @Test
+    void provideUrl_invalidUrl_doesNotMutateSessionOrPersist() {
+        VacancyImportSession active = VacancyImportSession.start(CHAT_ID, USER_ID, CLOCK, TTL);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ProvideVacancyUrlResult result = service.provideUrl(CHAT_ID, USER_ID, "not a url at all");
+
+        assertThat(result).isInstanceOf(ProvideVacancyUrlResult.InvalidUrl.class);
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_URL);
+        assertThat(active.getSourceUrl()).isNull();
+        verify(repository, never()).saveSession(any());
+    }
+
+    @Test
+    void provideUrl_noActiveSession_returnsNoActiveSession() {
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.empty());
+
+        ProvideVacancyUrlResult result = service.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123");
+
+        assertThat(result).isEqualTo(new ProvideVacancyUrlResult.NoActiveSession());
+        verify(repository, never()).saveSession(any());
+    }
+
+    @Test
+    void provideUrl_expiredActiveSession_isPersistedAsExpiredAndDoesNotAutoRestart() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        Clock pastClock = Clock.fixed(NOW.minus(Duration.ofHours(25)), ZoneOffset.UTC);
+        VacancyImportSession expired = VacancyImportSession.start(CHAT_ID, USER_ID, pastClock, TTL);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(expired));
+        when(repository.saveSession(expired)).thenReturn(expired);
+
+        ProvideVacancyUrlResult result = service.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123");
+
+        assertThat(result).isEqualTo(new ProvideVacancyUrlResult.SessionExpired());
+        assertThat(expired.getState()).isEqualTo(ImportState.EXPIRED);
+        verify(repository).saveSession(expired);
+        verify(repository, never()).saveAndFlushSession(any());
+    }
+
+    @Test
+    void provideUrl_unexpectedActiveState_isNotMutatedAndReturnsItsState() {
+        VacancyImportSession active = VacancyImportSession.start(CHAT_ID, USER_ID, CLOCK, TTL);
+        active.provideUrl("https://example.com/job/123", CLOCK);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ProvideVacancyUrlResult result = service.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/456");
+
+        assertThat(result).isEqualTo(new ProvideVacancyUrlResult.UnexpectedState(ImportState.WAITING_FOR_DESCRIPTION));
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+        assertThat(active.getSourceUrl()).isEqualTo("https://example.com/job/123");
+        verify(repository, never()).saveSession(any());
     }
 
     private VacancyImportSession winnerSession() {

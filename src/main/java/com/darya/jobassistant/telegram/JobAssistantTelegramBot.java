@@ -29,6 +29,7 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
     private final TelegramProperties telegramProperties;
     private final TelegramClient telegramClient;
     private final CommandRegistry commandRegistry;
+    private final VacancyImportMessageHandler vacancyImportMessageHandler;
 
     @Override
     public String getBotToken() {
@@ -61,7 +62,7 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
     private BotResponse handleMessage(Message message) {
         String text = message.getText().trim();
         if (!text.startsWith("/")) {
-            return BotResponse.text("Echo: " + text);
+            return vacancyImportMessageHandler.handle(message).orElseGet(() -> BotResponse.text("Echo: " + text));
         }
         String commandName = text.split("\\s+", 2)[0];
         return commandRegistry.find(commandName)

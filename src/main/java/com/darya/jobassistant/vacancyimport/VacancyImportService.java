@@ -2,9 +2,13 @@ package com.darya.jobassistant.vacancyimport;
 
 import com.darya.jobassistant.vacancyimport.config.VacancyImportProperties;
 import com.darya.jobassistant.vacancyimport.dto.CancelVacancyImportResult;
+import com.darya.jobassistant.vacancyimport.dto.ProvideVacancyUrlResult;
 import com.darya.jobassistant.vacancyimport.dto.StartVacancyImportResult;
+import com.darya.jobassistant.vacancyimport.model.ImportState;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportSession;
 import com.darya.jobassistant.vacancyimport.repository.VacancyImportSessionRepository;
+import com.darya.jobassistant.vacancyimport.url.VacancyUrlValidator;
+import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -27,7 +31,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * an outer transaction left open to block on.
  */
 @Service
-public class VacancyImportService implements StartVacancyImportUseCase, CancelVacancyImportUseCase {
+public class VacancyImportService
+        implements StartVacancyImportUseCase, CancelVacancyImportUseCase, ProvideVacancyUrlUseCase {
 
     private final VacancyImportSessionRepository repository;
     private final Clock clock;
@@ -69,6 +74,31 @@ public class VacancyImportService implements StartVacancyImportUseCase, CancelVa
         session.cancel(clock);
         newTransaction.executeWithoutResult(status -> repository.saveSession(session));
         return CancelVacancyImportResult.CANCELLED;
+    }
+
+    @Override
+    public ProvideVacancyUrlResult provideUrl(long telegramChatId, long telegramUserId, String rawUrl) {
+        Optional<VacancyImportSession> active = repository.findActiveSession(telegramChatId, telegramUserId);
+        if (active.isEmpty()) {
+            return new ProvideVacancyUrlResult.NoActiveSession();
+        }
+        VacancyImportSession session = active.get();
+        if (!Instant.now(clock).isBefore(session.getExpiresAt())) {
+            expireAndPersist(session);
+            return new ProvideVacancyUrlResult.SessionExpired();
+        }
+        if (session.getState() != ImportState.WAITING_FOR_URL) {
+            return new ProvideVacancyUrlResult.UnexpectedState(session.getState());
+        }
+
+        VacancyUrlValidator.Result validation = VacancyUrlValidator.validate(rawUrl);
+        if (validation instanceof VacancyUrlValidator.Result.Invalid invalid) {
+            return new ProvideVacancyUrlResult.InvalidUrl(invalid.reason());
+        }
+        URI normalizedUrl = ((VacancyUrlValidator.Result.Valid) validation).normalizedUrl();
+        session.provideUrl(normalizedUrl.toString(), clock);
+        newTransaction.executeWithoutResult(status -> repository.saveSession(session));
+        return new ProvideVacancyUrlResult.Accepted(session.getId(), normalizedUrl);
     }
 
     private void expireAndPersist(VacancyImportSession session) {
