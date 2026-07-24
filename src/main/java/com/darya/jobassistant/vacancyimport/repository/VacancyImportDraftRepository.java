@@ -19,6 +19,15 @@ public interface VacancyImportDraftRepository extends JpaRepository<VacancyImpor
     Optional<VacancyImportDraftEntity> findBySessionId(UUID sessionId);
 
     /**
+     * Removes a session's draft, used by Retry (see {@code VacancyImportReviewService}) in the
+     * same database transaction as the {@code WAITING_FOR_CONFIRMATION -> WAITING_FOR_DESCRIPTION}
+     * transition, so the one-draft-per-session constraint never blocks the next extraction.
+     *
+     * @return the number of rows deleted (0 or 1, given the unique constraint on {@code session_id})
+     */
+    long deleteBySessionId(UUID sessionId);
+
+    /**
      * Inserts the draft for a session. {@code session_id} is unique, so a second concurrent call
      * for the same session fails with a constraint violation rather than silently overwriting the
      * first - callers (see {@code VacancyImportService.extract}) are expected to catch that and

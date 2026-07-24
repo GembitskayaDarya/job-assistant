@@ -39,6 +39,7 @@ public class VacancyImportSession {
     private ImportState state;
     private String sourceUrl;
     private String rawDescription;
+    private UUID vacancyId;
     private final Instant createdAt;
     private Instant updatedAt;
     private final Instant expiresAt;
@@ -62,6 +63,7 @@ public class VacancyImportSession {
             ImportState state,
             String sourceUrl,
             String rawDescription,
+            UUID vacancyId,
             Instant createdAt,
             Instant updatedAt,
             Instant expiresAt,
@@ -72,6 +74,7 @@ public class VacancyImportSession {
         this.state = state;
         this.sourceUrl = sourceUrl;
         this.rawDescription = rawDescription;
+        this.vacancyId = vacancyId;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
         this.expiresAt = expiresAt;
@@ -92,6 +95,7 @@ public class VacancyImportSession {
                 ImportState.WAITING_FOR_URL,
                 null,
                 null,
+                null,
                 now,
                 now,
                 now.plus(timeToLive),
@@ -110,11 +114,13 @@ public class VacancyImportSession {
             ImportState state,
             String sourceUrl,
             String rawDescription,
+            UUID vacancyId,
             Instant createdAt,
             Instant updatedAt,
             Instant expiresAt) {
         return new VacancyImportSession(
-                id, telegramChatId, telegramUserId, state, sourceUrl, rawDescription, createdAt, updatedAt, expiresAt, false);
+                id, telegramChatId, telegramUserId, state, sourceUrl, rawDescription, vacancyId,
+                createdAt, updatedAt, expiresAt, false);
     }
 
     /** Package-private: only {@link VacancyImportSessionMapper} needs this. */
@@ -150,9 +156,18 @@ public class VacancyImportSession {
         touch(clock);
     }
 
-    public void complete(Clock clock) {
+    /**
+     * Completes the session, linking it to the {@code Vacancy} that Save produced or reused.
+     * {@code vacancyId} is required - a session can only ever become {@code COMPLETED} together
+     * with the vacancy it resulted in, never separately.
+     */
+    public void complete(UUID vacancyId, Clock clock) {
         requireState(ImportState.WAITING_FOR_CONFIRMATION);
+        if (vacancyId == null) {
+            throw new VacancyImportSessionException("A completed session must be linked to a vacancy");
+        }
         this.state = ImportState.COMPLETED;
+        this.vacancyId = vacancyId;
         touch(clock);
     }
 

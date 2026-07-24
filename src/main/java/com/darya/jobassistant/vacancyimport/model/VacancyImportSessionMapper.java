@@ -21,6 +21,7 @@ public final class VacancyImportSessionMapper {
                 .state(session.getState())
                 .sourceUrl(session.getSourceUrl())
                 .rawDescription(session.getRawDescription())
+                .vacancyId(session.getVacancyId())
                 .createdAt(session.getCreatedAt())
                 .updatedAt(session.getUpdatedAt())
                 .expiresAt(session.getExpiresAt())
@@ -35,6 +36,7 @@ public final class VacancyImportSessionMapper {
                 entity.getState(),
                 entity.getSourceUrl(),
                 entity.getRawDescription(),
+                entity.getVacancyId(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt(),
                 entity.getExpiresAt());

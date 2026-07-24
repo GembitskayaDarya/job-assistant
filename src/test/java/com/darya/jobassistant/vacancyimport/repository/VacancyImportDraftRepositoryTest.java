@@ -132,6 +132,34 @@ class VacancyImportDraftRepositoryTest {
         assertThat(draftRepository.findDraftBySessionId(sessionId)).isEmpty();
     }
 
+    @Test
+    void deleteBySessionId_removesTheDraftAndAllowsANewOneAfterwards() {
+        UUID sessionId = persistSession(70L, 71L);
+        draftRepository.saveDraft(sessionId, minimalData(), CLOCK.instant());
+        entityManager.flush();
+
+        long deleted = draftRepository.deleteBySessionId(sessionId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(deleted).isEqualTo(1L);
+        assertThat(draftRepository.findDraftBySessionId(sessionId)).isEmpty();
+
+        // The one-draft-per-session unique constraint must not block a fresh extraction after Retry.
+        draftRepository.saveDraft(sessionId, minimalData(), CLOCK.instant());
+        entityManager.flush();
+        assertThat(draftRepository.findDraftBySessionId(sessionId)).isPresent();
+    }
+
+    @Test
+    void deleteBySessionId_noDraft_deletesNothing() {
+        UUID sessionId = persistSession(72L, 73L);
+
+        long deleted = draftRepository.deleteBySessionId(sessionId);
+
+        assertThat(deleted).isEqualTo(0L);
+    }
+
     private UUID persistSession(long chatId, long userId) {
         VacancyImportSession session = VacancyImportSession.start(chatId, userId, CLOCK, TTL);
         VacancyImportSession saved = sessionRepository.saveSession(session);

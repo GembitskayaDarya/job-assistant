@@ -81,6 +81,9 @@ public class VacancyImportSessionEntity implements Persistable<UUID> {
     @Column(name = "raw_description", columnDefinition = "TEXT")
     private String rawDescription;
 
+    @Column(name = "vacancy_id")
+    private UUID vacancyId;
+
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 }

@@ -1,5 +1,6 @@
 package com.darya.jobassistant.telegram;
 
+import com.darya.jobassistant.telegram.callback.VacancyImportKeyboardFactory;
 import com.darya.jobassistant.telegram.command.BotResponse;
 import com.darya.jobassistant.telegram.format.VacancyDraftPreviewFormatter;
 import com.darya.jobassistant.vacancyimport.ContinueVacancyImportUseCase;
@@ -70,6 +71,7 @@ public class VacancyImportMessageHandler {
 
     private final ContinueVacancyImportUseCase continueVacancyImportUseCase;
     private final VacancyDraftPreviewFormatter vacancyDraftPreviewFormatter;
+    private final VacancyImportKeyboardFactory vacancyImportKeyboardFactory;
 
     public Optional<BotResponse> handle(Message message) {
         long chatId = message.getChatId();
@@ -87,8 +89,10 @@ public class VacancyImportMessageHandler {
         return switch (result) {
             case ContinueVacancyImportResult.NoActiveSession ignored -> Optional.empty();
             case ContinueVacancyImportResult.UrlAccepted ignored -> Optional.of(BotResponse.text(URL_ACCEPTED_MESSAGE));
-            case ContinueVacancyImportResult.VacancyRecognized(var ignored, var draft) ->
-                    Optional.of(BotResponse.text(vacancyDraftPreviewFormatter.formatRecognized(draft)));
+            case ContinueVacancyImportResult.VacancyRecognized(var sessionId, var draft) -> Optional.of(new BotResponse(
+                    vacancyDraftPreviewFormatter.formatRecognized(draft),
+                    null,
+                    vacancyImportKeyboardFactory.confirmationKeyboard(sessionId)));
             case ContinueVacancyImportResult.ExtractionFailed ignored ->
                     Optional.of(BotResponse.text(EXTRACTION_FAILED_MESSAGE));
             case ContinueVacancyImportResult.InvalidUrl ignored -> Optional.of(BotResponse.text(INVALID_URL_MESSAGE));

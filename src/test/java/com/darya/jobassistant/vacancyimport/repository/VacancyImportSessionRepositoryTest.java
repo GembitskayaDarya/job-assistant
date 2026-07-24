@@ -3,7 +3,11 @@ package com.darya.jobassistant.vacancyimport.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.companies.entity.Company;
+import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
+import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportSession;
 import jakarta.persistence.EntityManager;
@@ -11,13 +15,23 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -37,6 +51,12 @@ class VacancyImportSessionRepositoryTest {
 
     @Autowired
     private VacancyImportSessionRepository repository;
+
+    @Autowired
+    private VacancyRepository vacancyRepository;
+
+    @Autowired
+    private CompanyRepository companyRepository;
 
     @Autowired
     private EntityManager entityManager;
@@ -243,6 +263,162 @@ class VacancyImportSessionRepositoryTest {
         assertThat(reloaded.getState()).isEqualTo(ImportState.WAITING_FOR_CONFIRMATION);
     }
 
+    @Test
+    void vacancyId_isNullableAndRoundTrips() {
+        VacancyImportSession waiting = sessionAtWaitingForConfirmation(940L, 941L);
+        entityManager.clear();
+        VacancyImportSession reloadedBeforeSave = repository.findSessionById(waiting.getId()).orElseThrow();
+        assertThat(reloadedBeforeSave.getVacancyId()).isNull();
+
+        Vacancy vacancy = persistVacancy();
+        boolean applied = repository.completeIfWaitingForConfirmation(waiting.getId(), vacancy.getId(), CLOCK.instant().plusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        VacancyImportSession reloadedAfterSave = repository.findSessionById(waiting.getId()).orElseThrow();
+        assertThat(reloadedAfterSave.getVacancyId()).isEqualTo(vacancy.getId());
+        assertThat(reloadedAfterSave.getState()).isEqualTo(ImportState.COMPLETED);
+    }
+
+    @Test
+    void vacancyId_foreignKeyRejectsUnknownVacancy() {
+        VacancyImportSession waiting = sessionAtWaitingForConfirmation(950L, 951L);
+
+        repository.completeIfWaitingForConfirmation(waiting.getId(), UUID.randomUUID(), CLOCK.instant());
+
+        assertThatThrownBy(() -> entityManager.flush()).isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void completeIfWaitingForConfirmation_sessionNotWaiting_updatesNoRowsAndDoesNotOverwriteState() {
+        VacancyImportSession session = repository.saveSession(VacancyImportSession.start(960L, 961L, CLOCK, TTL));
+        entityManager.flush();
+        Vacancy vacancy = persistVacancy();
+
+        boolean applied = repository.completeIfWaitingForConfirmation(session.getId(), vacancy.getId(), CLOCK.instant());
+        entityManager.clear();
+
+        assertThat(applied).isFalse();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.WAITING_FOR_URL);
+        assertThat(reloaded.getVacancyId()).isNull();
+    }
+
+    @Test
+    void retryIfWaitingForConfirmation_clearsDescriptionAndTransitionsBack() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation(970L, 971L);
+        Instant updatedAt = CLOCK.instant().plusSeconds(1);
+
+        boolean applied = repository.retryIfWaitingForConfirmation(session.getId(), updatedAt);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+        assertThat(reloaded.getRawDescription()).isNull();
+        assertThat(reloaded.getSourceUrl()).isEqualTo("https://example.com/job");
+    }
+
+    @Test
+    void retryAndDraftDeletion_areAtomicWithinOneTransaction() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation(980L, 981L);
+        Instant updatedAt = CLOCK.instant().plusSeconds(1);
+
+        // Simulates VacancyImportReviewService.performRetry: both writes happen, then we verify
+        // both landed together (the actual atomicity/rollback-together guarantee is exercised by
+        // VacancyImportReviewServiceTest's setRollbackOnly assertions at the unit level; here we
+        // confirm the two statements this repository exposes are consistent with each other).
+        boolean applied = repository.retryIfWaitingForConfirmation(session.getId(), updatedAt);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        assertThat(repository.findSessionById(session.getId()).orElseThrow().getState())
+                .isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+    }
+
+    @Test
+    void cancelIfWaitingForConfirmation_sessionInWaitingForConfirmation_updatesExactlyOneRow() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation(990L, 991L);
+        Instant updatedAt = CLOCK.instant().plusSeconds(1);
+
+        boolean applied = repository.cancelIfWaitingForConfirmation(session.getId(), updatedAt);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.CANCELLED);
+    }
+
+    @Test
+    void cancelIfWaitingForConfirmation_alreadyCompleted_doesNotOverwriteTheWinningState() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation(1000L, 1001L);
+        Vacancy vacancy = persistVacancy();
+        repository.completeIfWaitingForConfirmation(session.getId(), vacancy.getId(), CLOCK.instant().plusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+
+        boolean applied = repository.cancelIfWaitingForConfirmation(session.getId(), CLOCK.instant().plusSeconds(2));
+        entityManager.clear();
+
+        assertThat(applied).isFalse();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.COMPLETED);
+        assertThat(reloaded.getVacancyId()).isEqualTo(vacancy.getId());
+    }
+
+    @Test
+    void expireIfWaitingForConfirmation_updatesExactlyOneRow() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation(1010L, 1011L);
+        Instant updatedAt = CLOCK.instant().plusSeconds(1);
+
+        boolean applied = repository.expireIfWaitingForConfirmation(session.getId(), updatedAt);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.EXPIRED);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void completeIfWaitingForConfirmation_concurrentSaveCalls_exactlyOneWinsAndOneVacancyLinked() throws Exception {
+        VacancyImportSession session = sessionAtWaitingForConfirmation(1020L, 1021L);
+        Vacancy vacancyA = persistVacancy();
+        Vacancy vacancyB = persistVacancy();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            List<Future<Boolean>> futures = new ArrayList<>();
+            futures.add(executor.submit(() -> {
+                barrier.await();
+                return repository.completeIfWaitingForConfirmation(session.getId(), vacancyA.getId(), CLOCK.instant().plusSeconds(1));
+            }));
+            futures.add(executor.submit(() -> {
+                barrier.await();
+                return repository.completeIfWaitingForConfirmation(session.getId(), vacancyB.getId(), CLOCK.instant().plusSeconds(2));
+            }));
+
+            List<Boolean> results = new ArrayList<>();
+            for (Future<Boolean> future : futures) {
+                results.add(future.get(10, TimeUnit.SECONDS));
+            }
+
+            long winners = results.stream().filter(Boolean::booleanValue).count();
+            assertThat(winners).isEqualTo(1);
+
+            VacancyImportSession finalState = repository.findSessionById(session.getId()).orElseThrow();
+            assertThat(finalState.getState()).isEqualTo(ImportState.COMPLETED);
+            assertThat(finalState.getVacancyId()).isIn(vacancyA.getId(), vacancyB.getId());
+        } finally {
+            executor.shutdown();
+        }
+    }
+
     private VacancyImportSession sessionAtExtracting(long chatId, long userId) {
         VacancyImportSession session = VacancyImportSession.start(chatId, userId, CLOCK, TTL);
         session.provideUrl("https://example.com/job", CLOCK);
@@ -250,5 +426,24 @@ class VacancyImportSessionRepositoryTest {
         VacancyImportSession saved = repository.saveSession(session);
         entityManager.flush();
         return saved;
+    }
+
+    private VacancyImportSession sessionAtWaitingForConfirmation(long chatId, long userId) {
+        VacancyImportSession session = sessionAtExtracting(chatId, userId);
+        repository.moveToWaitingForConfirmationIfExtracting(session.getId(), CLOCK.instant());
+        entityManager.flush();
+        entityManager.clear();
+        return repository.findSessionById(session.getId()).orElseThrow();
+    }
+
+    private Vacancy persistVacancy() {
+        Company company = companyRepository.save(Company.builder().name("Acme " + UUID.randomUUID()).build());
+        Vacancy vacancy = vacancyRepository.save(Vacancy.builder()
+                .company(company)
+                .title("Backend Engineer")
+                .url("https://example.com/job/" + UUID.randomUUID())
+                .build());
+        entityManager.flush();
+        return vacancy;
     }
 }

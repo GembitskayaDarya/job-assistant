@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.darya.jobassistant.telegram.callback.VacancyImportKeyboardFactory;
 import com.darya.jobassistant.telegram.command.BotResponse;
 import com.darya.jobassistant.telegram.format.VacancyDraftPreviewFormatter;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
@@ -44,10 +45,11 @@ class VacancyImportMessageHandlerTest {
     private VacancyImportMessageHandler handler;
 
     private final VacancyDraftPreviewFormatter vacancyDraftPreviewFormatter = new VacancyDraftPreviewFormatter();
+    private final VacancyImportKeyboardFactory vacancyImportKeyboardFactory = new VacancyImportKeyboardFactory();
 
     @BeforeEach
     void setUp() {
-        handler = new VacancyImportMessageHandler(continueVacancyImportUseCase, vacancyDraftPreviewFormatter);
+        handler = new VacancyImportMessageHandler(continueVacancyImportUseCase, vacancyDraftPreviewFormatter, vacancyImportKeyboardFactory);
         when(message.getChatId()).thenReturn(CHAT_ID);
         when(message.getFrom()).thenReturn(sender);
         when(sender.getId()).thenReturn(USER_ID);
@@ -77,7 +79,8 @@ class VacancyImportMessageHandlerTest {
     }
 
     @Test
-    void handle_vacancyRecognized_returnsTextPreviewOfTheDraft() {
+    void handle_vacancyRecognized_returnsTextPreviewWithConfirmationButtons() {
+        UUID sessionId = UUID.randomUUID();
         VacancyImportDraft draft = draft(new ExtractedVacancyData(
                 "Senior Java Backend Developer",
                 "Example Company",
@@ -87,7 +90,7 @@ class VacancyImportMessageHandlerTest {
                 List.of("Java", "Spring Boot", "Kafka", "AWS"),
                 null));
         when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
-                .thenReturn(new ContinueVacancyImportResult.VacancyRecognized(UUID.randomUUID(), draft));
+                .thenReturn(new ContinueVacancyImportResult.VacancyRecognized(sessionId, draft));
 
         Optional<BotResponse> response = handler.handle(message);
 
@@ -96,6 +99,7 @@ class VacancyImportMessageHandlerTest {
         assertThat(response.get().text()).contains("Senior Java Backend Developer");
         assertThat(response.get().text()).contains("Example Company");
         assertThat(response.get().text()).contains("has not been saved yet");
+        assertThat(response.get().keyboard()).isEqualTo(vacancyImportKeyboardFactory.confirmationKeyboard(sessionId));
     }
 
     @Test

@@ -39,4 +39,46 @@ public interface VacancyImportSessionRepositoryCustom {
      *      {@code EXTRACTING} by the time this statement ran
      */
     boolean moveToFailedIfExtracting(UUID sessionId, Instant updatedAt);
+
+    /**
+     * Atomically transitions a session from {@code WAITING_FOR_CONFIRMATION} to {@code COMPLETED}
+     * and records the resulting {@code vacancy_id} in the same statement. Called from inside the
+     * same database transaction as the Vacancy creation/lookup, so if this returns {@code false}
+     * the caller rolls the whole transaction back rather than leaving a Vacancy that no session
+     * ended up linked to.
+     *
+     * @return true if this call performed the transition, false if the session was no longer in
+     *      {@code WAITING_FOR_CONFIRMATION} by the time this statement ran
+     */
+    boolean completeIfWaitingForConfirmation(UUID sessionId, UUID vacancyId, Instant updatedAt);
+
+    /**
+     * Atomically transitions a session from {@code WAITING_FOR_CONFIRMATION} back to
+     * {@code WAITING_FOR_DESCRIPTION}, clearing the stale raw description in the same statement
+     * (mirrors {@link VacancyImportSession#retryDescription}, which does the equivalent in-memory).
+     *
+     * @return true if this call performed the transition, false if the session was no longer in
+     *      {@code WAITING_FOR_CONFIRMATION} by the time this statement ran
+     */
+    boolean retryIfWaitingForConfirmation(UUID sessionId, Instant updatedAt);
+
+    /**
+     * Atomically transitions a session from {@code WAITING_FOR_CONFIRMATION} to {@code CANCELLED}.
+     * Guarded the same way as the other conditional transitions here, so a Cancel callback racing
+     * a concurrent Save (or a second Cancel) can never silently clobber the winning outcome.
+     *
+     * @return true if this call performed the transition, false if the session was no longer in
+     *      {@code WAITING_FOR_CONFIRMATION} by the time this statement ran
+     */
+    boolean cancelIfWaitingForConfirmation(UUID sessionId, Instant updatedAt);
+
+    /**
+     * Atomically transitions a session from {@code WAITING_FOR_CONFIRMATION} to {@code EXPIRED}.
+     * Used by {@code VacancyImportReviewService} before acting on any callback, so an expired
+     * confirmation session is never saved, retried, or cancelled as though it were still active.
+     *
+     * @return true if this call performed the transition, false if the session was no longer in
+     *      {@code WAITING_FOR_CONFIRMATION} by the time this statement ran
+     */
+    boolean expireIfWaitingForConfirmation(UUID sessionId, Instant updatedAt);
 }

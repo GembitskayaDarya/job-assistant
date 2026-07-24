@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class VacancyImportSessionTest {
@@ -140,19 +141,29 @@ class VacancyImportSessionTest {
     }
 
     @Test
-    void complete_transitionsToCompleted() {
+    void complete_transitionsToCompletedAndStoresVacancyId() {
         VacancyImportSession session = sessionAtWaitingForConfirmation();
+        UUID vacancyId = UUID.randomUUID();
 
-        session.complete(CLOCK);
+        session.complete(vacancyId, CLOCK);
 
         assertThat(session.getState()).isEqualTo(ImportState.COMPLETED);
+        assertThat(session.getVacancyId()).isEqualTo(vacancyId);
     }
 
     @Test
     void complete_wrongState_isRejected() {
         VacancyImportSession session = VacancyImportSession.start(CHAT_ID, USER_ID, CLOCK, TTL);
 
-        assertThatThrownBy(() -> session.complete(CLOCK)).isInstanceOf(VacancyImportSessionException.class);
+        assertThatThrownBy(() -> session.complete(UUID.randomUUID(), CLOCK)).isInstanceOf(VacancyImportSessionException.class);
+    }
+
+    @Test
+    void complete_nullVacancyId_isRejected() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+
+        assertThatThrownBy(() -> session.complete(null, CLOCK)).isInstanceOf(VacancyImportSessionException.class);
+        assertThat(session.getState()).isEqualTo(ImportState.WAITING_FOR_CONFIRMATION);
     }
 
     @Test
@@ -224,11 +235,11 @@ class VacancyImportSessionTest {
     @Test
     void terminalState_completed_rejectsAnyFurtherTransition() {
         VacancyImportSession session = sessionAtWaitingForConfirmation();
-        session.complete(CLOCK);
+        session.complete(UUID.randomUUID(), CLOCK);
 
         assertThatThrownBy(() -> session.cancel(CLOCK)).isInstanceOf(VacancyImportSessionException.class);
         assertThatThrownBy(() -> session.retryDescription(CLOCK)).isInstanceOf(VacancyImportSessionException.class);
-        assertThatThrownBy(() -> session.complete(CLOCK)).isInstanceOf(VacancyImportSessionException.class);
+        assertThatThrownBy(() -> session.complete(UUID.randomUUID(), CLOCK)).isInstanceOf(VacancyImportSessionException.class);
     }
 
     @Test
