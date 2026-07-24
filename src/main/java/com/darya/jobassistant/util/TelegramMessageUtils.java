@@ -4,7 +4,7 @@ import java.util.regex.Pattern;
 
 public final class TelegramMessageUtils {
 
-    private static final int MAX_MESSAGE_LENGTH = 4096;
+    public static final int MAX_MESSAGE_LENGTH = 4096;
     private static final String TRUNCATION_SUFFIX = "...";
 
     private static final Pattern MARKDOWN_V2_SPECIAL_CHARACTERS =
