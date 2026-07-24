@@ -11,6 +11,7 @@ import com.darya.jobassistant.notifications.entity.NotificationDeliveryStatus;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -135,7 +136,7 @@ class NotificationDeliveryRepositoryTest {
     @Test
     void markSent_pendingDelivery_transitionsToSent() {
         UUID vacancyId = newVacancy().getId();
-        Instant createdAt = Instant.now();
+        Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         UUID deliveryId = notificationDeliveryRepository.reserve(vacancyId, 777L, createdAt).delivery().id();
         Instant sentAt = createdAt.plusSeconds(5);
 
@@ -149,7 +150,7 @@ class NotificationDeliveryRepositoryTest {
     @Test
     void markFailed_pendingDelivery_transitionsToFailed() {
         UUID vacancyId = newVacancy().getId();
-        Instant createdAt = Instant.now();
+        Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         UUID deliveryId = notificationDeliveryRepository.reserve(vacancyId, 888L, createdAt).delivery().id();
         Instant failedAt = createdAt.plusSeconds(5);
 
@@ -164,7 +165,7 @@ class NotificationDeliveryRepositoryTest {
     @Test
     void markFailed_alreadySentDelivery_isRejectedAndDoesNotOverwriteSentAt() {
         UUID vacancyId = newVacancy().getId();
-        Instant createdAt = Instant.now();
+        Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         UUID deliveryId = notificationDeliveryRepository.reserve(vacancyId, 999L, createdAt).delivery().id();
         Instant sentAt = createdAt.plusSeconds(5);
         notificationDeliveryRepository.markSent(deliveryId, sentAt);
@@ -183,7 +184,7 @@ class NotificationDeliveryRepositoryTest {
     @Test
     void markSent_alreadyFailedDelivery_isRejectedAndDoesNotOverwriteFailedAt() {
         UUID vacancyId = newVacancy().getId();
-        Instant createdAt = Instant.now();
+        Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         UUID deliveryId = notificationDeliveryRepository.reserve(vacancyId, 1010L, createdAt).delivery().id();
         Instant failedAt = createdAt.plusSeconds(5);
         notificationDeliveryRepository.markFailed(deliveryId, failedAt, "RATE_LIMITED");
@@ -202,7 +203,7 @@ class NotificationDeliveryRepositoryTest {
     @Test
     void markSent_repeatedCallOnAlreadySentDelivery_doesNotOverwriteTimestamp() {
         UUID vacancyId = newVacancy().getId();
-        Instant createdAt = Instant.now();
+        Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         UUID deliveryId = notificationDeliveryRepository.reserve(vacancyId, 1111L, createdAt).delivery().id();
         Instant firstSentAt = createdAt.plusSeconds(5);
         notificationDeliveryRepository.markSent(deliveryId, firstSentAt);

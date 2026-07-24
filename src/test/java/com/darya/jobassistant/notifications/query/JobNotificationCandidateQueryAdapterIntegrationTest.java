@@ -16,6 +16,7 @@ import jakarta.persistence.PersistenceContext;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -189,8 +190,12 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
 
         List<JobNotificationCandidate> candidates = candidateQueryPort.findCandidates(RECIPIENT, 0, 10);
 
+        // Postgres orders uuid columns by raw byte value, not by java.util.UUID#compareTo's
+        // signed-long comparison of the two 64-bit halves - those two orderings diverge for
+        // random UUIDs whenever the top bit differs, so the expectation must be sorted the same
+        // way the database sorts it (canonical string form == byte order for this format).
         List<UUID> expectedOrder = List.of(vacancyA.getId(), vacancyB.getId()).stream()
-                .sorted()
+                .sorted(Comparator.comparing(UUID::toString))
                 .toList();
         assertThat(candidates).extracting(c -> c.vacancy().getId()).containsExactlyElementsOf(expectedOrder);
     }
