@@ -191,6 +191,8 @@ directly):
 | `JOB_MONITORING_RECIPIENT_CHAT_ID` | *(required if enabled)* | Telegram chat id notifications are sent to — no default, must be set when `JOB_MONITORING_ENABLED=true` |
 | `LOG_LEVEL_ROOT`                 | `INFO`          | Root logger level                                 |
 | `LOG_LEVEL_APP`                  | `INFO`          | Logger level for `com.darya.jobassistant`         |
+| `LOG_LEVEL_SCHEDULER`            | `INFO`          | Logger level for `com.darya.jobassistant.scheduler` — set to `DEBUG` to see each scheduled run start/duration |
+| `LOG_LEVEL_MONITORING`           | `INFO`          | Logger level for `com.darya.jobassistant.monitoring` — set to `DEBUG` for per-run detail beyond the completion summary |
 | `LOG_LEVEL_SQL`                  | `WARN`          | Logger level for `org.hibernate.SQL`              |
 
 Automatic monitoring (`JOB_MONITORING_ENABLED=true`) polls RemoteOK on a fixed delay, keeps only

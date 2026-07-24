@@ -109,5 +109,7 @@ logging:
   level:
     root: ${LOG_LEVEL_ROOT:INFO}
     com.darya.jobassistant: ${LOG_LEVEL_APP:INFO}
+    com.darya.jobassistant.scheduler: ${LOG_LEVEL_SCHEDULER:INFO}
+    com.darya.jobassistant.monitoring: ${LOG_LEVEL_MONITORING:INFO}
     org.hibernate.SQL: ${LOG_LEVEL_SQL:WARN}
     org.flywaydb: INFO
