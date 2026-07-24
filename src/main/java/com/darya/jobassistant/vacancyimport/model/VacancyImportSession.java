@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
+import lombok.AccessLevel;
 import lombok.Getter;
 
 /**
@@ -42,6 +43,18 @@ public class VacancyImportSession {
     private Instant updatedAt;
     private final Instant expiresAt;
 
+    /**
+     * True only for an instance minted by {@link #start}; false for one rehydrated via
+     * {@link #reconstruct}. Exists purely so {@link VacancyImportSessionMapper} can tell Spring
+     * Data JPA whether a save is a first-ever insert or an update: this session carries a
+     * client-generated id (required so a session has an id before it's ever persisted), so the
+     * usual "id is null => new" heuristic Spring Data uses for every other entity in this project
+     * doesn't work here - without this flag, {@code save()} would try to UPDATE a row that
+     * doesn't exist yet and Hibernate would report a stale-state error.
+     */
+    @Getter(AccessLevel.NONE)
+    private final boolean newSession;
+
     private VacancyImportSession(
             UUID id,
             long telegramChatId,
@@ -51,7 +64,8 @@ public class VacancyImportSession {
             String rawDescription,
             Instant createdAt,
             Instant updatedAt,
-            Instant expiresAt) {
+            Instant expiresAt,
+            boolean newSession) {
         this.id = id;
         this.telegramChatId = telegramChatId;
         this.telegramUserId = telegramUserId;
@@ -61,6 +75,7 @@ public class VacancyImportSession {
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
         this.expiresAt = expiresAt;
+        this.newSession = newSession;
     }
 
     /**
@@ -79,7 +94,8 @@ public class VacancyImportSession {
                 null,
                 now,
                 now,
-                now.plus(timeToLive));
+                now.plus(timeToLive),
+                true);
     }
 
     /**
@@ -98,7 +114,12 @@ public class VacancyImportSession {
             Instant updatedAt,
             Instant expiresAt) {
         return new VacancyImportSession(
-                id, telegramChatId, telegramUserId, state, sourceUrl, rawDescription, createdAt, updatedAt, expiresAt);
+                id, telegramChatId, telegramUserId, state, sourceUrl, rawDescription, createdAt, updatedAt, expiresAt, false);
+    }
+
+    /** Package-private: only {@link VacancyImportSessionMapper} needs this. */
+    boolean isNewSession() {
+        return newSession;
     }
 
     public void provideUrl(String url, Clock clock) {

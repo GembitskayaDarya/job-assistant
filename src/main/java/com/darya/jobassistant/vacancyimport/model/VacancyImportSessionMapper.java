@@ -15,6 +15,7 @@ public final class VacancyImportSessionMapper {
     public static VacancyImportSessionEntity toEntity(VacancyImportSession session) {
         return VacancyImportSessionEntity.builder()
                 .id(session.getId())
+                .isNew(session.isNewSession())
                 .telegramChatId(session.getTelegramChatId())
                 .telegramUserId(session.getTelegramUserId())
                 .state(session.getState())
