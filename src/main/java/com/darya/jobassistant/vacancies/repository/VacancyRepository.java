@@ -4,6 +4,7 @@ import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -21,6 +22,15 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
 
     @Query("select v from Vacancy v join fetch v.company where v.id = :id")
     Optional<Vacancy> findByIdWithCompany(UUID id);
+
+    /**
+     * Batch counterpart of {@link #findByIdWithCompany}, used to hydrate full {@link Vacancy}
+     * instances (including their non-lazy {@code company}) for an already-ordered id list, e.g.
+     * from {@code JobNotificationCandidateQueryAdapter}'s native id-selection query. Result order
+     * is not guaranteed to match {@code ids}' order - callers that need that order must re-sort.
+     */
+    @Query("select v from Vacancy v join fetch v.company where v.id in :ids")
+    List<Vacancy> findAllByIdWithCompany(@Param("ids") Collection<UUID> ids);
 
     /**
      * Atomically inserts a vacancy unless one with the same URL already exists, using the
