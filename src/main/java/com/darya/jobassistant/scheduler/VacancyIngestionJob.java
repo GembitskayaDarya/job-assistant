@@ -2,6 +2,7 @@ package com.darya.jobassistant.scheduler;
 
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.integrations.jobsource.JobSourcePort;
+import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.service.VacancyIngestionService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -38,22 +39,11 @@ public class VacancyIngestionJob {
             return;
         }
 
-        int processed = 0;
-        for (JobOffer offer : offers) {
-            if (persistSafely(offer, jobSource.sourceName())) {
-                processed++;
-            }
-        }
-        log.info("Processed {} vacancies from {} ({} fetched)", processed, jobSource.sourceName(), offers.size());
-    }
-
-    private boolean persistSafely(JobOffer offer, String sourceName) {
-        try {
-            vacancyIngestionService.persist(offer);
-            return true;
-        } catch (RuntimeException e) {
-            log.warn("Skipping job offer from {} - failed to persist: {}", sourceName, e.getMessage());
-            return false;
-        }
+        VacancyIngestionResult result = vacancyIngestionService.ingest(offers);
+        log.info("Ingestion from {} - fetched: {}, newly persisted: {}, already known: {}",
+                jobSource.sourceName(),
+                result.fetchedCount(),
+                result.persistedVacancies().size(),
+                result.alreadyKnownCount());
     }
 }

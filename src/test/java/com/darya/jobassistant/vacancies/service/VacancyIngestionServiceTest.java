@@ -10,8 +10,10 @@ import static org.mockito.Mockito.when;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -99,6 +101,89 @@ class VacancyIngestionServiceTest {
         verify(vacancyRepository, never()).findByUrl(any());
         verify(vacancyRepository, never()).save(any());
         verify(companyService, never()).findOrCreateByName(any());
+    }
+
+    @Test
+    void ingest_allOffersNew_returnsAllAsPersistedAndNoneAsAlreadyKnown() {
+        JobOffer offerOne = jobOffer("https://example.com/job-1");
+        JobOffer offerTwo = jobOffer("https://example.com/job-2");
+        when(vacancyRepository.findByUrl(any())).thenReturn(Optional.empty());
+        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
+        Vacancy savedOne = Vacancy.builder().id(UUID.randomUUID()).title(offerOne.title()).build();
+        Vacancy savedTwo = Vacancy.builder().id(UUID.randomUUID()).title(offerTwo.title()).build();
+        when(vacancyRepository.save(any(Vacancy.class))).thenReturn(savedOne, savedTwo);
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(offerOne, offerTwo));
+
+        assertThat(result.fetchedCount()).isEqualTo(2);
+        assertThat(result.alreadyKnownCount()).isZero();
+        assertThat(result.persistedVacancies()).containsExactly(savedOne, savedTwo);
+    }
+
+    @Test
+    void ingest_allOffersAlreadyExist_returnsNoneAsPersisted() {
+        JobOffer offerOne = jobOffer("https://example.com/job-1");
+        JobOffer offerTwo = jobOffer("https://example.com/job-2");
+        when(vacancyRepository.findByUrl(any())).thenReturn(Optional.of(Vacancy.builder().id(UUID.randomUUID()).build()));
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(offerOne, offerTwo));
+
+        assertThat(result.fetchedCount()).isEqualTo(2);
+        assertThat(result.alreadyKnownCount()).isEqualTo(2);
+        assertThat(result.persistedVacancies()).isEmpty();
+        verify(vacancyRepository, never()).save(any());
+    }
+
+    @Test
+    void ingest_mixedNewAndExistingOffers_classifiesEachCorrectlyAndPreservesOrder() {
+        JobOffer newOffer = jobOffer("https://example.com/new-job");
+        JobOffer existingOffer = jobOffer("https://example.com/existing-job");
+        JobOffer anotherNewOffer = jobOffer("https://example.com/another-new-job");
+        Vacancy existingVacancy = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyRepository.findByUrl(newOffer.url())).thenReturn(Optional.empty());
+        when(vacancyRepository.findByUrl(existingOffer.url())).thenReturn(Optional.of(existingVacancy));
+        when(vacancyRepository.findByUrl(anotherNewOffer.url())).thenReturn(Optional.empty());
+        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
+        Vacancy savedFirst = Vacancy.builder().id(UUID.randomUUID()).title("first").build();
+        Vacancy savedSecond = Vacancy.builder().id(UUID.randomUUID()).title("second").build();
+        when(vacancyRepository.save(any(Vacancy.class))).thenReturn(savedFirst, savedSecond);
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(newOffer, existingOffer, anotherNewOffer));
+
+        assertThat(result.fetchedCount()).isEqualTo(3);
+        assertThat(result.alreadyKnownCount()).isEqualTo(1);
+        assertThat(result.persistedVacancies()).containsExactly(savedFirst, savedSecond);
+        assertThat(result.persistedVacancies()).doesNotContain(existingVacancy);
+    }
+
+    @Test
+    void ingest_newlyPersistedVacancies_haveDurableUuids() {
+        JobOffer offer = jobOffer("https://example.com/job-1");
+        UUID vacancyId = UUID.randomUUID();
+        when(vacancyRepository.findByUrl(offer.url())).thenReturn(Optional.empty());
+        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
+        when(vacancyRepository.save(any(Vacancy.class))).thenReturn(Vacancy.builder().id(vacancyId).build());
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(offer));
+
+        assertThat(result.persistedVacancies()).singleElement().satisfies(vacancy ->
+                assertThat(vacancy.getId()).isEqualTo(vacancyId));
+    }
+
+    @Test
+    void ingest_onePersistenceFailure_isSkippedWithoutPreventingOtherOffersFromBeingPersisted() {
+        JobOffer failing = new JobOffer("job-1", "Backend Engineer", "Acme", "Remote", null, "desc", "  ", "remoteok");
+        JobOffer succeeding = jobOffer("https://example.com/job-2");
+        when(vacancyRepository.findByUrl(succeeding.url())).thenReturn(Optional.empty());
+        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
+        Vacancy saved = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyRepository.save(any(Vacancy.class))).thenReturn(saved);
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(failing, succeeding));
+
+        assertThat(result.fetchedCount()).isEqualTo(2);
+        assertThat(result.alreadyKnownCount()).isZero();
+        assertThat(result.persistedVacancies()).containsExactly(saved);
     }
 
     private JobOffer jobOffer(String url) {
