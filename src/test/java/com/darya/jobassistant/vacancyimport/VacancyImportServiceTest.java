@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.vacancyimport.config.VacancyImportProperties;
 import com.darya.jobassistant.vacancyimport.dto.CancelVacancyImportResult;
+import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.dto.ProvideVacancyUrlResult;
 import com.darya.jobassistant.vacancyimport.dto.StartVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
@@ -227,6 +228,163 @@ class VacancyImportServiceTest {
         assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
         assertThat(active.getSourceUrl()).isEqualTo("https://example.com/job/123");
         verify(repository, never()).saveSession(any());
+    }
+
+    @Test
+    void handleText_waitingForUrl_validUrl_routesThroughUrlAcceptanceAndTransitions() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession active = VacancyImportSession.start(CHAT_ID, USER_ID, CLOCK, TTL);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "https://example.com/job/123");
+
+        assertThat(result).isEqualTo(
+                new ContinueVacancyImportResult.UrlAccepted(active.getId(), URI.create("https://example.com/job/123")));
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+        verify(repository).saveSession(active);
+    }
+
+    @Test
+    void handleText_waitingForUrl_invalidUrl_leavesSessionUnchanged() {
+        VacancyImportSession active = VacancyImportSession.start(CHAT_ID, USER_ID, CLOCK, TTL);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "not a url");
+
+        assertThat(result).isInstanceOf(ContinueVacancyImportResult.InvalidUrl.class);
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_URL);
+        verify(repository, never()).saveSession(any());
+        verify(repository, never()).acceptDescriptionIfWaiting(any(), any(), any());
+    }
+
+    @Test
+    void handleText_waitingForDescription_validDescription_acceptsAndTransitionsToExtracting() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession active = sessionAtWaitingForDescription();
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+        when(repository.acceptDescriptionIfWaiting(any(), any(), any())).thenReturn(true);
+        String description = "  We need a Senior Java Backend Engineer.\n\n"
+                + "- 6+ years experience\n- Kafka, Redis, AWS\n\n"
+                + "Wymagania: znajomość Javy. Требования: опыт работы с Kafka.  ";
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, description);
+
+        assertThat(result).isEqualTo(new ContinueVacancyImportResult.DescriptionAccepted(active.getId()));
+        assertThat(active.getState()).isEqualTo(ImportState.EXTRACTING);
+        assertThat(active.getRawDescription()).isEqualTo(description.trim());
+        assertThat(active.getUpdatedAt()).isEqualTo(NOW);
+        verify(repository).acceptDescriptionIfWaiting(active.getId(), description.trim(), NOW);
+    }
+
+    @Test
+    void handleText_waitingForDescription_blankText_isRejectedAndDoesNotMutateOrPersist() {
+        VacancyImportSession active = sessionAtWaitingForDescription();
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, null);
+
+        assertThat(result).isInstanceOf(ContinueVacancyImportResult.InvalidDescription.class);
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+        assertThat(active.getRawDescription()).isNull();
+        verify(repository, never()).acceptDescriptionIfWaiting(any(), any(), any());
+    }
+
+    @Test
+    void handleText_waitingForDescription_whitespaceOnlyText_isRejected() {
+        VacancyImportSession active = sessionAtWaitingForDescription();
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "   \n  ");
+
+        assertThat(result).isInstanceOf(ContinueVacancyImportResult.InvalidDescription.class);
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+        verify(repository, never()).acceptDescriptionIfWaiting(any(), any(), any());
+    }
+
+    @Test
+    void handleText_waitingForDescription_tooShortText_isRejectedByDomainRuleAndNotPersisted() {
+        VacancyImportSession active = sessionAtWaitingForDescription();
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "too short");
+
+        assertThat(result).isInstanceOf(ContinueVacancyImportResult.InvalidDescription.class);
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_DESCRIPTION);
+        assertThat(active.getRawDescription()).isNull();
+        verify(repository, never()).acceptDescriptionIfWaiting(any(), any(), any());
+    }
+
+    @Test
+    void handleText_extracting_doesNotAcceptAnotherDescriptionAndDoesNotMutate() {
+        VacancyImportSession active = sessionAtWaitingForDescription();
+        active.provideDescriptionAndStartExtraction("A perfectly valid description here.", CLOCK);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "another description attempt");
+
+        assertThat(result).isEqualTo(new ContinueVacancyImportResult.UnexpectedState(ImportState.EXTRACTING));
+        assertThat(active.getState()).isEqualTo(ImportState.EXTRACTING);
+        verify(repository, never()).saveSession(any());
+        verify(repository, never()).acceptDescriptionIfWaiting(any(), any(), any());
+    }
+
+    @Test
+    void handleText_waitingForConfirmation_doesNotAcceptOrdinaryTextAndDoesNotMutate() {
+        VacancyImportSession active = sessionAtWaitingForDescription();
+        active.provideDescriptionAndStartExtraction("A perfectly valid description here.", CLOCK);
+        active.markExtractionSucceeded(CLOCK);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "confirm please");
+
+        assertThat(result).isEqualTo(new ContinueVacancyImportResult.UnexpectedState(ImportState.WAITING_FOR_CONFIRMATION));
+        assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_CONFIRMATION);
+        verify(repository, never()).saveSession(any());
+    }
+
+    @Test
+    void handleText_noActiveSession_returnsNoActiveSession() {
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.empty());
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "hello");
+
+        assertThat(result).isEqualTo(new ContinueVacancyImportResult.NoActiveSession());
+    }
+
+    @Test
+    void handleText_expiredSession_isPersistedAsExpired() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        Clock pastClock = Clock.fixed(NOW.minus(Duration.ofHours(25)), ZoneOffset.UTC);
+        VacancyImportSession expired = VacancyImportSession.start(CHAT_ID, USER_ID, pastClock, TTL);
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(expired));
+        when(repository.saveSession(expired)).thenReturn(expired);
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "https://example.com/job/123");
+
+        assertThat(result).isEqualTo(new ContinueVacancyImportResult.SessionExpired());
+        assertThat(expired.getState()).isEqualTo(ImportState.EXPIRED);
+        verify(repository).saveSession(expired);
+    }
+
+    @Test
+    void handleText_concurrentDescriptionRaceLost_returnsUnexpectedStateInsteadOfSilentlySucceeding() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession active = sessionAtWaitingForDescription();
+        when(repository.findActiveSession(CHAT_ID, USER_ID)).thenReturn(Optional.of(active));
+        when(repository.acceptDescriptionIfWaiting(any(), any(), any())).thenReturn(false);
+        VacancyImportSession winnerNowExtracting = sessionAtWaitingForDescription();
+        winnerNowExtracting.provideDescriptionAndStartExtraction("The other request's description.", CLOCK);
+        when(repository.findSessionById(active.getId())).thenReturn(Optional.of(winnerNowExtracting));
+
+        ContinueVacancyImportResult result = service.handleText(CHAT_ID, USER_ID, "my description attempt");
+
+        assertThat(result).isEqualTo(new ContinueVacancyImportResult.UnexpectedState(ImportState.EXTRACTING));
+    }
+
+    private VacancyImportSession sessionAtWaitingForDescription() {
+        VacancyImportSession session = VacancyImportSession.start(CHAT_ID, USER_ID, CLOCK, TTL);
+        session.provideUrl("https://example.com/job/123", CLOCK);
+        return session;
     }
 
     private VacancyImportSession winnerSession() {

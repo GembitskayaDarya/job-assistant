@@ -20,7 +20,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * stay the single port + adapter, per this project's repository convention (see
  * {@code JobAnalysisRepository}, {@code NotificationDeliveryRepository}).
  */
-public interface VacancyImportSessionRepository extends JpaRepository<VacancyImportSessionEntity, UUID> {
+public interface VacancyImportSessionRepository
+        extends JpaRepository<VacancyImportSessionEntity, UUID>, VacancyImportSessionRepositoryCustom {
 
     List<VacancyImportSessionEntity> findByTelegramChatIdAndTelegramUserIdAndStateIn(
             Long telegramChatId, Long telegramUserId, Collection<ImportState> states);

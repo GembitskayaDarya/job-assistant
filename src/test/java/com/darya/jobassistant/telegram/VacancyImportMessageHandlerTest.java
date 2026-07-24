@@ -5,8 +5,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.telegram.command.BotResponse;
-import com.darya.jobassistant.vacancyimport.ProvideVacancyUrlUseCase;
-import com.darya.jobassistant.vacancyimport.dto.ProvideVacancyUrlResult;
+import com.darya.jobassistant.vacancyimport.ContinueVacancyImportUseCase;
+import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
 import java.net.URI;
 import java.util.Optional;
@@ -24,9 +24,10 @@ class VacancyImportMessageHandlerTest {
 
     private static final long CHAT_ID = 555L;
     private static final long USER_ID = 777L;
+    private static final String TEXT = "some message text";
 
     @Mock
-    private ProvideVacancyUrlUseCase provideVacancyUrlUseCase;
+    private ContinueVacancyImportUseCase continueVacancyImportUseCase;
 
     @Mock
     private Message message;
@@ -38,27 +39,27 @@ class VacancyImportMessageHandlerTest {
 
     @BeforeEach
     void setUp() {
-        handler = new VacancyImportMessageHandler(provideVacancyUrlUseCase);
+        handler = new VacancyImportMessageHandler(continueVacancyImportUseCase);
         when(message.getChatId()).thenReturn(CHAT_ID);
         when(message.getFrom()).thenReturn(sender);
         when(sender.getId()).thenReturn(USER_ID);
-        when(message.getText()).thenReturn("https://example.com/job/123");
+        when(message.getText()).thenReturn(TEXT);
     }
 
     @Test
-    void handle_passesRawTextWithCorrectChatAndUserIds() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.Accepted(UUID.randomUUID(), URI.create("https://example.com/job/123")));
+    void handle_passesCorrectChatUserIdsAndRawText() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.NoActiveSession());
 
         handler.handle(message);
 
-        verify(provideVacancyUrlUseCase).provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123");
+        verify(continueVacancyImportUseCase).handleText(CHAT_ID, USER_ID, TEXT);
     }
 
     @Test
-    void handle_accepted_returnsDescriptionInstruction() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.Accepted(UUID.randomUUID(), URI.create("https://example.com/job/123")));
+    void handle_urlAccepted_returnsDescriptionInstruction() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.UrlAccepted(UUID.randomUUID(), URI.create("https://example.com/job/123")));
 
         Optional<BotResponse> response = handler.handle(message);
 
@@ -68,9 +69,21 @@ class VacancyImportMessageHandlerTest {
     }
 
     @Test
-    void handle_invalidUrl_returnsHelpfulGuidance() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.InvalidUrl("URL must use http or https"));
+    void handle_descriptionAccepted_returnsAcknowledgmentWithoutClaimingAnalysis() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.DescriptionAccepted(UUID.randomUUID()));
+
+        Optional<BotResponse> response = handler.handle(message);
+
+        assertThat(response).isPresent();
+        assertThat(response.get().text()).isEqualTo("✅ Vacancy description received.");
+        assertThat(response.get().text()).doesNotContain("analy", "extract");
+    }
+
+    @Test
+    void handle_invalidUrl_returnsUrlGuidance() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.InvalidUrl("URL must use http or https"));
 
         Optional<BotResponse> response = handler.handle(message);
 
@@ -80,9 +93,21 @@ class VacancyImportMessageHandlerTest {
     }
 
     @Test
+    void handle_invalidDescription_returnsDescriptionGuidanceWithoutInternalThreshold() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.InvalidDescription("Vacancy description is too short to be meaningful"));
+
+        Optional<BotResponse> response = handler.handle(message);
+
+        assertThat(response).isPresent();
+        assertThat(response.get().text()).contains("too short");
+        assertThat(response.get().text()).doesNotContain("20");
+    }
+
+    @Test
     void handle_noActiveSession_returnsEmptyToPreserveFallbackBehavior() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.NoActiveSession());
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.NoActiveSession());
 
         Optional<BotResponse> response = handler.handle(message);
 
@@ -91,8 +116,8 @@ class VacancyImportMessageHandlerTest {
 
     @Test
     void handle_expiredSession_returnsRestartGuidance() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.SessionExpired());
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.SessionExpired());
 
         Optional<BotResponse> response = handler.handle(message);
 
@@ -102,31 +127,21 @@ class VacancyImportMessageHandlerTest {
     }
 
     @Test
-    void handle_waitingForDescriptionState_returnsCorrectGuidance() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.UnexpectedState(ImportState.WAITING_FOR_DESCRIPTION));
+    void handle_extractingState_returnsProcessingGuidance() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.UnexpectedState(ImportState.EXTRACTING));
 
         Optional<BotResponse> response = handler.handle(message);
 
         assertThat(response).isPresent();
-        assertThat(response.get().text()).contains("vacancy link has already been received");
+        assertThat(response.get().text()).contains("already been received");
+        assertThat(response.get().text()).contains("being processed");
     }
 
     @Test
-    void handle_extractingState_returnsCorrectGuidance() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.UnexpectedState(ImportState.EXTRACTING));
-
-        Optional<BotResponse> response = handler.handle(message);
-
-        assertThat(response).isPresent();
-        assertThat(response.get().text()).contains("currently being processed");
-    }
-
-    @Test
-    void handle_waitingForConfirmationState_returnsCorrectGuidance() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
-                .thenReturn(new ProvideVacancyUrlResult.UnexpectedState(ImportState.WAITING_FOR_CONFIRMATION));
+    void handle_waitingForConfirmationState_returnsConfirmationGuidance() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.UnexpectedState(ImportState.WAITING_FOR_CONFIRMATION));
 
         Optional<BotResponse> response = handler.handle(message);
 
@@ -136,7 +151,7 @@ class VacancyImportMessageHandlerTest {
 
     @Test
     void handle_useCaseThrowsUnexpectedException_returnsGenericMessageWithoutLeakingDetails() {
-        when(provideVacancyUrlUseCase.provideUrl(CHAT_ID, USER_ID, "https://example.com/job/123"))
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
                 .thenThrow(new RuntimeException("ERROR: relation \"vacancy_import_session\" violates constraint"));
 
         Optional<BotResponse> response = handler.handle(message);
