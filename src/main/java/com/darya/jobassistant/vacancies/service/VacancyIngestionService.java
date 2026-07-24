@@ -4,6 +4,7 @@ import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
+import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import java.util.ArrayList;
@@ -32,17 +33,17 @@ public class VacancyIngestionService {
     }
 
     /**
-     * Batch counterpart of {@link #persist(JobOffer)} used by automatic ingestion:
-     * reports fetched/new/already-known counts instead of just the resolved vacancy,
-     * so callers can tell which vacancies are new without re-deriving that from persist().
+     * Batch counterpart used by automatic ingestion. Unlike {@link #persist(JobOffer)}, novelty
+     * is decided atomically by the database via {@link VacancyRepository#saveIfAbsent} - there is
+     * no preliminary existence check, so this is safe under concurrent ingestion callers.
      */
     public VacancyIngestionResult ingest(List<JobOffer> jobOffers) {
         List<Vacancy> persisted = new ArrayList<>();
         int alreadyKnown = 0;
         for (JobOffer jobOffer : jobOffers) {
             try {
-                PersistOutcome outcome = persistOrGetExisting(jobOffer);
-                if (outcome.newlyPersisted()) {
+                VacancyPersistenceResult outcome = insertIfAbsent(jobOffer);
+                if (outcome.isInserted()) {
                     persisted.add(outcome.vacancy());
                 } else {
                     alreadyKnown++;
@@ -56,24 +57,36 @@ public class VacancyIngestionService {
     }
 
     private PersistOutcome persistOrGetExisting(JobOffer jobOffer) {
-        if (!StringUtils.hasText(jobOffer.url())) {
-            throw new IllegalArgumentException("Job offer has no URL, cannot persist: " + jobOffer.title());
-        }
+        requireUrl(jobOffer);
         return vacancyRepository.findByUrl(jobOffer.url())
                 .map(existing -> new PersistOutcome(existing, false))
                 .orElseGet(() -> new PersistOutcome(save(jobOffer), true));
     }
 
+    private VacancyPersistenceResult insertIfAbsent(JobOffer jobOffer) {
+        requireUrl(jobOffer);
+        return vacancyRepository.saveIfAbsent(buildVacancy(jobOffer));
+    }
+
+    private void requireUrl(JobOffer jobOffer) {
+        if (!StringUtils.hasText(jobOffer.url())) {
+            throw new IllegalArgumentException("Job offer has no URL, cannot persist: " + jobOffer.title());
+        }
+    }
+
     private Vacancy save(JobOffer jobOffer) {
+        return vacancyRepository.save(buildVacancy(jobOffer));
+    }
+
+    private Vacancy buildVacancy(JobOffer jobOffer) {
         Company company = companyService.findOrCreateByName(jobOffer.company());
-        Vacancy vacancy = Vacancy.builder()
+        return Vacancy.builder()
                 .company(company)
                 .title(jobOffer.title())
                 .description(jobOffer.description())
                 .url(jobOffer.url())
                 .source(jobOffer.source())
                 .build();
-        return vacancyRepository.save(vacancy);
     }
 
     private record PersistOutcome(Vacancy vacancy, boolean newlyPersisted) {
