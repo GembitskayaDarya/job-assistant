@@ -1,7 +1,6 @@
 package com.darya.jobassistant.notifications.query;
 
 import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
-import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -89,16 +88,7 @@ public class JobNotificationCandidateQueryAdapter implements JobNotificationCand
     }
 
     private JobNotificationCandidate toCandidate(Vacancy vacancy, JobAnalysisEntity analysisEntity) {
-        PersistedJobAnalysis analysis = new PersistedJobAnalysis(
-                analysisEntity.getId(),
-                analysisEntity.getVacancyId(),
-                new JobAnalysis(
-                        analysisEntity.getScore(),
-                        analysisEntity.getPros(),
-                        analysisEntity.getCons(),
-                        analysisEntity.getMissingSkills(),
-                        analysisEntity.getSummary()),
-                analysisEntity.getCreatedAt());
+        PersistedJobAnalysis analysis = JobAnalysisRepository.toDomain(analysisEntity);
         return new JobNotificationCandidate(vacancy, analysis);
     }
 

@@ -3,6 +3,7 @@ package com.darya.jobassistant.monitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -13,6 +14,8 @@ import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
+import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
@@ -29,6 +32,8 @@ import com.darya.jobassistant.notifications.dto.NotificationDelivery;
 import com.darya.jobassistant.notifications.dto.NotificationDeliveryTransitionResult;
 import com.darya.jobassistant.notifications.dto.NotificationReservationResult;
 import com.darya.jobassistant.notifications.entity.NotificationDeliveryStatus;
+import com.darya.jobassistant.notifications.query.JobNotificationCandidate;
+import com.darya.jobassistant.notifications.query.JobNotificationCandidateQueryPort;
 import com.darya.jobassistant.notifications.repository.NotificationDeliveryRepository;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -42,6 +47,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -64,6 +70,10 @@ class JobMonitoringServiceTest {
     @Mock
     private JobAnalysisService jobAnalysisService;
     @Mock
+    private JobAnalysisRepository jobAnalysisRepository;
+    @Mock
+    private JobNotificationCandidateQueryPort jobNotificationCandidateQueryPort;
+    @Mock
     private JobNotificationFactory jobNotificationFactory;
     @Mock
     private JobNotificationPort jobNotificationPort;
@@ -80,273 +90,399 @@ class JobMonitoringServiceTest {
     void setUp() {
         service = new JobMonitoringService(
                 List.of(), vacancyIngestionService, vacancyJobOfferMapper, candidateProfileProvider,
-                jobAnalysisService, jobNotificationFactory, jobNotificationPort, notificationDeliveryRepository, clock);
+                jobAnalysisService, jobAnalysisRepository, jobNotificationCandidateQueryPort,
+                jobNotificationFactory, jobNotificationPort, notificationDeliveryRepository, clock);
     }
 
-    // A. Empty ingestion result
+    // A. Candidate profile is loaded exactly once
     @Test
-    void monitor_emptyIngestionResult_returnsZeroCountersAndSkipsDownstreamCalls() {
+    void monitor_loadsCandidateProfileExactlyOnce() {
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
-
-        JobMonitoringResult result = service.monitor(command(50, 5));
-
-        assertThat(result).isEqualTo(new JobMonitoringResult(0, 0, 0, 0, 0, 0));
-        verifyNoInteractions(candidateProfileProvider, jobAnalysisService, jobNotificationFactory,
-                jobNotificationPort, notificationDeliveryRepository);
-    }
-
-    // B. All below threshold
-    @Test
-    void monitor_allVacanciesBelowThreshold_analyzesAllButNoMatchesOrNotifications() {
-        Vacancy v1 = vacancy();
-        Vacancy v2 = vacancy();
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(v1, v2), 0));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(v1)).thenReturn(offer("1"));
-        when(vacancyJobOfferMapper.toJobOffer(v2)).thenReturn(offer("2"));
-        when(jobAnalysisService.analyze(eq(profile), any())).thenReturn(analysis(30));
-
-        JobMonitoringResult result = service.monitor(command(50, 5));
-
-        assertThat(result.analyzedCount()).isEqualTo(2);
-        assertThat(result.matchedCount()).isZero();
-        assertThat(result.notifiedCount()).isZero();
-        assertThat(result.failedCount()).isZero();
-        verifyNoInteractions(notificationDeliveryRepository, jobNotificationPort, jobNotificationFactory);
-    }
-
-    // C. Ranked by score descending
-    @Test
-    void monitor_matchingVacancies_areNotifiedInScoreDescendingOrder() {
-        Vacancy low = vacancy();
-        Vacancy high = vacancy();
-        JobOffer lowOffer = offer("low");
-        JobOffer highOffer = offer("high");
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(low, high), 0));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(low)).thenReturn(lowOffer);
-        when(vacancyJobOfferMapper.toJobOffer(high)).thenReturn(highOffer);
-        when(jobAnalysisService.analyze(profile, lowOffer)).thenReturn(analysis(60));
-        when(jobAnalysisService.analyze(profile, highOffer)).thenReturn(analysis(95));
-        stubGenericSuccessfulSend();
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
         service.monitor(command(50, 5));
 
-        InOrder inOrder = inOrder(notificationDeliveryRepository);
-        inOrder.verify(notificationDeliveryRepository).reserve(eq(high.getId()), any(), any());
-        inOrder.verify(notificationDeliveryRepository).reserve(eq(low.getId()), any(), any());
+        verify(candidateProfileProvider, times(1)).getProfile();
     }
 
-    // D. Equal scores preserve ingestion order
+    // B. Profile failure prevents ingestion and propagates safely
     @Test
-    void monitor_equalScores_preserveIngestionOrderAsTiebreaker() {
+    void monitor_profileLoadingFails_preventsIngestionAndPropagatesSafely() {
+        when(candidateProfileProvider.getProfile()).thenThrow(new IllegalStateException("profile config missing"));
+
+        assertThatThrownBy(() -> service.monitor(command(50, 5)))
+                .isInstanceOf(JobMonitoringException.class)
+                .hasMessage("Unable to load candidate profile for job monitoring");
+
+        verifyNoInteractions(vacancyIngestionService, jobAnalysisService, jobAnalysisRepository,
+                jobNotificationCandidateQueryPort, jobNotificationFactory, jobNotificationPort, notificationDeliveryRepository);
+    }
+
+    // C. Empty ingestion still queries the notification backlog
+    @Test
+    void monitor_emptyIngestion_stillQueriesNotificationBacklog() {
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        verify(jobNotificationCandidateQueryPort).findCandidates(RECIPIENT_CHAT_ID, 50, 5);
+        assertThat(result).isEqualTo(new JobMonitoringResult(0, 0, 0, 0, 0, 0));
+        verifyNoInteractions(jobAnalysisService, jobAnalysisRepository);
+    }
+
+    // D. No new vacancies but an existing backlog candidate is reserved and sent
+    @Test
+    void monitor_noNewVacancies_existingBacklogCandidateIsReservedAndSent() {
+        Vacancy backlogVacancy = vacancy();
+        JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(backlogVacancy, analysis);
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
+        stubSuccessfulSend(backlogVacancy, analysis);
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        assertThat(result.persistedCount()).isZero();
+        assertThat(result.matchedCount()).isEqualTo(1);
+        assertThat(result.notifiedCount()).isEqualTo(1);
+        verify(notificationDeliveryRepository).reserve(backlogVacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT);
+    }
+
+    // E. Every newly persisted Vacancy is analyzed in ingestion order
+    @Test
+    void monitor_analyzesEveryNewVacancyInIngestionOrder() {
         Vacancy first = vacancy();
         Vacancy second = vacancy();
         JobOffer firstOffer = offer("1");
         JobOffer secondOffer = offer("2");
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(first, second), 0));
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(first, second), 0));
         when(vacancyJobOfferMapper.toJobOffer(first)).thenReturn(firstOffer);
         when(vacancyJobOfferMapper.toJobOffer(second)).thenReturn(secondOffer);
-        when(jobAnalysisService.analyze(profile, firstOffer)).thenReturn(analysis(80));
-        when(jobAnalysisService.analyze(profile, secondOffer)).thenReturn(analysis(80));
-        stubGenericSuccessfulSend();
+        when(jobAnalysisService.analyze(profile, firstOffer)).thenReturn(analysis(10));
+        when(jobAnalysisService.analyze(profile, secondOffer)).thenReturn(analysis(20));
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        service.monitor(command(50, 5));
+
+        InOrder inOrder = inOrder(jobAnalysisService);
+        inOrder.verify(jobAnalysisService).analyze(profile, firstOffer);
+        inOrder.verify(jobAnalysisService).analyze(profile, secondOffer);
+    }
+
+    // F. Successful analysis is persisted and increments analyzedCount only after persistence succeeds
+    @Test
+    void monitor_successfulAnalysis_isPersistedAndIncrementsAnalyzedCount() {
+        Vacancy vacancy = vacancy();
+        JobOffer offer = offer("1");
+        JobAnalysis analysis = analysis(80);
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
+        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        verify(jobAnalysisRepository).persist(vacancy.getId(), analysis);
+        assertThat(result.analyzedCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+    }
+
+    // G. Analysis failure increments failedCount once and remaining Vacancies continue
+    @Test
+    void monitor_analysisFailureForOneVacancy_incrementsFailedCountOnceAndContinuesWithRemaining() {
+        Vacancy failing = vacancy();
+        Vacancy succeeding = vacancy();
+        JobOffer failingOffer = offer("1");
+        JobOffer succeedingOffer = offer("2");
+        JobAnalysis okAnalysis = analysis(20);
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(failing, succeeding), 0));
+        when(vacancyJobOfferMapper.toJobOffer(failing)).thenReturn(failingOffer);
+        when(vacancyJobOfferMapper.toJobOffer(succeeding)).thenReturn(succeedingOffer);
+        when(jobAnalysisService.analyze(profile, failingOffer)).thenThrow(new JobAnalysisException("boom"));
+        when(jobAnalysisService.analyze(profile, succeedingOffer)).thenReturn(okAnalysis);
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        assertThat(result.analyzedCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        verify(jobAnalysisRepository).persist(succeeding.getId(), okAnalysis);
+        verify(jobAnalysisRepository, never()).persist(eq(failing.getId()), any());
+    }
+
+    // H. JobAnalysis persistence failure increments failedCount once and remaining Vacancies continue
+    @Test
+    void monitor_analysisPersistenceFailureForOneVacancy_incrementsFailedCountOnceAndContinuesWithRemaining() {
+        Vacancy failing = vacancy();
+        Vacancy succeeding = vacancy();
+        JobOffer failingOffer = offer("1");
+        JobOffer succeedingOffer = offer("2");
+        JobAnalysis failingAnalysis = analysis(70);
+        JobAnalysis okAnalysis = analysis(20);
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(failing, succeeding), 0));
+        when(vacancyJobOfferMapper.toJobOffer(failing)).thenReturn(failingOffer);
+        when(vacancyJobOfferMapper.toJobOffer(succeeding)).thenReturn(succeedingOffer);
+        when(jobAnalysisService.analyze(profile, failingOffer)).thenReturn(failingAnalysis);
+        when(jobAnalysisService.analyze(profile, succeedingOffer)).thenReturn(okAnalysis);
+        when(jobAnalysisRepository.persist(failing.getId(), failingAnalysis)).thenThrow(new RuntimeException("db down"));
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        assertThat(result.analyzedCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        verify(jobAnalysisRepository).persist(succeeding.getId(), okAnalysis);
+    }
+
+    // I. Backlog query occurs after all new analysis persistence attempts
+    @Test
+    void monitor_backlogQuery_occursAfterAllNewVacancyAnalysisAttempts() {
+        Vacancy vacancy = vacancy();
+        JobOffer offer = offer("1");
+        JobAnalysis analysis = analysis(80);
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
+        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        service.monitor(command(50, 5));
+
+        InOrder inOrder = inOrder(jobAnalysisRepository, jobNotificationCandidateQueryPort);
+        inOrder.verify(jobAnalysisRepository).persist(vacancy.getId(), analysis);
+        inOrder.verify(jobNotificationCandidateQueryPort).findCandidates(any(), anyInt(), anyInt());
+    }
+
+    // J. Backlog query receives recipientChatId, minimumScore, and maxNotifications
+    @Test
+    void monitor_backlogQuery_receivesRecipientMinimumScoreAndMaxNotifications() {
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        service.monitor(command(65, 7));
+
+        verify(jobNotificationCandidateQueryPort).findCandidates(RECIPIENT_CHAT_ID, 65, 7);
+    }
+
+    // K. matchedCount equals the number of returned backlog candidates
+    @Test
+    void monitor_matchedCount_equalsNumberOfReturnedBacklogCandidates() {
+        Vacancy v1 = vacancy();
+        Vacancy v2 = vacancy();
+        Vacancy v3 = vacancy();
+        JobAnalysis a1 = analysis(95);
+        JobAnalysis a2 = analysis(90);
+        JobAnalysis a3 = analysis(85);
+        List<JobNotificationCandidate> candidates =
+                List.of(candidateFor(v1, a1), candidateFor(v2, a2), candidateFor(v3, a3));
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(candidates);
+        stubSuccessfulSend(v1, a1);
+        stubSuccessfulSend(v2, a2);
+        stubSuccessfulSend(v3, a3);
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        assertThat(result.matchedCount()).isEqualTo(3);
+    }
+
+    // L. Returned backlog order is preserved during sending
+    @Test
+    void monitor_preservesBacklogOrderWhileSending() {
+        Vacancy first = vacancy();
+        Vacancy second = vacancy();
+        Vacancy third = vacancy();
+        // deliberately not in score order, to prove the service does not re-sort
+        JobAnalysis firstAnalysis = analysis(60);
+        JobAnalysis secondAnalysis = analysis(95);
+        JobAnalysis thirdAnalysis = analysis(80);
+        List<JobNotificationCandidate> candidates = List.of(
+                candidateFor(first, firstAnalysis), candidateFor(second, secondAnalysis), candidateFor(third, thirdAnalysis));
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(candidates);
+        stubSuccessfulSend(first, firstAnalysis);
+        stubSuccessfulSend(second, secondAnalysis);
+        stubSuccessfulSend(third, thirdAnalysis);
 
         service.monitor(command(50, 5));
 
         InOrder inOrder = inOrder(notificationDeliveryRepository);
         inOrder.verify(notificationDeliveryRepository).reserve(eq(first.getId()), any(), any());
         inOrder.verify(notificationDeliveryRepository).reserve(eq(second.getId()), any(), any());
+        inOrder.verify(notificationDeliveryRepository).reserve(eq(third.getId()), any(), any());
     }
 
-    // E. maxNotifications bounds successful provider calls
+    // M. JobNotificationFactory is called before reservation
     @Test
-    void monitor_maxNotifications_stopsSuccessfulSendsAtTheLimit() {
-        Vacancy v1 = vacancy();
-        Vacancy v2 = vacancy();
-        Vacancy v3 = vacancy();
-        JobOffer o1 = offer("1");
-        JobOffer o2 = offer("2");
-        JobOffer o3 = offer("3");
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(3, List.of(v1, v2, v3), 0));
+    void monitor_callsNotificationFactoryBeforeReservingDelivery() {
+        Vacancy vacancy = vacancy();
+        JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(v1)).thenReturn(o1);
-        when(vacancyJobOfferMapper.toJobOffer(v2)).thenReturn(o2);
-        when(vacancyJobOfferMapper.toJobOffer(v3)).thenReturn(o3);
-        when(jobAnalysisService.analyze(profile, o1)).thenReturn(analysis(95));
-        when(jobAnalysisService.analyze(profile, o2)).thenReturn(analysis(90));
-        when(jobAnalysisService.analyze(profile, o3)).thenReturn(analysis(85));
-        stubGenericSuccessfulSend();
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
+        stubSuccessfulSend(vacancy, analysis);
 
-        JobMonitoringResult result = service.monitor(command(50, 2));
+        service.monitor(command(50, 5));
 
-        assertThat(result.matchedCount()).isEqualTo(3);
-        assertThat(result.notifiedCount()).isEqualTo(2);
-        verify(jobNotificationPort, times(2)).send(any());
-        verify(notificationDeliveryRepository, times(2)).reserve(any(), any(), any());
+        InOrder inOrder = inOrder(jobNotificationFactory, notificationDeliveryRepository);
+        inOrder.verify(jobNotificationFactory).create(vacancy, analysis, RECIPIENT_CHAT_ID);
+        inOrder.verify(notificationDeliveryRepository).reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT);
     }
 
-    // E. maxNotifications also bounds failed provider calls
+    // N. Factory failure does not reserve delivery
     @Test
-    void monitor_maxNotifications_alsoBoundsFailedProviderCalls() {
-        Vacancy v1 = vacancy();
-        Vacancy v2 = vacancy();
-        JobOffer o1 = offer("1");
-        JobOffer o2 = offer("2");
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(v1, v2), 0));
+    void monitor_notificationFactoryFailure_doesNotReserveDeliveryAndIncrementsFailedCountOnce() {
+        Vacancy vacancy = vacancy();
+        JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(v1)).thenReturn(o1);
-        when(vacancyJobOfferMapper.toJobOffer(v2)).thenReturn(o2);
-        when(jobAnalysisService.analyze(profile, o1)).thenReturn(analysis(95));
-        when(jobAnalysisService.analyze(profile, o2)).thenReturn(analysis(90));
-        when(jobNotificationFactory.create(any(), any(), any())).thenAnswer(inv -> notification());
-        when(notificationDeliveryRepository.reserve(any(), any(), any())).thenAnswer(
-                inv -> NotificationReservationResult.reserved(pendingDelivery(inv.getArgument(0))));
-        when(jobNotificationPort.send(any()))
-                .thenThrow(new JobNotificationException(JobNotificationFailureType.PERMANENT_FAILURE, "nope"));
-        when(notificationDeliveryRepository.markFailed(any(), any(), any()))
-                .thenAnswer(inv -> NotificationDeliveryTransitionResult.updated(failedDelivery()));
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
+        when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID))
+                .thenThrow(new IllegalArgumentException("bad data"));
 
-        JobMonitoringResult result = service.monitor(command(50, 1));
+        JobMonitoringResult result = service.monitor(command(50, 5));
 
-        assertThat(result.notifiedCount()).isZero();
         assertThat(result.failedCount()).isEqualTo(1);
-        verify(jobNotificationPort, times(1)).send(any());
-        verify(notificationDeliveryRepository, times(1)).reserve(any(), any(), any());
+        assertThat(result.notifiedCount()).isZero();
+        verify(notificationDeliveryRepository, never()).reserve(any(), any(), any());
     }
 
-    // F. ALREADY_EXISTS reservation
+    // O. ALREADY_EXISTS does not send, does not fail, and processing continues
     @Test
-    void monitor_alreadyExistsReservation_skipsWithoutFailureAndWithoutConsumingAttemptSlot() {
+    void monitor_alreadyExistsReservation_doesNotSendDoesNotFailAndContinuesToNextCandidate() {
         Vacancy v1 = vacancy();
         Vacancy v2 = vacancy();
-        JobOffer o1 = offer("1");
-        JobOffer o2 = offer("2");
+        JobAnalysis a1 = analysis(95);
+        JobAnalysis a2 = analysis(90);
+        JobNotificationCandidate c1 = candidateFor(v1, a1);
+        JobNotificationCandidate c2 = candidateFor(v2, a2);
         JobNotification n1 = notification();
-        JobNotification n2 = notification();
-        UUID deliveryId2 = UUID.randomUUID();
-        NotificationDelivery pending2 = new NotificationDelivery(
-                deliveryId2, v2.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, FIXED_INSTANT, null, null, null);
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(v1, v2), 0));
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(v1)).thenReturn(o1);
-        when(vacancyJobOfferMapper.toJobOffer(v2)).thenReturn(o2);
-        when(jobAnalysisService.analyze(profile, o1)).thenReturn(analysis(95));
-        when(jobAnalysisService.analyze(profile, o2)).thenReturn(analysis(90));
-        when(jobNotificationFactory.create(v1, analysis(95), RECIPIENT_CHAT_ID)).thenReturn(n1);
-        when(jobNotificationFactory.create(v2, analysis(90), RECIPIENT_CHAT_ID)).thenReturn(n2);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(c1, c2));
+        when(jobNotificationFactory.create(v1, a1, RECIPIENT_CHAT_ID)).thenReturn(n1);
         when(notificationDeliveryRepository.reserve(v1.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
                 .thenReturn(NotificationReservationResult.alreadyExists());
-        when(notificationDeliveryRepository.reserve(v2.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
-                .thenReturn(NotificationReservationResult.reserved(pending2));
-        when(jobNotificationPort.send(n2)).thenReturn(JobNotificationResult.accepted());
-        when(notificationDeliveryRepository.markSent(deliveryId2, FIXED_INSTANT))
-                .thenReturn(NotificationDeliveryTransitionResult.updated(sentDelivery()));
-
-        JobMonitoringResult result = service.monitor(command(50, 1));
-
-        assertThat(result.notifiedCount()).isEqualTo(1);
-        assertThat(result.failedCount()).isZero();
-        verify(jobNotificationPort, never()).send(n1);
-        verify(jobNotificationPort, times(1)).send(n2);
-    }
-
-    // G. Successful send
-    @Test
-    void monitor_successfulSend_reservesSendsAndMarksTheSameDeliverySent() {
-        Vacancy vacancy = vacancy();
-        JobOffer offer = offer("1");
-        JobAnalysis analysis = analysis(90);
-        JobNotification notification = notification();
-        UUID deliveryId = UUID.randomUUID();
-        NotificationDelivery pending = new NotificationDelivery(
-                deliveryId, vacancy.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, FIXED_INSTANT, null, null, null);
-        NotificationDelivery sent = new NotificationDelivery(
-                deliveryId, vacancy.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.SENT, FIXED_INSTANT, FIXED_INSTANT, null, null);
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
-        when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
-        when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
-                .thenReturn(NotificationReservationResult.reserved(pending));
-        when(jobNotificationPort.send(notification)).thenReturn(JobNotificationResult.accepted("msg-1"));
-        when(notificationDeliveryRepository.markSent(deliveryId, FIXED_INSTANT))
-                .thenReturn(NotificationDeliveryTransitionResult.updated(sent));
+        stubSuccessfulSend(v2, a2);
 
         JobMonitoringResult result = service.monitor(command(50, 5));
 
         assertThat(result.notifiedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
-
-        InOrder inOrder = inOrder(notificationDeliveryRepository, jobNotificationPort);
-        inOrder.verify(notificationDeliveryRepository).reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT);
-        inOrder.verify(jobNotificationPort).send(notification);
-        inOrder.verify(notificationDeliveryRepository).markSent(deliveryId, FIXED_INSTANT);
+        verify(jobNotificationPort, never()).send(n1);
+        verify(jobNotificationPort, times(1)).send(any());
     }
 
-    // H. JobNotificationException
+    // P. Successful delivery follows factory -> reserve -> send -> markSent
     @Test
-    void monitor_jobNotificationException_marksFailedWithFailureTypeNameAndContinues() {
+    void monitor_successfulDelivery_followsFactoryThenReserveThenSendThenMarkSent() {
         Vacancy vacancy = vacancy();
-        JobOffer offer = offer("1");
         JobAnalysis analysis = analysis(90);
-        JobNotification notification = notification();
-        UUID deliveryId = UUID.randomUUID();
-        NotificationDelivery pending = new NotificationDelivery(
-                deliveryId, vacancy.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, FIXED_INSTANT, null, null, null);
-        NotificationDelivery failed = new NotificationDelivery(
-                deliveryId, vacancy.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.FAILED,
-                FIXED_INSTANT, null, FIXED_INSTANT, "PERMANENT_FAILURE");
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
+        NotificationDelivery pending = stubSuccessfulSend(vacancy, analysis);
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        assertThat(result.notifiedCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+        InOrder inOrder = inOrder(jobNotificationFactory, notificationDeliveryRepository, jobNotificationPort);
+        inOrder.verify(jobNotificationFactory).create(vacancy, analysis, RECIPIENT_CHAT_ID);
+        inOrder.verify(notificationDeliveryRepository).reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT);
+        inOrder.verify(jobNotificationPort).send(any());
+        inOrder.verify(notificationDeliveryRepository).markSent(pending.id(), FIXED_INSTANT);
+    }
+
+    // Q. JobNotificationException follows factory -> reserve -> send failure -> markFailed
+    @Test
+    void monitor_jobNotificationException_followsFactoryThenReserveThenSendFailureThenMarkFailed() {
+        Vacancy vacancy = vacancy();
+        JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
+        JobNotification notification = notification();
+        NotificationDelivery pending = pendingDelivery(vacancy.getId());
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
         when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
                 .thenReturn(NotificationReservationResult.reserved(pending));
         when(jobNotificationPort.send(notification))
                 .thenThrow(new JobNotificationException(JobNotificationFailureType.PERMANENT_FAILURE, "cannot deliver"));
-        when(notificationDeliveryRepository.markFailed(deliveryId, FIXED_INSTANT, "PERMANENT_FAILURE"))
-                .thenReturn(NotificationDeliveryTransitionResult.updated(failed));
+        when(notificationDeliveryRepository.markFailed(pending.id(), FIXED_INSTANT, "PERMANENT_FAILURE"))
+                .thenReturn(NotificationDeliveryTransitionResult.updated(failedDelivery()));
 
         JobMonitoringResult result = service.monitor(command(50, 5));
 
         assertThat(result.notifiedCount()).isZero();
         assertThat(result.failedCount()).isEqualTo(1);
-
-        InOrder inOrder = inOrder(notificationDeliveryRepository, jobNotificationPort);
+        InOrder inOrder = inOrder(jobNotificationFactory, notificationDeliveryRepository, jobNotificationPort);
+        inOrder.verify(jobNotificationFactory).create(vacancy, analysis, RECIPIENT_CHAT_ID);
         inOrder.verify(notificationDeliveryRepository).reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT);
         inOrder.verify(jobNotificationPort).send(notification);
-        inOrder.verify(notificationDeliveryRepository).markFailed(deliveryId, FIXED_INSTANT, "PERMANENT_FAILURE");
-        verify(notificationDeliveryRepository, never()).markSent(any(), any());
+        inOrder.verify(notificationDeliveryRepository).markFailed(pending.id(), FIXED_INSTANT, "PERMANENT_FAILURE");
     }
 
-    // I. send failure plus markFailed failure -> failedCount increases only once
+    // R. markFailed receives only failureType.name(), never the raw exception message
     @Test
-    void monitor_sendFailureAndMarkFailedFailure_failedCountIncreasesOnlyOnce() {
+    void monitor_markFailed_receivesOnlyFailureTypeNameNeverTheExceptionMessage() {
         Vacancy vacancy = vacancy();
-        JobOffer offer = offer("1");
         JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         JobNotification notification = notification();
-        UUID deliveryId = UUID.randomUUID();
-        NotificationDelivery pending = new NotificationDelivery(
-                deliveryId, vacancy.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, FIXED_INSTANT, null, null, null);
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        NotificationDelivery pending = pendingDelivery(vacancy.getId());
+        String rawProviderMessage = "raw provider response: rate limit exceeded for chat 12345";
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
+        when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
+        when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
+                .thenReturn(NotificationReservationResult.reserved(pending));
+        when(jobNotificationPort.send(notification))
+                .thenThrow(new JobNotificationException(JobNotificationFailureType.TEMPORARY_FAILURE, rawProviderMessage));
+        when(notificationDeliveryRepository.markFailed(any(), any(), any()))
+                .thenReturn(NotificationDeliveryTransitionResult.updated(failedDelivery()));
+
+        service.monitor(command(50, 5));
+
+        ArgumentCaptor<String> failureCodeCaptor = ArgumentCaptor.forClass(String.class);
+        verify(notificationDeliveryRepository).markFailed(eq(pending.id()), eq(FIXED_INSTANT), failureCodeCaptor.capture());
+        assertThat(failureCodeCaptor.getValue()).isEqualTo(JobNotificationFailureType.TEMPORARY_FAILURE.name());
+        assertThat(failureCodeCaptor.getValue()).doesNotContain(rawProviderMessage);
+    }
+
+    // S. Send failure plus markFailed failure increments failedCount only once
+    @Test
+    void monitor_sendFailureAndMarkFailedFailure_incrementsFailedCountOnlyOnce() {
+        Vacancy vacancy = vacancy();
+        JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
+        JobNotification notification = notification();
+        NotificationDelivery pending = pendingDelivery(vacancy.getId());
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
         when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
                 .thenReturn(NotificationReservationResult.reserved(pending));
         when(jobNotificationPort.send(notification))
                 .thenThrow(new JobNotificationException(JobNotificationFailureType.TEMPORARY_FAILURE, "provider down"));
-        when(notificationDeliveryRepository.markFailed(any(), any(), any()))
-                .thenThrow(new RuntimeException("db unavailable"));
+        when(notificationDeliveryRepository.markFailed(any(), any(), any())).thenThrow(new RuntimeException("db unavailable"));
 
         JobMonitoringResult result = service.monitor(command(50, 5));
 
@@ -354,26 +490,23 @@ class JobMonitoringServiceTest {
         assertThat(result.notifiedCount()).isZero();
     }
 
-    // J. provider accepts but markSent fails
+    // T. Provider acceptance plus markSent failure increments both notifiedCount and failedCount
+    // U. markFailed is not called after provider acceptance
     @Test
-    void monitor_providerAcceptsButMarkSentFails_incrementsBothNotifiedAndFailedWithoutResendOrMarkFailed() {
+    void monitor_providerAcceptsButMarkSentFails_incrementsBothNotifiedAndFailedAndNeverCallsMarkFailed() {
         Vacancy vacancy = vacancy();
-        JobOffer offer = offer("1");
         JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         JobNotification notification = notification();
-        UUID deliveryId = UUID.randomUUID();
-        NotificationDelivery pending = new NotificationDelivery(
-                deliveryId, vacancy.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, FIXED_INSTANT, null, null, null);
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        NotificationDelivery pending = pendingDelivery(vacancy.getId());
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
         when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
                 .thenReturn(NotificationReservationResult.reserved(pending));
         when(jobNotificationPort.send(notification)).thenReturn(JobNotificationResult.accepted());
-        when(notificationDeliveryRepository.markSent(deliveryId, FIXED_INSTANT))
+        when(notificationDeliveryRepository.markSent(pending.id(), FIXED_INSTANT))
                 .thenReturn(NotificationDeliveryTransitionResult.notFound());
 
         JobMonitoringResult result = service.monitor(command(50, 5));
@@ -384,108 +517,22 @@ class JobMonitoringServiceTest {
         verify(notificationDeliveryRepository, never()).markFailed(any(), any(), any());
     }
 
-    // K. analysis failure for one vacancy
-    @Test
-    void monitor_analysisFailureForOneVacancy_countsFailedOnceAndContinuesWithRemaining() {
-        Vacancy failing = vacancy();
-        Vacancy succeeding = vacancy();
-        JobOffer failingOffer = offer("1");
-        JobOffer succeedingOffer = offer("2");
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(failing, succeeding), 0));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(failing)).thenReturn(failingOffer);
-        when(vacancyJobOfferMapper.toJobOffer(succeeding)).thenReturn(succeedingOffer);
-        when(jobAnalysisService.analyze(profile, failingOffer)).thenThrow(new JobAnalysisException("boom"));
-        when(jobAnalysisService.analyze(profile, succeedingOffer)).thenReturn(analysis(20));
-
-        JobMonitoringResult result = service.monitor(command(50, 5));
-
-        assertThat(result.analyzedCount()).isEqualTo(1);
-        assertThat(result.failedCount()).isEqualTo(1);
-        assertThat(result.matchedCount()).isZero();
-    }
-
-    // L. reservation failure
-    @Test
-    void monitor_reservationFailure_countsFailedOnceAndDoesNotCallNotificationSender() {
-        Vacancy vacancy = vacancy();
-        JobOffer offer = offer("1");
-        JobAnalysis analysis = analysis(90);
-        JobNotification notification = notification();
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
-        when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
-        when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
-                .thenThrow(new RuntimeException("db error"));
-
-        JobMonitoringResult result = service.monitor(command(50, 5));
-
-        assertThat(result.failedCount()).isEqualTo(1);
-        assertThat(result.notifiedCount()).isZero();
-        verifyNoInteractions(jobNotificationPort);
-    }
-
-    // M. notification factory failure
-    @Test
-    void monitor_notificationFactoryFailure_countsFailedOnceWithNoReservationAndNoAttemptConsumed() {
-        Vacancy failing = vacancy();
-        Vacancy succeeding = vacancy();
-        JobOffer failingOffer = offer("1");
-        JobOffer succeedingOffer = offer("2");
-        JobAnalysis highScore = analysis(95);
-        JobAnalysis okScore = analysis(90);
-        JobNotification notification = notification();
-        UUID deliveryId = UUID.randomUUID();
-        NotificationDelivery pending = new NotificationDelivery(
-                deliveryId, succeeding.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, FIXED_INSTANT, null, null, null);
-        NotificationDelivery sent = new NotificationDelivery(
-                deliveryId, succeeding.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.SENT, FIXED_INSTANT, FIXED_INSTANT, null, null);
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(failing, succeeding), 0));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(failing)).thenReturn(failingOffer);
-        when(vacancyJobOfferMapper.toJobOffer(succeeding)).thenReturn(succeedingOffer);
-        when(jobAnalysisService.analyze(profile, failingOffer)).thenReturn(highScore);
-        when(jobAnalysisService.analyze(profile, succeedingOffer)).thenReturn(okScore);
-        when(jobNotificationFactory.create(failing, highScore, RECIPIENT_CHAT_ID))
-                .thenThrow(new IllegalArgumentException("bad data"));
-        when(jobNotificationFactory.create(succeeding, okScore, RECIPIENT_CHAT_ID)).thenReturn(notification);
-        when(notificationDeliveryRepository.reserve(succeeding.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
-                .thenReturn(NotificationReservationResult.reserved(pending));
-        when(jobNotificationPort.send(notification)).thenReturn(JobNotificationResult.accepted());
-        when(notificationDeliveryRepository.markSent(deliveryId, FIXED_INSTANT))
-                .thenReturn(NotificationDeliveryTransitionResult.updated(sent));
-
-        JobMonitoringResult result = service.monitor(command(50, 1));
-
-        assertThat(result.failedCount()).isEqualTo(1);
-        assertThat(result.notifiedCount()).isEqualTo(1);
-        verify(notificationDeliveryRepository, never()).reserve(eq(failing.getId()), any(), any());
-    }
-
-    // N. unexpected runtime send failure
+    // V. Unexpected RuntimeException from sender marks FAILED with UNEXPECTED_FAILURE
     @Test
     void monitor_unexpectedRuntimeSendFailure_marksFailedWithUnexpectedFailureCode() {
         Vacancy vacancy = vacancy();
-        JobOffer offer = offer("1");
         JobAnalysis analysis = analysis(90);
+        JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         JobNotification notification = notification();
-        UUID deliveryId = UUID.randomUUID();
-        NotificationDelivery pending = new NotificationDelivery(
-                deliveryId, vacancy.getId(), RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, FIXED_INSTANT, null, null, null);
-
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        NotificationDelivery pending = pendingDelivery(vacancy.getId());
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
         when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
                 .thenReturn(NotificationReservationResult.reserved(pending));
         when(jobNotificationPort.send(notification)).thenThrow(new RuntimeException("unexpected failure"));
-        when(notificationDeliveryRepository.markFailed(deliveryId, FIXED_INSTANT, JobNotificationFailureType.UNEXPECTED_FAILURE.name()))
+        when(notificationDeliveryRepository.markFailed(pending.id(), FIXED_INSTANT, JobNotificationFailureType.UNEXPECTED_FAILURE.name()))
                 .thenReturn(NotificationDeliveryTransitionResult.updated(failedDelivery()));
 
         JobMonitoringResult result = service.monitor(command(50, 5));
@@ -493,43 +540,90 @@ class JobMonitoringServiceTest {
         assertThat(result.failedCount()).isEqualTo(1);
         assertThat(result.notifiedCount()).isZero();
         verify(notificationDeliveryRepository)
-                .markFailed(deliveryId, FIXED_INSTANT, JobNotificationFailureType.UNEXPECTED_FAILURE.name());
+                .markFailed(pending.id(), FIXED_INSTANT, JobNotificationFailureType.UNEXPECTED_FAILURE.name());
     }
 
-    // O. candidate profile loaded once per non-empty run
+    // W. Fixed Clock values are passed to reserve, markSent, and markFailed - see P/Q/V, all use FIXED_INSTANT
+
+    // X. No notification provider calls exceed the number of returned backlog candidates
     @Test
-    void monitor_candidateProfileLoadedOncePerNonEmptyRun() {
+    void monitor_notificationProviderCallCount_neverExceedsReturnedBacklogCandidates() {
         Vacancy v1 = vacancy();
         Vacancy v2 = vacancy();
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(v1, v2), 0));
+        JobAnalysis a1 = analysis(95);
+        JobAnalysis a2 = analysis(90);
+        List<JobNotificationCandidate> candidates = List.of(candidateFor(v1, a1), candidateFor(v2, a2));
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(vacancyJobOfferMapper.toJobOffer(any())).thenReturn(offer("x"));
-        when(jobAnalysisService.analyze(any(), any())).thenReturn(analysis(10));
+        when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(candidates);
+        stubSuccessfulSend(v1, a1);
+        stubSuccessfulSend(v2, a2);
 
-        service.monitor(command(50, 5));
+        service.monitor(command(50, 2));
 
-        verify(candidateProfileProvider, times(1)).getProfile();
+        verify(jobNotificationPort, times(2)).send(any());
     }
 
+    // Y. Exact counter semantics verified in a mixed scenario
     @Test
-    void monitor_profileLoadingFails_throwsJobMonitoringExceptionAndSkipsDownstream() {
-        Vacancy vacancy = vacancy();
-        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
-        when(candidateProfileProvider.getProfile()).thenThrow(new IllegalStateException("profile config missing"));
+    void monitor_mixedScenario_countersReflectExactSemantics() {
+        Vacancy analyzeOk = vacancy();
+        Vacancy analyzeFail = vacancy();
+        Vacancy analyzeOk2 = vacancy();
+        JobOffer offer1 = offer("1");
+        JobOffer offer2 = offer("2");
+        JobOffer offer3 = offer("3");
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any()))
+                .thenReturn(new VacancyIngestionResult(5, List.of(analyzeOk, analyzeFail, analyzeOk2), 0));
+        when(vacancyJobOfferMapper.toJobOffer(analyzeOk)).thenReturn(offer1);
+        when(vacancyJobOfferMapper.toJobOffer(analyzeFail)).thenReturn(offer2);
+        when(vacancyJobOfferMapper.toJobOffer(analyzeOk2)).thenReturn(offer3);
+        JobAnalysis analysis1 = analysis(40);
+        JobAnalysis analysis3 = analysis(45);
+        when(jobAnalysisService.analyze(profile, offer1)).thenReturn(analysis1);
+        when(jobAnalysisService.analyze(profile, offer2)).thenThrow(new JobAnalysisException("boom"));
+        when(jobAnalysisService.analyze(profile, offer3)).thenReturn(analysis3);
 
-        assertThatThrownBy(() -> service.monitor(command(50, 5)))
-                .isInstanceOf(JobMonitoringException.class);
+        Vacancy sendOk = vacancy();
+        Vacancy sendFail = vacancy();
+        JobAnalysis okAnalysis = analysis(90);
+        JobAnalysis failAnalysis = analysis(85);
+        JobNotificationCandidate okCandidate = candidateFor(sendOk, okAnalysis);
+        JobNotificationCandidate failCandidate = candidateFor(sendFail, failAnalysis);
+        when(jobNotificationCandidateQueryPort.findCandidates(RECIPIENT_CHAT_ID, 50, 5))
+                .thenReturn(List.of(okCandidate, failCandidate));
+        stubSuccessfulSend(sendOk, okAnalysis);
+        JobNotification failNotification = notification();
+        NotificationDelivery failPending = pendingDelivery(sendFail.getId());
+        when(jobNotificationFactory.create(sendFail, failAnalysis, RECIPIENT_CHAT_ID)).thenReturn(failNotification);
+        when(notificationDeliveryRepository.reserve(sendFail.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
+                .thenReturn(NotificationReservationResult.reserved(failPending));
+        when(jobNotificationPort.send(failNotification))
+                .thenThrow(new JobNotificationException(JobNotificationFailureType.PERMANENT_FAILURE, "no"));
+        when(notificationDeliveryRepository.markFailed(failPending.id(), FIXED_INSTANT, "PERMANENT_FAILURE"))
+                .thenReturn(NotificationDeliveryTransitionResult.updated(failedDelivery()));
 
-        verifyNoInteractions(jobAnalysisService, jobNotificationFactory, jobNotificationPort, notificationDeliveryRepository);
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        assertThat(result.fetchedCount()).isEqualTo(5);
+        assertThat(result.persistedCount()).isEqualTo(3);
+        assertThat(result.analyzedCount()).isEqualTo(2);
+        assertThat(result.matchedCount()).isEqualTo(2);
+        assertThat(result.notifiedCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(2);
     }
 
-    private void stubGenericSuccessfulSend() {
-        when(jobNotificationFactory.create(any(), any(), any())).thenAnswer(inv -> notification());
-        when(notificationDeliveryRepository.reserve(any(), any(), any()))
-                .thenAnswer(inv -> NotificationReservationResult.reserved(pendingDelivery(inv.getArgument(0))));
-        when(jobNotificationPort.send(any())).thenReturn(JobNotificationResult.accepted());
-        when(notificationDeliveryRepository.markSent(any(), any()))
-                .thenAnswer(inv -> NotificationDeliveryTransitionResult.updated(sentDelivery()));
+    private NotificationDelivery stubSuccessfulSend(Vacancy vacancy, JobAnalysis analysis) {
+        JobNotification notification = notification();
+        NotificationDelivery pending = pendingDelivery(vacancy.getId());
+        when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
+        when(notificationDeliveryRepository.reserve(vacancy.getId(), RECIPIENT_CHAT_ID, FIXED_INSTANT))
+                .thenReturn(NotificationReservationResult.reserved(pending));
+        when(jobNotificationPort.send(notification)).thenReturn(JobNotificationResult.accepted());
+        when(notificationDeliveryRepository.markSent(pending.id(), FIXED_INSTANT))
+                .thenReturn(NotificationDeliveryTransitionResult.updated(sentDelivery()));
+        return pending;
     }
 
     private JobMonitoringCommand command(int minScore, int maxNotifications) {
@@ -546,6 +640,11 @@ class JobMonitoringServiceTest {
 
     private JobAnalysis analysis(int score) {
         return new JobAnalysis(score, List.of(), List.of(), List.of(), "Great match");
+    }
+
+    private JobNotificationCandidate candidateFor(Vacancy vacancy, JobAnalysis analysis) {
+        return new JobNotificationCandidate(
+                vacancy, new PersistedJobAnalysis(UUID.randomUUID(), vacancy.getId(), analysis, FIXED_INSTANT));
     }
 
     private JobNotification notification() {

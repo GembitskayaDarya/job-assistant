@@ -1,6 +1,7 @@
 package com.darya.jobassistant.monitoring;
 
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
@@ -18,15 +19,14 @@ import com.darya.jobassistant.monitoring.dto.JobMonitoringResult;
 import com.darya.jobassistant.notifications.dto.NotificationDelivery;
 import com.darya.jobassistant.notifications.dto.NotificationDeliveryTransitionResult;
 import com.darya.jobassistant.notifications.dto.NotificationReservationResult;
+import com.darya.jobassistant.notifications.query.JobNotificationCandidate;
+import com.darya.jobassistant.notifications.query.JobNotificationCandidateQueryPort;
 import com.darya.jobassistant.notifications.repository.NotificationDeliveryRepository;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.service.VacancyIngestionService;
 import java.time.Clock;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -36,11 +36,17 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates one monitoring run: fetch/ingest -> analyze -> filter -> rank -> reserve delivery
- * -> send -> mark SENT/FAILED. Deliberately not {@code @Transactional}: it makes external AI and
- * Telegram calls, and must never hold a database transaction open across those. The individual
- * persistence operations it calls (ingestion, reservation, state transitions) each keep their own
- * short transaction boundaries.
+ * Orchestrates one monitoring run:
+ * <pre>
+ * load profile once -&gt; ingest -&gt; analyze + persist each new vacancy -&gt; query durable backlog
+ * -&gt; reserve -&gt; send -&gt; mark SENT/FAILED
+ * </pre>
+ * Deliberately not {@code @Transactional}: it makes external AI and Telegram calls, and must
+ * never hold a database transaction open across those. The individual persistence operations it
+ * calls (ingestion, analysis persistence, reservation, state transitions) each keep their own
+ * short transaction boundaries. The backlog query runs unconditionally after analysis, whether or
+ * not this run fetched, persisted, or successfully analyzed anything - that is what lets
+ * previously persisted, already-analyzed vacancies remain deliverable across runs and restarts.
  *
  * <p>Conditional on {@code telegram.enabled=true}, matching {@code JobNotificationPort}'s only
  * current implementation ({@code TelegramJobNotificationAdapter}) - without this, the required
@@ -57,6 +63,8 @@ public class JobMonitoringService implements JobMonitoringUseCase {
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
     private final CandidateProfileProvider candidateProfileProvider;
     private final JobAnalysisService jobAnalysisService;
+    private final JobAnalysisRepository jobAnalysisRepository;
+    private final JobNotificationCandidateQueryPort jobNotificationCandidateQueryPort;
     private final JobNotificationFactory jobNotificationFactory;
     private final JobNotificationPort jobNotificationPort;
     private final NotificationDeliveryRepository notificationDeliveryRepository;
@@ -64,18 +72,23 @@ public class JobMonitoringService implements JobMonitoringUseCase {
 
     @Override
     public JobMonitoringResult monitor(JobMonitoringCommand command) {
+        CandidateProfile profile = loadProfile();
+
         VacancyIngestionResult ingestionResult = ingestForKeyword(command.keyword());
         List<Vacancy> newVacancies = ingestionResult.persistedVacancies();
 
-        AnalysisOutcome analysisOutcome = analyzeAll(newVacancies, command.minScore());
-        List<RankedCandidate> ranked = rank(analysisOutcome.matches());
-        SendOutcome sendOutcome = sendNotifications(ranked, command);
+        AnalysisOutcome analysisOutcome = analyzeAndPersistAll(newVacancies, profile);
+
+        List<JobNotificationCandidate> candidates = jobNotificationCandidateQueryPort.findCandidates(
+                command.recipientChatId(), command.minScore(), command.maxNotifications());
+
+        SendOutcome sendOutcome = sendNotifications(candidates, command);
 
         JobMonitoringResult result = new JobMonitoringResult(
                 ingestionResult.fetchedCount(),
                 newVacancies.size(),
                 analysisOutcome.analyzedCount(),
-                analysisOutcome.matches().size(),
+                candidates.size(),
                 sendOutcome.notifiedCount(),
                 analysisOutcome.failedCount() + sendOutcome.failedCount());
 
@@ -84,6 +97,14 @@ public class JobMonitoringService implements JobMonitoringUseCase {
                 result.matchedCount(), result.notifiedCount(), result.failedCount());
 
         return result;
+    }
+
+    private CandidateProfile loadProfile() {
+        try {
+            return candidateProfileProvider.getProfile();
+        } catch (RuntimeException e) {
+            throw new JobMonitoringException("Unable to load candidate profile for job monitoring", e);
+        }
     }
 
     private VacancyIngestionResult ingestForKeyword(String keyword) {
@@ -114,64 +135,44 @@ public class JobMonitoringService implements JobMonitoringUseCase {
         return value != null && value.toLowerCase(Locale.ROOT).contains(normalizedKeyword);
     }
 
-    private AnalysisOutcome analyzeAll(List<Vacancy> newVacancies, int minScore) {
-        if (newVacancies.isEmpty()) {
-            return new AnalysisOutcome(List.of(), 0, 0);
-        }
-
-        CandidateProfile profile = loadProfile();
-
-        List<RankedCandidate> matches = new ArrayList<>();
+    /**
+     * Analyzes and persists each newly inserted vacancy in ingestion order. A vacancy counts
+     * toward {@code analyzedCount} only once both the AI analysis and its persistence succeed;
+     * either failing counts once toward {@code failedCount} for that vacancy, and processing
+     * continues with the rest.
+     */
+    private AnalysisOutcome analyzeAndPersistAll(List<Vacancy> newVacancies, CandidateProfile profile) {
         int analyzedCount = 0;
         int failedCount = 0;
-        int sequence = 0;
         for (Vacancy vacancy : newVacancies) {
             try {
                 JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
                 JobAnalysis analysis = jobAnalysisService.analyze(profile, jobOffer);
+                jobAnalysisRepository.persist(vacancy.getId(), analysis);
                 analyzedCount++;
-                if (analysis.score() >= minScore) {
-                    matches.add(new RankedCandidate(vacancy, analysis, sequence));
-                }
             } catch (RuntimeException e) {
                 failedCount++;
-                log.error("Failed to analyze vacancy {}", vacancy.getId(), e);
+                log.error("Failed to analyze or persist analysis for vacancy {}", vacancy.getId(), e);
             }
-            sequence++;
         }
-        return new AnalysisOutcome(matches, analyzedCount, failedCount);
+        return new AnalysisOutcome(analyzedCount, failedCount);
     }
 
-    private CandidateProfile loadProfile() {
-        try {
-            return candidateProfileProvider.getProfile();
-        } catch (RuntimeException e) {
-            throw new JobMonitoringException("Unable to load candidate profile for job monitoring", e);
-        }
-    }
-
-    private List<RankedCandidate> rank(List<RankedCandidate> matches) {
-        return matches.stream()
-                .sorted(Comparator.comparingInt((RankedCandidate c) -> c.analysis().score())
-                        .reversed()
-                        .thenComparingInt(RankedCandidate::sequence))
-                .toList();
-    }
-
-    private SendOutcome sendNotifications(List<RankedCandidate> ranked, JobMonitoringCommand command) {
+    /**
+     * Sends notifications for backlog candidates in exactly the order the query returned them
+     * (score, then age, then vacancy id) - already bounded to {@code command.maxNotifications()}
+     * by the query itself, so no separate attempt budget is tracked here.
+     */
+    private SendOutcome sendNotifications(List<JobNotificationCandidate> candidates, JobMonitoringCommand command) {
         int notifiedCount = 0;
         int failedCount = 0;
-        int providerAttempts = 0;
 
-        for (RankedCandidate candidate : ranked) {
-            if (providerAttempts >= command.maxNotifications()) {
-                break;
-            }
+        for (JobNotificationCandidate candidate : candidates) {
             Vacancy vacancy = candidate.vacancy();
 
             JobNotification notification;
             try {
-                notification = jobNotificationFactory.create(vacancy, candidate.analysis(), command.recipientChatId());
+                notification = jobNotificationFactory.create(vacancy, candidate.analysis().analysis(), command.recipientChatId());
             } catch (RuntimeException e) {
                 failedCount++;
                 log.error("Failed to build notification for vacancy {}", vacancy.getId(), e);
@@ -181,7 +182,7 @@ public class JobMonitoringService implements JobMonitoringUseCase {
             NotificationReservationResult reservation;
             try {
                 reservation = notificationDeliveryRepository.reserve(
-                        vacancy.getId(), command.recipientChatId(), Instant.now(clock));
+                        vacancy.getId(), command.recipientChatId(), clock.instant());
             } catch (RuntimeException e) {
                 failedCount++;
                 log.error("Failed to reserve delivery for vacancy {}", vacancy.getId(), e);
@@ -194,7 +195,6 @@ public class JobMonitoringService implements JobMonitoringUseCase {
             }
 
             NotificationDelivery delivery = reservation.delivery();
-            providerAttempts++;
 
             JobNotificationResult sendResult;
             try {
@@ -227,7 +227,7 @@ public class JobMonitoringService implements JobMonitoringUseCase {
 
     private boolean markSentSafely(UUID deliveryId) {
         try {
-            NotificationDeliveryTransitionResult transition = notificationDeliveryRepository.markSent(deliveryId, Instant.now(clock));
+            NotificationDeliveryTransitionResult transition = notificationDeliveryRepository.markSent(deliveryId, clock.instant());
             if (transition.isUpdated()) {
                 return true;
             }
@@ -242,7 +242,7 @@ public class JobMonitoringService implements JobMonitoringUseCase {
     private void markFailedSafely(UUID deliveryId, String failureCode) {
         try {
             NotificationDeliveryTransitionResult transition =
-                    notificationDeliveryRepository.markFailed(deliveryId, Instant.now(clock), failureCode);
+                    notificationDeliveryRepository.markFailed(deliveryId, clock.instant(), failureCode);
             if (!transition.isUpdated()) {
                 log.error("Failed to persist FAILED state for delivery {}: transition returned {}", deliveryId, transition.status());
             }
@@ -251,10 +251,7 @@ public class JobMonitoringService implements JobMonitoringUseCase {
         }
     }
 
-    private record RankedCandidate(Vacancy vacancy, JobAnalysis analysis, int sequence) {
-    }
-
-    private record AnalysisOutcome(List<RankedCandidate> matches, int analyzedCount, int failedCount) {
+    private record AnalysisOutcome(int analyzedCount, int failedCount) {
     }
 
     private record SendOutcome(int notifiedCount, int failedCount) {
