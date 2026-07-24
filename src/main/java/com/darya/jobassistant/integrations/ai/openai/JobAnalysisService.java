@@ -4,6 +4,7 @@ import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateSkill;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -66,16 +67,25 @@ public class JobAnalysisService {
                 Description: %s
                 """.formatted(
                 orNotAvailable(profile.targetRole()),
-                joinOrNone(profile.skills()),
+                joinOrNone(skillNames(profile.skills())),
                 joinOrNone(profile.languages()),
                 profile.experienceYears(),
-                orNotAvailable(profile.preferredCompanyType()),
-                orNotAvailable(profile.preferredLocation()),
+                orNotAvailable(profile.preferences().preferredCompanyType()),
+                orNotAvailable(profile.preferences().preferredWorkArrangement()),
                 orNotAvailable(job.title()),
                 orNotAvailable(job.company()),
                 orNotAvailable(job.location()),
                 orNotAvailable(job.salary()),
                 orNotAvailable(job.description()));
+    }
+
+    /**
+     * Only skill names reach the prompt - proficiency is intentionally not sent yet, matching
+     * the pre-existing (flat skill list) prompt semantics until a proficiency-aware prompt is
+     * introduced in a later step.
+     */
+    private List<String> skillNames(List<CandidateSkill> skills) {
+        return skills.stream().map(CandidateSkill::name).toList();
     }
 
     private String joinOrNone(List<String> values) {

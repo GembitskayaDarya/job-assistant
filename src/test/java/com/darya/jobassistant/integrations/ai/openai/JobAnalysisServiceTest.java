@@ -9,7 +9,11 @@ import static org.mockito.Mockito.when;
 import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
+import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.PreferenceImportance;
+import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,11 +40,16 @@ class JobAnalysisServiceTest {
     void analyze_sendsExpectedSystemPromptAndPromptContentAndReturnsPortResultUnchanged() {
         CandidateProfile profile = new CandidateProfile(
                 "Senior Java Backend Engineer",
-                List.of("Java", "Spring Boot", "Kafka"),
+                "Senior",
+                List.of(
+                        new CandidateSkill("Java", SkillProficiency.EXPERT, null),
+                        new CandidateSkill("Spring Boot", SkillProficiency.STRONG, null),
+                        new CandidateSkill("Kafka", SkillProficiency.WORKING, null)),
                 List.of("English", "Polish"),
                 6,
-                "Product company",
-                "Remote, Europe");
+                new CandidatePreferences(
+                        null, "Remote, Europe", PreferenceImportance.STRONG, List.of(), false,
+                        List.of(), null, "Product company", null, null));
         JobOffer job = new JobOffer(
                 "job-1",
                 "Backend Engineer",
@@ -77,6 +86,8 @@ class JobAnalysisServiceTest {
         assertThat(userPrompt).contains("Acme Corp");
         assertThat(userPrompt).contains("120k-140k");
         assertThat(userPrompt).contains("Build backend services");
+        // Step 3 only wires skill names through - proficiency levels must not leak into the prompt yet.
+        assertThat(userPrompt).doesNotContain("EXPERT").doesNotContain("SkillProficiency");
     }
 
     @Test
@@ -126,11 +137,16 @@ class JobAnalysisServiceTest {
     private CandidateProfile validProfile() {
         return new CandidateProfile(
                 "Senior Java Backend Engineer",
-                List.of("Java", "Spring Boot", "Kafka"),
+                "Senior",
+                List.of(
+                        new CandidateSkill("Java", SkillProficiency.EXPERT, null),
+                        new CandidateSkill("Spring Boot", SkillProficiency.STRONG, null),
+                        new CandidateSkill("Kafka", SkillProficiency.WORKING, null)),
                 List.of("English", "Polish"),
                 6,
-                "Product company",
-                "Remote, Europe");
+                new CandidatePreferences(
+                        null, "Remote, Europe", PreferenceImportance.STRONG, List.of(), false,
+                        List.of(), null, "Product company", null, null));
     }
 
     private JobOffer validJob() {

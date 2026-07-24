@@ -15,8 +15,11 @@ import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
+import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.mapper.CompanyMapper;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
@@ -226,7 +229,15 @@ class VacancyImportWorkflowEndToEndTest {
 
     private JobAnalysis analyze(UUID sessionId, UUID vacancyId, boolean expectNewlyCreated) {
         CandidateProfile profile = new CandidateProfile(
-                "Senior Java Backend Developer", List.of("Java", "Kafka"), List.of("English"), 6, "Product company", "Remote Europe");
+                "Senior Java Backend Developer",
+                "Senior",
+                List.of(
+                        new CandidateSkill("Java", SkillProficiency.WORKING, null),
+                        new CandidateSkill("Kafka", SkillProficiency.WORKING, null)),
+                List.of("English"),
+                6,
+                new CandidatePreferences(
+                        null, "Remote Europe", null, List.of(), false, List.of(), null, "Product company", null, null));
         lenient().when(candidateProfileProvider.getProfile()).thenReturn(profile);
         JobAnalysis analysis = new JobAnalysis(88, List.of("Strong Java and Kafka match"), List.of(), List.of(), "Great fit");
         lenient().when(jobAnalysisAiPort.analyze(any(), any())).thenReturn(analysis);

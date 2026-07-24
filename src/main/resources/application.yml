@@ -71,11 +71,44 @@ telegram:
 
 candidate:
   target-role: ${CANDIDATE_TARGET_ROLE:Senior Java Backend Developer}
-  skills: ${CANDIDATE_SKILLS:Java,Spring Boot,PostgreSQL,Kafka,Redis,AWS,Docker}
+  target-seniority: ${CANDIDATE_TARGET_SENIORITY:Senior}
   languages: ${CANDIDATE_LANGUAGES:English,Russian,Polish}
   experience-years: ${CANDIDATE_EXPERIENCE_YEARS:6}
-  preferred-company-type: ${CANDIDATE_PREFERRED_COMPANY_TYPE:Product company}
-  preferred-location: ${CANDIDATE_PREFERRED_LOCATION:Remote Europe}
+
+  # Migrated from the previous flat CANDIDATE_SKILLS list (Java,Spring Boot,PostgreSQL,Kafka,
+  # Redis,AWS,Docker) - names and order preserved. proficiency: WORKING is a PROVISIONAL
+  # migration placeholder for every skill, not a calibrated level; replace before the
+  # proficiency-aware analysis prompt is enabled. No env-var override here: a list of
+  # structured skill objects cannot be expressed as a single scalar env var without inventing
+  # a custom serialization format, so CANDIDATE_SKILLS is retired (no other code or docs in
+  # this repository referenced it).
+  skills:
+    - name: Java
+      proficiency: WORKING
+    - name: Spring Boot
+      proficiency: WORKING
+    - name: PostgreSQL
+      proficiency: WORKING
+    - name: Kafka
+      proficiency: WORKING
+    - name: Redis
+      proficiency: WORKING
+    - name: AWS
+      proficiency: WORKING
+    - name: Docker
+      proficiency: WORKING
+
+  preferences:
+    current-country: ${CANDIDATE_CURRENT_COUNTRY:Poland}
+    preferred-work-arrangement: ${CANDIDATE_PREFERRED_WORK_ARRANGEMENT:Remote}
+    work-arrangement-importance: ${CANDIDATE_WORK_ARRANGEMENT_IMPORTANCE:STRONG}
+    allowed-work-countries: ${CANDIDATE_ALLOWED_WORK_COUNTRIES:Poland}
+    relocation-allowed: ${CANDIDATE_RELOCATION_ALLOWED:false}
+    preferred-contract-types: ${CANDIDATE_PREFERRED_CONTRACT_TYPES:B2B}
+    contract-type-importance: ${CANDIDATE_CONTRACT_TYPE_IMPORTANCE:PREFERRED}
+    preferred-company-type: ${CANDIDATE_PREFERRED_COMPANY_TYPE:Product}
+    company-type-importance: ${CANDIDATE_COMPANY_TYPE_IMPORTANCE:PREFERRED}
+    salary-expectation: ${CANDIDATE_SALARY_EXPECTATION:}
 
 jobsource:
   remoteok:

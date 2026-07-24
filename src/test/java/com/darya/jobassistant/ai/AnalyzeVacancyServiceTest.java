@@ -16,8 +16,11 @@ import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
 import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
+import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.exception.VacancyNotFoundException;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -269,7 +272,15 @@ class AnalyzeVacancyServiceTest {
 
     private CandidateProfile candidateProfile() {
         return new CandidateProfile(
-                "Senior Java Backend Developer", List.of("Java", "Spring Boot"), List.of("English"), 6, "Product company", "Remote Europe");
+                "Senior Java Backend Developer",
+                "Senior",
+                List.of(
+                        new CandidateSkill("Java", SkillProficiency.WORKING, null),
+                        new CandidateSkill("Spring Boot", SkillProficiency.WORKING, null)),
+                List.of("English"),
+                6,
+                new CandidatePreferences(
+                        null, "Remote Europe", null, List.of(), false, List.of(), null, "Product company", null, null));
     }
 
     private JobAnalysis jobAnalysis() {

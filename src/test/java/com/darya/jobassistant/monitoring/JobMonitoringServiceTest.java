@@ -16,8 +16,11 @@ import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
+import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.integrations.notifier.JobNotification;
@@ -81,8 +84,13 @@ class JobMonitoringServiceTest {
     private NotificationDeliveryRepository notificationDeliveryRepository;
 
     private final Clock clock = Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC);
-    private final CandidateProfile profile =
-            new CandidateProfile("Backend Engineer", List.of("Java"), List.of("English"), 5, "Product", "Remote");
+    private final CandidateProfile profile = new CandidateProfile(
+            "Backend Engineer",
+            "Senior",
+            List.of(new CandidateSkill("Java", SkillProficiency.WORKING, null)),
+            List.of("English"),
+            5,
+            new CandidatePreferences(null, "Remote", null, List.of(), false, List.of(), null, "Product", null, null));
 
     private JobMonitoringService service;
 

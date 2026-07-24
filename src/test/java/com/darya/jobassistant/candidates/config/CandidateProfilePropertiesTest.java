@@ -2,6 +2,8 @@ package com.darya.jobassistant.candidates.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.darya.jobassistant.candidates.PreferenceImportance;
+import com.darya.jobassistant.candidates.SkillProficiency;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -18,34 +20,66 @@ class CandidateProfilePropertiesTest {
         contextRunner
                 .withPropertyValues(
                         "candidate.target-role=Senior Java Backend Developer",
-                        "candidate.skills=Java,Spring Boot,PostgreSQL",
+                        "candidate.target-seniority=Senior",
+                        "candidate.skills[0].name=Java",
+                        "candidate.skills[0].proficiency=WORKING",
+                        "candidate.skills[0].note=Primary language",
+                        "candidate.skills[1].name=Spring Boot",
+                        "candidate.skills[1].proficiency=WORKING",
                         "candidate.languages=English,Polish",
                         "candidate.experience-years=6",
-                        "candidate.preferred-company-type=Product company",
-                        "candidate.preferred-location=Remote Europe")
+                        "candidate.preferences.current-country=Poland",
+                        "candidate.preferences.preferred-work-arrangement=Remote",
+                        "candidate.preferences.work-arrangement-importance=STRONG",
+                        "candidate.preferences.allowed-work-countries=Poland",
+                        "candidate.preferences.relocation-allowed=false",
+                        "candidate.preferences.preferred-contract-types=B2B",
+                        "candidate.preferences.contract-type-importance=PREFERRED",
+                        "candidate.preferences.preferred-company-type=Product",
+                        "candidate.preferences.company-type-importance=PREFERRED")
+                // salary-expectation intentionally left unset: verifies missing/blank salary
+                // expectation binds to null rather than requiring a value.
                 .run(context -> {
                     CandidateProfileProperties properties = context.getBean(CandidateProfileProperties.class);
                     assertThat(properties.targetRole()).isEqualTo("Senior Java Backend Developer");
-                    assertThat(properties.skills()).containsExactly("Java", "Spring Boot", "PostgreSQL");
-                    assertThat(properties.languages()).containsExactly("English", "Polish");
+                    assertThat(properties.targetSeniority()).isEqualTo("Senior");
                     assertThat(properties.experienceYears()).isEqualTo(6);
-                    assertThat(properties.preferredCompanyType()).isEqualTo("Product company");
-                    assertThat(properties.preferredLocation()).isEqualTo("Remote Europe");
+                    assertThat(properties.languages()).containsExactly("English", "Polish");
+
+                    assertThat(properties.skills()).hasSize(2);
+                    CandidateProfileProperties.SkillProperties firstSkill = properties.skills().get(0);
+                    assertThat(firstSkill.name()).isEqualTo("Java");
+                    assertThat(firstSkill.proficiency()).isEqualTo(SkillProficiency.WORKING);
+                    assertThat(firstSkill.note()).isEqualTo("Primary language");
+                    assertThat(properties.skills().get(1).name()).isEqualTo("Spring Boot");
+
+                    CandidateProfileProperties.PreferencesProperties preferences = properties.preferences();
+                    assertThat(preferences.currentCountry()).isEqualTo("Poland");
+                    assertThat(preferences.preferredWorkArrangement()).isEqualTo("Remote");
+                    assertThat(preferences.workArrangementImportance()).isEqualTo(PreferenceImportance.STRONG);
+                    assertThat(preferences.allowedWorkCountries()).containsExactly("Poland");
+                    assertThat(preferences.relocationAllowed()).isFalse();
+                    assertThat(preferences.preferredContractTypes()).containsExactly("B2B");
+                    assertThat(preferences.contractTypeImportance()).isEqualTo(PreferenceImportance.PREFERRED);
+                    assertThat(preferences.preferredCompanyType()).isEqualTo("Product");
+                    assertThat(preferences.companyTypeImportance()).isEqualTo(PreferenceImportance.PREFERRED);
+                    assertThat(preferences.salaryExpectation()).isNull();
                 });
     }
 
     @Test
     void constructor_defensivelyCopiesSkillsAndLanguages() {
-        List<String> skills = new ArrayList<>(List.of("Java"));
+        List<CandidateProfileProperties.SkillProperties> skills =
+                new ArrayList<>(List.of(new CandidateProfileProperties.SkillProperties("Java", SkillProficiency.WORKING, null)));
         List<String> languages = new ArrayList<>(List.of("English"));
 
         CandidateProfileProperties properties =
-                new CandidateProfileProperties("Senior Java Backend Developer", skills, languages, 6, "Product company", "Remote Europe");
+                new CandidateProfileProperties("Senior Java Backend Developer", "Senior", skills, languages, 6, null);
 
-        skills.add("Kotlin");
+        skills.add(new CandidateProfileProperties.SkillProperties("Kotlin", SkillProficiency.BASIC, null));
         languages.add("Polish");
 
-        assertThat(properties.skills()).containsExactly("Java");
+        assertThat(properties.skills()).hasSize(1);
         assertThat(properties.languages()).containsExactly("English");
         assertThat(properties.skills()).isUnmodifiable();
         assertThat(properties.languages()).isUnmodifiable();
@@ -56,7 +90,18 @@ class CandidateProfilePropertiesTest {
         contextRunner
                 .withPropertyValues(
                         "candidate.target-role=",
-                        "candidate.skills=Java",
+                        "candidate.target-seniority=Senior",
+                        "candidate.languages=English",
+                        "candidate.experience-years=6")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void binding_blankTargetSeniority_failsValidation() {
+        contextRunner
+                .withPropertyValues(
+                        "candidate.target-role=Senior Java Backend Developer",
+                        "candidate.target-seniority=",
                         "candidate.languages=English",
                         "candidate.experience-years=6")
                 .run(context -> assertThat(context).hasFailed());
@@ -67,7 +112,7 @@ class CandidateProfilePropertiesTest {
         contextRunner
                 .withPropertyValues(
                         "candidate.target-role=Senior Java Backend Developer",
-                        "candidate.skills=Java",
+                        "candidate.target-seniority=Senior",
                         "candidate.languages=English",
                         "candidate.experience-years=-1")
                 .run(context -> assertThat(context).hasFailed());
