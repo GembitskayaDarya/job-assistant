@@ -1,19 +1,28 @@
 package com.darya.jobassistant.vacancyimport;
 
+import com.darya.jobassistant.vacancyextraction.exception.VacancyExtractionException;
+import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
+import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyDataValidator;
+import com.darya.jobassistant.vacancyextraction.port.VacancyExtractionPort;
 import com.darya.jobassistant.vacancyimport.config.VacancyImportProperties;
 import com.darya.jobassistant.vacancyimport.dto.CancelVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
+import com.darya.jobassistant.vacancyimport.dto.ExtractVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.dto.ProvideVacancyUrlResult;
 import com.darya.jobassistant.vacancyimport.dto.StartVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.exception.VacancyImportSessionException;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
+import com.darya.jobassistant.vacancyimport.model.VacancyImportDraft;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportSession;
+import com.darya.jobassistant.vacancyimport.repository.VacancyImportDraftRepository;
 import com.darya.jobassistant.vacancyimport.repository.VacancyImportSessionRepository;
 import com.darya.jobassistant.vacancyimport.url.VacancyUrlValidator;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -39,22 +48,42 @@ import org.springframework.transaction.support.TransactionTemplate;
  * through the proxy), so routing {@link #handleText} through {@code provideUrl(...)} would gain
  * nothing over calling a plain private method - it would just add an unnecessary extra result
  * type to translate between.
+ *
+ * <p>{@link #extract} follows the same no-ambient-transaction discipline for the AI extraction
+ * call: {@link VacancyExtractionPort#extract} runs between two independent {@link
+ * TransactionTemplate} calls (persist-the-EXTRACTING-state was already committed by {@link
+ * #acceptDescription}; the draft insert and {@code EXTRACTING -> WAITING_FOR_CONFIRMATION}
+ * transition happen together afterwards), never inside one. Because this class has no
+ * class-level {@code @Transactional} to begin with, {@link #acceptDescription} calling {@link
+ * #extract} through a plain {@code this} reference is safe - there is no Spring transaction proxy
+ * behavior being bypassed, unlike the self-invocation hazard {@code @Transactional} methods have.
  */
+@Slf4j
 @Service
 public class VacancyImportService
-        implements StartVacancyImportUseCase, CancelVacancyImportUseCase, ProvideVacancyUrlUseCase, ContinueVacancyImportUseCase {
+        implements StartVacancyImportUseCase,
+                CancelVacancyImportUseCase,
+                ProvideVacancyUrlUseCase,
+                ContinueVacancyImportUseCase,
+                ExtractVacancyImportUseCase {
 
     private final VacancyImportSessionRepository repository;
+    private final VacancyImportDraftRepository draftRepository;
+    private final VacancyExtractionPort extractionPort;
     private final Clock clock;
     private final VacancyImportProperties properties;
     private final TransactionTemplate newTransaction;
 
     public VacancyImportService(
             VacancyImportSessionRepository repository,
+            VacancyImportDraftRepository draftRepository,
+            VacancyExtractionPort extractionPort,
             Clock clock,
             VacancyImportProperties properties,
             PlatformTransactionManager transactionManager) {
         this.repository = repository;
+        this.draftRepository = draftRepository;
+        this.extractionPort = extractionPort;
         this.clock = clock;
         this.properties = properties;
         this.newTransaction = new TransactionTemplate(transactionManager);
@@ -177,6 +206,10 @@ public class VacancyImportService
      * would let both silently "succeed" and the second write would clobber the first. Guarding
      * the update with the session's expected prior state means only one of the two can actually
      * apply; the other is reported back as a lost race instead of corrupting the row.
+     *
+     * <p>On success, extraction runs synchronously as part of the same call (see {@link
+     * #extract}) so the caller gets back a recognized-or-failed outcome directly, without a
+     * separate round trip.
      */
     private ContinueVacancyImportResult acceptDescription(VacancyImportSession session, String rawText) {
         String trimmed = rawText == null ? null : rawText.trim();
@@ -197,7 +230,134 @@ public class VacancyImportService
                     .<ContinueVacancyImportResult>map(current -> new ContinueVacancyImportResult.UnexpectedState(current.getState()))
                     .orElseGet(ContinueVacancyImportResult.NoActiveSession::new);
         }
-        return new ContinueVacancyImportResult.DescriptionAccepted(session.getId());
+        return toContinueResult(extract(session.getId()));
+    }
+
+    private ContinueVacancyImportResult toContinueResult(ExtractVacancyImportResult result) {
+        return switch (result) {
+            case ExtractVacancyImportResult.Recognized(var sessionId, var draft) ->
+                    new ContinueVacancyImportResult.VacancyRecognized(sessionId, draft);
+            case ExtractVacancyImportResult.AlreadyRecognized(var sessionId, var draft) ->
+                    new ContinueVacancyImportResult.VacancyRecognized(sessionId, draft);
+            case ExtractVacancyImportResult.Failed(var sessionId) -> new ContinueVacancyImportResult.ExtractionFailed(sessionId);
+            case ExtractVacancyImportResult.InvalidState(var ignored, var state) ->
+                    new ContinueVacancyImportResult.UnexpectedState(state);
+            case ExtractVacancyImportResult.SessionNotFound ignored -> new ContinueVacancyImportResult.NoActiveSession();
+        };
+    }
+
+    /**
+     * Runs (or replays) AI extraction for a session. See the class-level Javadoc for the
+     * transaction shape: the {@link VacancyExtractionPort} call below sits between two
+     * independent, short {@link TransactionTemplate} blocks, never inside one.
+     */
+    @Override
+    public ExtractVacancyImportResult extract(UUID sessionId) {
+        Optional<VacancyImportSession> maybeSession = repository.findSessionById(sessionId);
+        if (maybeSession.isEmpty()) {
+            return new ExtractVacancyImportResult.SessionNotFound(sessionId);
+        }
+        VacancyImportSession session = maybeSession.get();
+        return switch (session.getState()) {
+            case EXTRACTING -> extractForExtractingSession(session);
+            case WAITING_FOR_CONFIRMATION -> draftRepository.findDraftBySessionId(sessionId)
+                    .<ExtractVacancyImportResult>map(draft -> new ExtractVacancyImportResult.AlreadyRecognized(sessionId, draft))
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Session " + sessionId + " is WAITING_FOR_CONFIRMATION but has no draft"));
+            default -> new ExtractVacancyImportResult.InvalidState(sessionId, session.getState());
+        };
+    }
+
+    /**
+     * A session already in {@code EXTRACTING} either has no draft yet (the common case - run
+     * extraction) or already has one because a concurrent {@link #extract} call won the race
+     * before this call's own draft insert (see {@link #persistDraftAndTransition}); the latter is
+     * reported back as {@code AlreadyRecognized} without a further AI call.
+     */
+    private ExtractVacancyImportResult extractForExtractingSession(VacancyImportSession session) {
+        UUID sessionId = session.getId();
+        Optional<VacancyImportDraft> existingDraft = draftRepository.findDraftBySessionId(sessionId);
+        if (existingDraft.isPresent()) {
+            return new ExtractVacancyImportResult.AlreadyRecognized(sessionId, existingDraft.get());
+        }
+
+        ExtractedVacancyData validated;
+        try {
+            ExtractedVacancyData raw = extractionPort.extract(session.getRawDescription());
+            validated = ExtractedVacancyDataValidator.validate(raw);
+        } catch (VacancyExtractionException failure) {
+            log.warn("Vacancy extraction failed for session {}", sessionId, failure);
+            session.fail(clock);
+            return failExtraction(session);
+        }
+
+        session.markExtractionSucceeded(clock);
+        return persistDraftAndTransition(session, validated);
+    }
+
+    /**
+     * Inserts the draft and transitions {@code EXTRACTING -> WAITING_FOR_CONFIRMATION} in one
+     * transaction, so the two either both apply or neither does: if the transition can't apply
+     * (the session moved on for some other reason between the read above and this write), the
+     * transaction is rolled back rather than leaving a draft attached to a session that isn't
+     * {@code WAITING_FOR_CONFIRMATION}. Both writes use {@code session.getUpdatedAt()} - the
+     * domain object's own clock-derived timestamp from {@link VacancyImportSession#markExtractionSucceeded},
+     * set just before this is called - so the draft and the transition are stamped identically.
+     */
+    private ExtractVacancyImportResult persistDraftAndTransition(VacancyImportSession session, ExtractedVacancyData data) {
+        UUID sessionId = session.getId();
+        Instant updatedAt = session.getUpdatedAt();
+        try {
+            PersistOutcome outcome = newTransaction.execute(status -> {
+                VacancyImportDraft draft = draftRepository.saveDraft(sessionId, data, updatedAt);
+                boolean transitioned = repository.moveToWaitingForConfirmationIfExtracting(sessionId, updatedAt);
+                if (!transitioned) {
+                    status.setRollbackOnly();
+                }
+                return new PersistOutcome(draft, transitioned);
+            });
+            if (outcome.transitioned()) {
+                return new ExtractVacancyImportResult.Recognized(sessionId, outcome.draft());
+            }
+            return resolveLostTransitionRace(sessionId);
+        } catch (DataIntegrityViolationException lostDraftRace) {
+            // A concurrent extract() call already inserted the draft for this session between our
+            // existence check and our insert; load and return its draft instead of retrying.
+            return draftRepository.findDraftBySessionId(sessionId)
+                    .<ExtractVacancyImportResult>map(draft -> new ExtractVacancyImportResult.AlreadyRecognized(sessionId, draft))
+                    .orElseGet(() -> new ExtractVacancyImportResult.Failed(sessionId));
+        }
+    }
+
+    private ExtractVacancyImportResult resolveLostTransitionRace(UUID sessionId) {
+        Optional<VacancyImportSession> current = repository.findSessionById(sessionId);
+        if (current.isPresent() && current.get().getState() == ImportState.WAITING_FOR_CONFIRMATION) {
+            return draftRepository.findDraftBySessionId(sessionId)
+                    .<ExtractVacancyImportResult>map(draft -> new ExtractVacancyImportResult.AlreadyRecognized(sessionId, draft))
+                    .orElseGet(() -> new ExtractVacancyImportResult.Failed(sessionId));
+        }
+        return new ExtractVacancyImportResult.Failed(sessionId);
+    }
+
+    /**
+     * Moves a session from {@code EXTRACTING} to {@code FAILED} after a provider or validation
+     * failure. If the conditional update applies to zero rows, another operation already resolved
+     * this session (typically a concurrent successful extraction) - that outcome is not
+     * overwritten with {@code FAILED}.
+     */
+    private ExtractVacancyImportResult failExtraction(VacancyImportSession session) {
+        UUID sessionId = session.getId();
+        Instant updatedAt = session.getUpdatedAt();
+        boolean movedToFailed = newTransaction.execute(status -> repository.moveToFailedIfExtracting(sessionId, updatedAt));
+        if (!movedToFailed) {
+            return draftRepository.findDraftBySessionId(sessionId)
+                    .<ExtractVacancyImportResult>map(draft -> new ExtractVacancyImportResult.AlreadyRecognized(sessionId, draft))
+                    .orElseGet(() -> new ExtractVacancyImportResult.Failed(sessionId));
+        }
+        return new ExtractVacancyImportResult.Failed(sessionId);
+    }
+
+    private record PersistOutcome(VacancyImportDraft draft, boolean transitioned) {
     }
 
     private void expireAndPersist(VacancyImportSession session) {

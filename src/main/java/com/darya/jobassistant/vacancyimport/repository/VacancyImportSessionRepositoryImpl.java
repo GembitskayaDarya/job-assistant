@@ -19,6 +19,18 @@ public class VacancyImportSessionRepositoryImpl implements VacancyImportSessionR
             WHERE id = :sessionId AND state = 'WAITING_FOR_DESCRIPTION'
             """;
 
+    private static final String MOVE_TO_WAITING_FOR_CONFIRMATION_SQL = """
+            UPDATE vacancy_import_session
+            SET state = 'WAITING_FOR_CONFIRMATION', updated_at = :updatedAt
+            WHERE id = :sessionId AND state = 'EXTRACTING'
+            """;
+
+    private static final String MOVE_TO_FAILED_SQL = """
+            UPDATE vacancy_import_session
+            SET state = 'FAILED', updated_at = :updatedAt
+            WHERE id = :sessionId AND state = 'EXTRACTING'
+            """;
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -27,6 +39,24 @@ public class VacancyImportSessionRepositoryImpl implements VacancyImportSessionR
         int updatedRows = entityManager.createNativeQuery(ACCEPT_DESCRIPTION_SQL)
                 .setParameter("sessionId", sessionId)
                 .setParameter("rawDescription", rawDescription)
+                .setParameter("updatedAt", updatedAt)
+                .executeUpdate();
+        return updatedRows == 1;
+    }
+
+    @Override
+    public boolean moveToWaitingForConfirmationIfExtracting(UUID sessionId, Instant updatedAt) {
+        int updatedRows = entityManager.createNativeQuery(MOVE_TO_WAITING_FOR_CONFIRMATION_SQL)
+                .setParameter("sessionId", sessionId)
+                .setParameter("updatedAt", updatedAt)
+                .executeUpdate();
+        return updatedRows == 1;
+    }
+
+    @Override
+    public boolean moveToFailedIfExtracting(UUID sessionId, Instant updatedAt) {
+        int updatedRows = entityManager.createNativeQuery(MOVE_TO_FAILED_SQL)
+                .setParameter("sessionId", sessionId)
                 .setParameter("updatedAt", updatedAt)
                 .executeUpdate();
         return updatedRows == 1;

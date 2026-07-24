@@ -5,10 +5,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.telegram.command.BotResponse;
+import com.darya.jobassistant.telegram.format.VacancyDraftPreviewFormatter;
+import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
+import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
 import com.darya.jobassistant.vacancyimport.ContinueVacancyImportUseCase;
 import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
+import com.darya.jobassistant.vacancyimport.model.VacancyImportDraft;
 import java.net.URI;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,9 +43,11 @@ class VacancyImportMessageHandlerTest {
 
     private VacancyImportMessageHandler handler;
 
+    private final VacancyDraftPreviewFormatter vacancyDraftPreviewFormatter = new VacancyDraftPreviewFormatter();
+
     @BeforeEach
     void setUp() {
-        handler = new VacancyImportMessageHandler(continueVacancyImportUseCase);
+        handler = new VacancyImportMessageHandler(continueVacancyImportUseCase, vacancyDraftPreviewFormatter);
         when(message.getChatId()).thenReturn(CHAT_ID);
         when(message.getFrom()).thenReturn(sender);
         when(sender.getId()).thenReturn(USER_ID);
@@ -69,15 +77,43 @@ class VacancyImportMessageHandlerTest {
     }
 
     @Test
-    void handle_descriptionAccepted_returnsAcknowledgmentWithoutClaimingAnalysis() {
+    void handle_vacancyRecognized_returnsTextPreviewOfTheDraft() {
+        VacancyImportDraft draft = draft(new ExtractedVacancyData(
+                "Senior Java Backend Developer",
+                "Example Company",
+                "Europe",
+                RemotePolicy.REMOTE,
+                List.of("B2B"),
+                List.of("Java", "Spring Boot", "Kafka", "AWS"),
+                null));
         when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
-                .thenReturn(new ContinueVacancyImportResult.DescriptionAccepted(UUID.randomUUID()));
+                .thenReturn(new ContinueVacancyImportResult.VacancyRecognized(UUID.randomUUID(), draft));
 
         Optional<BotResponse> response = handler.handle(message);
 
         assertThat(response).isPresent();
-        assertThat(response.get().text()).isEqualTo("✅ Vacancy description received.");
-        assertThat(response.get().text()).doesNotContain("analy", "extract");
+        assertThat(response.get().text()).contains("Vacancy recognized");
+        assertThat(response.get().text()).contains("Senior Java Backend Developer");
+        assertThat(response.get().text()).contains("Example Company");
+        assertThat(response.get().text()).contains("has not been saved yet");
+    }
+
+    @Test
+    void handle_extractionFailed_returnsSafeMessageWithoutProviderDetails() {
+        when(continueVacancyImportUseCase.handleText(CHAT_ID, USER_ID, TEXT))
+                .thenReturn(new ContinueVacancyImportResult.ExtractionFailed(UUID.randomUUID()));
+
+        Optional<BotResponse> response = handler.handle(message);
+
+        assertThat(response).isPresent();
+        assertThat(response.get().text()).contains("couldn't recognize this vacancy");
+        assertThat(response.get().text()).contains("/add");
+        assertThat(response.get().text()).doesNotContain("429", "insufficient_quota", "OpenAI", "exception");
+    }
+
+    private VacancyImportDraft draft(ExtractedVacancyData data) {
+        Instant now = Instant.parse("2026-07-24T10:00:00Z");
+        return new VacancyImportDraft(UUID.randomUUID(), UUID.randomUUID(), data, now, now);
     }
 
     @Test

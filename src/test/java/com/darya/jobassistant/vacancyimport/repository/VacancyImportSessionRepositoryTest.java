@@ -181,4 +181,74 @@ class VacancyImportSessionRepositoryTest {
         assertThat(expiredSessions).extracting(VacancyImportSession::getId).contains(expired.getId());
         assertThat(expiredSessions).extracting(VacancyImportSession::getId).doesNotContain(stillFresh.getId());
     }
+
+    @Test
+    void moveToWaitingForConfirmationIfExtracting_sessionInExtracting_updatesExactlyOneRow() {
+        VacancyImportSession session = sessionAtExtracting(900L, 901L);
+        Instant updatedAt = CLOCK.instant().plusSeconds(5);
+
+        boolean applied = repository.moveToWaitingForConfirmationIfExtracting(session.getId(), updatedAt);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.WAITING_FOR_CONFIRMATION);
+        assertThat(reloaded.getUpdatedAt()).isEqualTo(updatedAt);
+    }
+
+    @Test
+    void moveToWaitingForConfirmationIfExtracting_sessionNotInExtracting_updatesNoRowsAndDoesNotOverwriteState() {
+        VacancyImportSession session = repository.saveSession(VacancyImportSession.start(910L, 911L, CLOCK, TTL));
+        entityManager.flush();
+
+        boolean applied = repository.moveToWaitingForConfirmationIfExtracting(session.getId(), CLOCK.instant());
+        entityManager.clear();
+
+        assertThat(applied).isFalse();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.WAITING_FOR_URL);
+    }
+
+    @Test
+    void moveToFailedIfExtracting_sessionInExtracting_updatesExactlyOneRow() {
+        VacancyImportSession session = sessionAtExtracting(920L, 921L);
+        Instant updatedAt = CLOCK.instant().plusSeconds(5);
+
+        boolean applied = repository.moveToFailedIfExtracting(session.getId(), updatedAt);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.FAILED);
+        assertThat(reloaded.getUpdatedAt()).isEqualTo(updatedAt);
+    }
+
+    @Test
+    void moveToFailedIfExtracting_sessionAlreadyWaitingForConfirmation_doesNotOverwriteTheWinningState() {
+        VacancyImportSession session = sessionAtExtracting(930L, 931L);
+        boolean firstTransitionApplied =
+                repository.moveToWaitingForConfirmationIfExtracting(session.getId(), CLOCK.instant().plusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+
+        boolean secondTransitionApplied =
+                repository.moveToFailedIfExtracting(session.getId(), CLOCK.instant().plusSeconds(2));
+        entityManager.clear();
+
+        assertThat(firstTransitionApplied).isTrue();
+        assertThat(secondTransitionApplied).isFalse();
+        VacancyImportSession reloaded = repository.findSessionById(session.getId()).orElseThrow();
+        assertThat(reloaded.getState()).isEqualTo(ImportState.WAITING_FOR_CONFIRMATION);
+    }
+
+    private VacancyImportSession sessionAtExtracting(long chatId, long userId) {
+        VacancyImportSession session = VacancyImportSession.start(chatId, userId, CLOCK, TTL);
+        session.provideUrl("https://example.com/job", CLOCK);
+        session.provideDescriptionAndStartExtraction("A perfectly valid vacancy description here.", CLOCK);
+        VacancyImportSession saved = repository.saveSession(session);
+        entityManager.flush();
+        return saved;
+    }
 }

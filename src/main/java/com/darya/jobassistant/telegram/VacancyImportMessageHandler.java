@@ -1,6 +1,7 @@
 package com.darya.jobassistant.telegram;
 
 import com.darya.jobassistant.telegram.command.BotResponse;
+import com.darya.jobassistant.telegram.format.VacancyDraftPreviewFormatter;
 import com.darya.jobassistant.vacancyimport.ContinueVacancyImportUseCase;
 import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
 import java.util.Optional;
@@ -31,7 +32,10 @@ public class VacancyImportMessageHandler {
             Copy the job title, company, requirements, and description.
             Use /cancel to stop the import.""";
 
-    private static final String DESCRIPTION_ACCEPTED_MESSAGE = "✅ Vacancy description received.";
+    private static final String EXTRACTION_FAILED_MESSAGE = """
+            I couldn't recognize this vacancy right now.
+
+            Use /add to start a new import.""";
 
     private static final String INVALID_URL_MESSAGE = """
             That does not look like a valid vacancy URL.
@@ -65,6 +69,7 @@ public class VacancyImportMessageHandler {
             "Something went wrong while processing your message. Please try again.";
 
     private final ContinueVacancyImportUseCase continueVacancyImportUseCase;
+    private final VacancyDraftPreviewFormatter vacancyDraftPreviewFormatter;
 
     public Optional<BotResponse> handle(Message message) {
         long chatId = message.getChatId();
@@ -82,8 +87,10 @@ public class VacancyImportMessageHandler {
         return switch (result) {
             case ContinueVacancyImportResult.NoActiveSession ignored -> Optional.empty();
             case ContinueVacancyImportResult.UrlAccepted ignored -> Optional.of(BotResponse.text(URL_ACCEPTED_MESSAGE));
-            case ContinueVacancyImportResult.DescriptionAccepted ignored ->
-                    Optional.of(BotResponse.text(DESCRIPTION_ACCEPTED_MESSAGE));
+            case ContinueVacancyImportResult.VacancyRecognized(var ignored, var draft) ->
+                    Optional.of(BotResponse.text(vacancyDraftPreviewFormatter.formatRecognized(draft)));
+            case ContinueVacancyImportResult.ExtractionFailed ignored ->
+                    Optional.of(BotResponse.text(EXTRACTION_FAILED_MESSAGE));
             case ContinueVacancyImportResult.InvalidUrl ignored -> Optional.of(BotResponse.text(INVALID_URL_MESSAGE));
             case ContinueVacancyImportResult.InvalidDescription ignored ->
                     Optional.of(BotResponse.text(INVALID_DESCRIPTION_MESSAGE));
