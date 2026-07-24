@@ -2,8 +2,11 @@ package com.darya.jobassistant.vacancies.entity;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.entity.BaseEntity;
+import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -36,6 +39,13 @@ public class Vacancy extends BaseEntity {
     @Column
     private String url;
 
+    @Column(length = 300)
+    private String location;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "remote_mode", length = 20)
+    private RemotePolicy remoteMode;
+
     @Column(name = "salary_min", precision = 12, scale = 2)
     private BigDecimal salaryMin;
 
@@ -44,6 +54,9 @@ public class Vacancy extends BaseEntity {
 
     @Column
     private String currency;
+
+    @Column(name = "salary_text", length = 200)
+    private String salaryText;
 
     @Column
     private String source;

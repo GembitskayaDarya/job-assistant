@@ -59,6 +59,39 @@ class JobMessageFormatterTest {
     }
 
     @Test
+    void fallsBackToNotSpecifiedWhenSalaryAndLocationAreBlank() {
+        JobOffer job = new JobOffer(
+                "1", "Backend Engineer", "Acme", "   ", "  ", "desc", "https://acme.example/jobs/1", "remoteok");
+        JobAnalysis analysis = new JobAnalysis(50, List.of("Java"), List.of(), List.of(), "Decent match.");
+
+        String message = formatter.format(job, analysis);
+
+        assertThat(message)
+                .contains("📍 Location: Not specified")
+                .contains("💰 Salary: Not specified");
+    }
+
+    @Test
+    void formatsLocationAndSalaryTextFromGuidedImportVerbatim() {
+        JobOffer job = new JobOffer(
+                "1",
+                "Backend Engineer",
+                "Acme",
+                "Warszawa/ Centrum",
+                "120-175 PLN netto/h +VAT",
+                "desc",
+                "https://acme.example/jobs/1",
+                "manual_telegram");
+        JobAnalysis analysis = new JobAnalysis(70, List.of("Java"), List.of(), List.of(), "Good match.");
+
+        String message = formatter.format(job, analysis);
+
+        assertThat(message)
+                .contains("📍 Location: Warszawa/ Centrum")
+                .contains("💰 Salary: 120\\-175 PLN netto/h \\+VAT");
+    }
+
+    @Test
     void rendersNoneWhenStrengthsOrMissingSkillsAreEmpty() {
         JobOffer job = new JobOffer(
                 "1", "Backend Engineer", "Acme", "Remote", "N/A", "desc", "https://acme.example/jobs/1", "remoteok");

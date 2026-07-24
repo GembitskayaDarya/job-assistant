@@ -299,11 +299,9 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
      * Builds the candidate {@code Vacancy} from the session's own preserved inputs, not the
      * preview text: {@code description} is the untouched raw description the user sent (never the
      * AI extraction, never a summary), and {@code url} is the normalized source URL captured back
-     * in step 2 of the import. Only the structured fields the existing {@code Vacancy} model
-     * already supports are taken from the draft (title, company); {@code location},
-     * {@code remotePolicy}, {@code contractTypes}, {@code requiredSkills} and {@code salaryText}
-     * have no corresponding column and are deliberately left out rather than growing the schema
-     * for this step.
+     * in step 2 of the import. {@code location}, {@code remoteMode} and {@code salaryText} are
+     * copied verbatim from the draft; {@code contractTypes} and {@code requiredSkills} still have
+     * no corresponding column and are left out rather than growing the schema for this step.
      */
     private Vacancy buildVacancyCandidate(VacancyImportSession session, VacancyImportDraft draft) {
         Company company = companyService.findOrCreateByName(draft.data().company());
@@ -313,6 +311,9 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
                 .description(session.getRawDescription())
                 .url(session.getSourceUrl())
                 .source(sourceIdentifier(session.getSourceUrl()))
+                .location(draft.data().location())
+                .remoteMode(draft.data().remotePolicy())
+                .salaryText(draft.data().salaryText())
                 .build();
     }
 

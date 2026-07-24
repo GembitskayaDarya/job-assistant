@@ -121,6 +121,43 @@ class VacancyImportReviewServiceTest {
         // persisted Vacancy description; ExtractedVacancyData has no description field at all.
         assertThat(candidate.getDescription()).isEqualTo(session.getRawDescription());
         assertThat(candidate.getDescription()).isEqualTo(VALID_DESCRIPTION);
+        // Regression coverage: location, remoteMode and salaryText must survive the
+        // draft -> Vacancy conversion on Save, not just title/company/description/url.
+        assertThat(candidate.getLocation()).isEqualTo("Europe");
+        assertThat(candidate.getRemoteMode()).isEqualTo(RemotePolicy.REMOTE);
+        assertThat(candidate.getSalaryText()).isEqualTo("10-15k PLN");
+    }
+
+    @Test
+    void save_draftWithLocationAndSalaryText_copiesThemVerbatimToTheVacancy() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        ExtractedVacancyData data = new ExtractedVacancyData(
+                "Senior Java Backend Developer",
+                "Example Company",
+                "Warszawa/ Centrum",
+                RemotePolicy.HYBRID,
+                List.of("B2B"),
+                List.of("Java", "Kafka"),
+                "120-175 PLN netto/h +VAT");
+        VacancyImportDraft draft = draft(session.getId(), data);
+        Company company = company("Example Company");
+        Vacancy inserted = vacancy(company);
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+        when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
+        when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
+        when(vacancyRepository.saveIfAbsent(any(Vacancy.class))).thenReturn(VacancyPersistenceResult.inserted(inserted));
+        when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), inserted.getId(), NOW)).thenReturn(true);
+        when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
+
+        service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
+
+        ArgumentCaptor<Vacancy> candidateCaptor = ArgumentCaptor.forClass(Vacancy.class);
+        verify(vacancyRepository).saveIfAbsent(candidateCaptor.capture());
+        Vacancy candidate = candidateCaptor.getValue();
+        assertThat(candidate.getLocation()).isEqualTo("Warszawa/ Centrum");
+        assertThat(candidate.getRemoteMode()).isEqualTo(RemotePolicy.HYBRID);
+        assertThat(candidate.getSalaryText()).isEqualTo("120-175 PLN netto/h +VAT");
     }
 
     @Test

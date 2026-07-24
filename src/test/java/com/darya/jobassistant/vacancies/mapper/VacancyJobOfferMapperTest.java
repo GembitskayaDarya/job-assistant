@@ -57,4 +57,62 @@ class VacancyJobOfferMapperTest {
 
         assertThat(jobOffer.salary()).isNull();
     }
+
+    @Test
+    void toJobOffer_locationAndSalaryTextFromGuidedImport_arePassedThroughUnmodified() {
+        Company company = Company.builder().name("Acme Corp").build();
+        Vacancy vacancy = Vacancy.builder()
+                .company(company)
+                .title("Backend Engineer")
+                .description("Great job")
+                .url("https://example.com/job-2")
+                .location("Warszawa/ Centrum")
+                .salaryText("120-175 PLN netto/h +VAT")
+                .source("manual_telegram")
+                .build();
+        vacancy.setId(UUID.randomUUID());
+
+        JobOffer jobOffer = mapper.toJobOffer(vacancy);
+
+        assertThat(jobOffer.location()).isEqualTo("Warszawa/ Centrum");
+        assertThat(jobOffer.salary()).isEqualTo("120-175 PLN netto/h +VAT");
+    }
+
+    @Test
+    void toJobOffer_blankSalaryText_fallsBackToNumericSalaryFormatting() {
+        Company company = Company.builder().name("Acme Corp").build();
+        Vacancy vacancy = Vacancy.builder()
+                .company(company)
+                .title("Backend Engineer")
+                .description("Great job")
+                .url("https://example.com/job-3")
+                .salaryText("   ")
+                .salaryMin(BigDecimal.valueOf(100_000))
+                .salaryMax(BigDecimal.valueOf(120_000))
+                .currency("USD")
+                .source("remoteok")
+                .build();
+        vacancy.setId(UUID.randomUUID());
+
+        JobOffer jobOffer = mapper.toJobOffer(vacancy);
+
+        assertThat(jobOffer.salary()).isEqualTo("100000 - 120000 USD");
+    }
+
+    @Test
+    void toJobOffer_noLocationPersisted_returnsNullLocation() {
+        Company company = Company.builder().name("Acme Corp").build();
+        Vacancy vacancy = Vacancy.builder()
+                .company(company)
+                .title("Backend Engineer")
+                .description("Great job")
+                .url("https://example.com/job-4")
+                .source("remoteok")
+                .build();
+        vacancy.setId(UUID.randomUUID());
+
+        JobOffer jobOffer = mapper.toJobOffer(vacancy);
+
+        assertThat(jobOffer.location()).isNull();
+    }
 }

@@ -43,9 +43,12 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
                 vacancy.getTitle(),
                 vacancy.getDescription(),
                 vacancy.getUrl(),
+                vacancy.getLocation(),
+                vacancy.getRemoteMode() == null ? null : vacancy.getRemoteMode().name(),
                 vacancy.getSalaryMin(),
                 vacancy.getSalaryMax(),
                 vacancy.getCurrency(),
+                vacancy.getSalaryText(),
                 vacancy.getSource(),
                 vacancy.getPostedAt())
                 .map(VacancyPersistenceResult::inserted)
@@ -59,8 +62,8 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
      * and updated_at are left to their column defaults, same as a normal entity insert.
      */
     @Query(value = """
-            INSERT INTO vacancy (company_id, title, description, url, salary_min, salary_max, currency, source, posted_at)
-            VALUES (:companyId, :title, :description, :url, :salaryMin, :salaryMax, :currency, :source, :postedAt)
+            INSERT INTO vacancy (company_id, title, description, url, location, remote_mode, salary_min, salary_max, currency, salary_text, source, posted_at)
+            VALUES (:companyId, :title, :description, :url, :location, :remoteMode, :salaryMin, :salaryMax, :currency, :salaryText, :source, :postedAt)
             ON CONFLICT (url) WHERE url IS NOT NULL
             DO NOTHING
             RETURNING *
@@ -70,9 +73,12 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
             @Param("title") String title,
             @Param("description") String description,
             @Param("url") String url,
+            @Param("location") String location,
+            @Param("remoteMode") String remoteMode,
             @Param("salaryMin") BigDecimal salaryMin,
             @Param("salaryMax") BigDecimal salaryMax,
             @Param("currency") String currency,
+            @Param("salaryText") String salaryText,
             @Param("source") String source,
             @Param("postedAt") LocalDate postedAt);
 }

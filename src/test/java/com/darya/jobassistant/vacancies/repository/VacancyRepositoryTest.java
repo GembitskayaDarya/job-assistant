@@ -7,6 +7,7 @@ import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
 import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -101,6 +102,29 @@ class VacancyRepositoryTest {
         } finally {
             executor.shutdown();
         }
+    }
+
+    @Test
+    void saveIfAbsent_locationRemoteModeAndSalaryText_arePersistedAndReturnedVerbatim() {
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String url = uniqueUrl();
+        Vacancy candidate = Vacancy.builder()
+                .company(company)
+                .title("Backend Engineer")
+                .description("Build backend services")
+                .url(url)
+                .location("Warszawa/ Centrum")
+                .remoteMode(RemotePolicy.HYBRID)
+                .salaryText("120-175 PLN netto/h +VAT")
+                .source("manual_telegram")
+                .build();
+
+        VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(candidate);
+
+        assertThat(result.status()).isEqualTo(VacancyPersistenceResult.Status.INSERTED);
+        assertThat(result.vacancy().getLocation()).isEqualTo("Warszawa/ Centrum");
+        assertThat(result.vacancy().getRemoteMode()).isEqualTo(RemotePolicy.HYBRID);
+        assertThat(result.vacancy().getSalaryText()).isEqualTo("120-175 PLN netto/h +VAT");
     }
 
     private long countByUrl(String url) {
