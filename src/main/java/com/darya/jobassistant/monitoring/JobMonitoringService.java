@@ -109,16 +109,22 @@ public class JobMonitoringService implements JobMonitoringUseCase {
 
     private VacancyIngestionResult ingestForKeyword(String keyword) {
         String normalizedKeyword = keyword.toLowerCase(Locale.ROOT);
-        List<JobOffer> matchingOffers = jobSources.stream()
+        List<JobOffer> fetchedOffers = jobSources.stream()
                 .flatMap(source -> fetchSafely(source).stream())
+                .toList();
+        List<JobOffer> matchingOffers = fetchedOffers.stream()
                 .filter(offer -> matchesKeyword(offer, normalizedKeyword))
                 .toList();
+        log.debug("Keyword \"{}\" matched {} of {} offers fetched from all sources",
+                keyword, matchingOffers.size(), fetchedOffers.size());
         return vacancyIngestionService.ingest(matchingOffers);
     }
 
     private List<JobOffer> fetchSafely(JobSourcePort source) {
         try {
-            return source.fetchLatestPostings();
+            List<JobOffer> offers = source.fetchLatestPostings();
+            log.debug("Fetched {} postings from {}", offers.size(), source.sourceName());
+            return offers;
         } catch (JobSourceException e) {
             log.warn("Skipping job source {} during monitoring: {}", source.sourceName(), e.getMessage());
             return List.of();
