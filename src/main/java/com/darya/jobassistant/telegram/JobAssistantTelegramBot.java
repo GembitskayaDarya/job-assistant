@@ -1,11 +1,11 @@
 package com.darya.jobassistant.telegram;
 
 import com.darya.jobassistant.config.TelegramProperties;
+import com.darya.jobassistant.telegram.callback.VacancyAnalysisCallbackHandler;
 import com.darya.jobassistant.telegram.callback.VacancyImportCallbackHandler;
 import com.darya.jobassistant.telegram.callback.VacancyImportCallbackOutcome;
 import com.darya.jobassistant.telegram.command.BotResponse;
 import com.darya.jobassistant.telegram.command.CommandRegistry;
-import com.darya.jobassistant.util.TelegramMessageUtils;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,10 +15,7 @@ import org.telegram.telegrambots.longpolling.interfaces.LongPollingUpdateConsume
 import org.telegram.telegrambots.longpolling.starter.AfterBotRegistration;
 import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
 import org.telegram.telegrambots.longpolling.util.DefaultLongPollingUpdateConsumer;
-import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
-import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
@@ -34,9 +31,11 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
 
     private final TelegramProperties telegramProperties;
     private final TelegramClient telegramClient;
+    private final TelegramMessageSender telegramMessageSender;
     private final CommandRegistry commandRegistry;
     private final VacancyImportMessageHandler vacancyImportMessageHandler;
     private final VacancyImportCallbackHandler vacancyImportCallbackHandler;
+    private final VacancyAnalysisCallbackHandler vacancyAnalysisCallbackHandler;
 
     @Override
     public String getBotToken() {
@@ -58,7 +57,7 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
             return;
         }
         Message message = update.getMessage();
-        sendMessage(message.getChatId(), handleMessage(message));
+        telegramMessageSender.send(message.getChatId(), handleMessage(message));
     }
 
     @AfterBotRegistration
@@ -82,60 +81,26 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
     }
 
     /**
-     * Dispatches only to {@link VacancyImportCallbackHandler}. An {@link Optional#empty()} result
-     * means the callback data wasn't recognized as ours - nothing else currently consumes callback
-     * queries, so it is left un-acknowledged exactly as it always was before this handler existed,
-     * ready for a future handler to claim.
+     * Explicit, ordered routing: try {@link VacancyAnalysisCallbackHandler} (the {@code
+     * via:analyze:} prefix) first - it fully handles its own acknowledgement and response, so a
+     * {@code true} result means nothing more to do here. Otherwise fall through to {@link
+     * VacancyImportCallbackHandler} (the {@code vi:} prefix), whose {@link Optional#empty()}
+     * result means the callback data wasn't recognized by either - nothing else currently consumes
+     * callback queries, so it is left un-acknowledged exactly as it always was before either
+     * handler existed, ready for a future handler to claim.
      */
     private void handleCallbackQuery(CallbackQuery callbackQuery) {
+        if (vacancyAnalysisCallbackHandler.handle(callbackQuery)) {
+            return;
+        }
         Optional<VacancyImportCallbackOutcome> outcome = vacancyImportCallbackHandler.handle(callbackQuery);
         if (outcome.isEmpty()) {
             return;
         }
-        answerCallbackQuery(callbackQuery.getId(), outcome.get().answerText());
+        telegramMessageSender.answerCallbackQuery(callbackQuery.getId(), outcome.get().answerText());
         if (outcome.get().editedMessage() != null) {
-            editMessage(callbackQuery.getMessage().getChatId(), callbackQuery.getMessage().getMessageId(), outcome.get().editedMessage());
-        }
-    }
-
-    private void sendMessage(Long chatId, BotResponse response) {
-        SendMessage sendMessage = SendMessage.builder()
-                .chatId(chatId)
-                .text(TelegramMessageUtils.truncate(response.text()))
-                .parseMode(response.parseMode())
-                .replyMarkup(response.keyboard())
-                .build();
-        try {
-            telegramClient.execute(sendMessage);
-        } catch (TelegramApiException e) {
-            log.error("Failed to send Telegram message to chat {}", chatId, e);
-        }
-    }
-
-    private void answerCallbackQuery(String callbackQueryId, String answerText) {
-        AnswerCallbackQuery answer = AnswerCallbackQuery.builder()
-                .callbackQueryId(callbackQueryId)
-                .text(answerText)
-                .build();
-        try {
-            telegramClient.execute(answer);
-        } catch (TelegramApiException e) {
-            log.error("Failed to answer callback query {}", callbackQueryId, e);
-        }
-    }
-
-    private void editMessage(Long chatId, Integer messageId, BotResponse response) {
-        EditMessageText editMessageText = EditMessageText.builder()
-                .chatId(chatId)
-                .messageId(messageId)
-                .text(TelegramMessageUtils.truncate(response.text()))
-                .parseMode(response.parseMode())
-                .replyMarkup(response.keyboard())
-                .build();
-        try {
-            telegramClient.execute(editMessageText);
-        } catch (TelegramApiException e) {
-            log.error("Failed to edit message {} in chat {}", messageId, chatId, e);
+            telegramMessageSender.editMessage(
+                    callbackQuery.getMessage().getChatId(), callbackQuery.getMessage().getMessageId(), outcome.get().editedMessage());
         }
     }
 }

@@ -68,7 +68,7 @@ class VacancyImportCallbackHandlerTest {
     }
 
     @Test
-    void handle_savedResult_rendersSavedMessageWithOpenVacancyButton() {
+    void handle_savedResult_rendersSavedMessageWithOpenAndAnalyzeButtonsAndNoOldButtons() {
         when(callbackQuery.getData()).thenReturn("vi:save:" + SESSION_ID);
         when(reviewVacancyImportUseCase.review(SESSION_ID, CHAT_ID, USER_ID, VacancyImportAction.SAVE))
                 .thenReturn(new ReviewVacancyImportResult.Saved(SESSION_ID, jobOffer(), true));
@@ -80,7 +80,14 @@ class VacancyImportCallbackHandlerTest {
         assertThat(outcome.get().editedMessage().text()).contains("Vacancy saved");
         assertThat(outcome.get().editedMessage().text()).contains("Backend Engineer");
         assertThat(outcome.get().editedMessage().text()).contains("Acme Corp");
-        assertThat(outcome.get().editedMessage().keyboard().getKeyboard()).isNotEmpty();
+        var buttons = outcome.get().editedMessage().keyboard().getKeyboard().get(0);
+        assertThat(buttons).anySatisfy(button -> assertThat(button.getUrl()).isEqualTo("https://example.com/job"));
+        assertThat(buttons).anySatisfy(button ->
+                assertThat(button.getCallbackData()).isEqualTo("via:analyze:" + SESSION_ID));
+        assertThat(buttons).noneSatisfy(button -> {
+            String callbackData = button.getCallbackData();
+            assertThat(callbackData).isNotNull().startsWith("vi:");
+        });
     }
 
     @Test

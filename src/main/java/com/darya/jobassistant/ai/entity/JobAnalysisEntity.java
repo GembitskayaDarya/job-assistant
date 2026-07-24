@@ -3,6 +3,8 @@ package com.darya.jobassistant.ai.entity;
 import com.darya.jobassistant.entity.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.util.List;
 import java.util.UUID;
@@ -14,9 +16,14 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * Persisted AI analysis result for a vacancy. {@code vacancy_id} is unique - at most one
- * analysis exists per vacancy - so this row is always the authoritative analysis for its
- * vacancy; there is no separate "pick the latest" rule to apply on read.
+ * Persisted AI analysis for a vacancy - and, while {@code status} is {@link AnalysisStatus#IN_PROGRESS},
+ * the concurrency claim for that vacancy's analysis. {@code vacancy_id} is unique regardless of
+ * status, so the same constraint that guarantees "at most one analysis per vacancy" also
+ * guarantees "at most one in-flight AI call per vacancy" - there is no separate claim table.
+ * {@code score}/{@code summary} are null exactly while {@code status} is {@code IN_PROGRESS}, a
+ * claim row carrying no result yet; they are always present once {@code status} is
+ * {@code COMPLETED}. There is no {@code FAILED} status: a failed AI call releases (deletes) its
+ * claim row entirely, so the unique constraint never blocks a retry.
  */
 @Entity
 @Table(name = "job_analysis")
@@ -29,10 +36,14 @@ public class JobAnalysisEntity extends BaseEntity {
     @Column(name = "vacancy_id", nullable = false, unique = true)
     private UUID vacancyId;
 
-    @Column(nullable = false)
-    private int score;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private AnalysisStatus status;
 
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @Column
+    private Integer score;
+
+    @Column(columnDefinition = "TEXT")
     private String summary;
 
     @JdbcTypeCode(SqlTypes.ARRAY)

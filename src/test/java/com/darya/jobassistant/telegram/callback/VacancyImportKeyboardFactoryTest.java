@@ -62,6 +62,58 @@ class VacancyImportKeyboardFactoryTest {
         assertThat(keyboard.getKeyboard()).isEmpty();
     }
 
+    @Test
+    void savedVacancyKeyboard_urlPresent_containsOpenVacancyAndAnalyzeButtons() {
+        UUID sessionId = UUID.randomUUID();
+
+        InlineKeyboardMarkup keyboard = factory.savedVacancyKeyboard("https://example.com/job/123", sessionId);
+
+        List<InlineKeyboardButton> buttons = onlyRow(keyboard);
+        assertThat(buttons).hasSize(2);
+        assertThat(buttons.get(0).getText()).contains("Open vacancy");
+        assertThat(buttons.get(0).getUrl()).isEqualTo("https://example.com/job/123");
+        assertThat(buttons.get(1).getText()).contains("Analyze");
+        assertThat(buttons.get(1).getCallbackData())
+                .isEqualTo(new VacancyAnalysisCallbackData(sessionId).format());
+    }
+
+    @Test
+    void savedVacancyKeyboard_noUrl_containsOnlyAnalyzeButton() {
+        UUID sessionId = UUID.randomUUID();
+
+        InlineKeyboardMarkup keyboard = factory.savedVacancyKeyboard(null, sessionId);
+
+        List<InlineKeyboardButton> buttons = onlyRow(keyboard);
+        assertThat(buttons).hasSize(1);
+        assertThat(buttons.get(0).getText()).contains("Analyze");
+        assertThat(buttons.get(0).getCallbackData())
+                .isEqualTo(new VacancyAnalysisCallbackData(sessionId).format());
+    }
+
+    @Test
+    void savedVacancyKeyboard_usesImportSessionIdNotVacancyId() {
+        UUID sessionId = UUID.randomUUID();
+
+        InlineKeyboardMarkup keyboard = factory.savedVacancyKeyboard("https://example.com/job", sessionId);
+
+        String analyzeCallbackData = onlyRow(keyboard).stream()
+                .filter(button -> button.getCallbackData() != null)
+                .findFirst()
+                .orElseThrow()
+                .getCallbackData();
+        assertThat(VacancyAnalysisCallbackData.parse(analyzeCallbackData)).contains(new VacancyAnalysisCallbackData(sessionId));
+    }
+
+    @Test
+    void savedVacancyKeyboard_callbackDataStaysWithinTelegramLimit() {
+        InlineKeyboardMarkup keyboard = factory.savedVacancyKeyboard("https://example.com/job", UUID.randomUUID());
+
+        onlyRow(keyboard).stream()
+                .map(InlineKeyboardButton::getCallbackData)
+                .filter(data -> data != null)
+                .forEach(data -> assertThat(data.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).isLessThanOrEqualTo(64));
+    }
+
     private List<InlineKeyboardButton> onlyRow(InlineKeyboardMarkup keyboard) {
         assertThat(keyboard.getKeyboard()).hasSize(1);
         InlineKeyboardRow row = keyboard.getKeyboard().get(0);

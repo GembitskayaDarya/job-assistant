@@ -6,6 +6,7 @@ import com.darya.jobassistant.vacancyimport.ReviewVacancyImportUseCase;
 import com.darya.jobassistant.vacancyimport.dto.ReviewVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -76,8 +77,8 @@ public class VacancyImportCallbackHandler {
 
     private VacancyImportCallbackOutcome toOutcome(ReviewVacancyImportResult result) {
         return switch (result) {
-            case ReviewVacancyImportResult.Saved(var ignored, var vacancy, var newlyCreated) ->
-                    VacancyImportCallbackOutcome.edit(savedResponse(vacancy));
+            case ReviewVacancyImportResult.Saved(var sessionId, var vacancy, var newlyCreated) ->
+                    VacancyImportCallbackOutcome.edit(savedResponse(sessionId, vacancy));
             case ReviewVacancyImportResult.RetryRequested ignored ->
                     VacancyImportCallbackOutcome.edit(new BotResponse(RETRY_MESSAGE, null, VacancyImportKeyboardFactory.NO_BUTTONS));
             case ReviewVacancyImportResult.Cancelled ignored ->
@@ -91,8 +92,8 @@ public class VacancyImportCallbackHandler {
         };
     }
 
-    private BotResponse savedResponse(JobOffer vacancy) {
+    private BotResponse savedResponse(UUID sessionId, JobOffer vacancy) {
         String text = "✅ Vacancy saved\n\n" + vacancy.title() + "\n" + vacancy.company();
-        return new BotResponse(text, null, keyboardFactory.openVacancyKeyboard(vacancy.url()));
+        return new BotResponse(text, null, keyboardFactory.savedVacancyKeyboard(vacancy.url(), sessionId));
     }
 }

@@ -8,6 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.darya.jobassistant.ai.AnalyzeVacancyUseCase;
+import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
+import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -17,6 +20,7 @@ import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
+import com.darya.jobassistant.vacancyimport.dto.AnalyzeImportedVacancyResult;
 import com.darya.jobassistant.vacancyimport.dto.ReviewVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportAction;
@@ -67,6 +71,9 @@ class VacancyImportReviewServiceTest {
     private VacancyJobOfferMapper vacancyJobOfferMapper;
 
     @Mock
+    private AnalyzeVacancyUseCase analyzeVacancyUseCase;
+
+    @Mock
     private PlatformTransactionManager transactionManager;
 
     @Mock
@@ -77,7 +84,8 @@ class VacancyImportReviewServiceTest {
     @BeforeEach
     void setUp() {
         service = new VacancyImportReviewService(
-                sessionRepository, draftRepository, vacancyRepository, companyService, vacancyJobOfferMapper, CLOCK, transactionManager);
+                sessionRepository, draftRepository, vacancyRepository, companyService, vacancyJobOfferMapper,
+                analyzeVacancyUseCase, CLOCK, transactionManager);
     }
 
     // ---- Save ----
@@ -418,6 +426,127 @@ class VacancyImportReviewServiceTest {
         verify(draftRepository, never()).deleteBySessionId(any());
     }
 
+    // ---- AnalyzeImportedVacancy ----
+
+    @Test
+    void analyze_ownedCompletedSession_delegatesUsingLinkedVacancyId() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        UUID vacancyId = UUID.randomUUID();
+        session.complete(vacancyId, CLOCK);
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+        JobOffer jobOffer = jobOffer();
+        JobAnalysis analysis = jobAnalysis();
+        when(analyzeVacancyUseCase.analyze(vacancyId)).thenReturn(new AnalyzeVacancyResult.Available(jobOffer, analysis, true));
+
+        var result = service.analyze(session.getId(), CHAT_ID, USER_ID);
+
+        verify(analyzeVacancyUseCase).analyze(vacancyId);
+        assertThat(result).isEqualTo(new AnalyzeImportedVacancyResult.Available(
+                session.getId(), vacancyId, jobOffer, analysis, true));
+    }
+
+    @Test
+    void analyze_chatOwnershipMismatch_returnsNotAvailable() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        session.complete(UUID.randomUUID(), CLOCK);
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+
+        var result = service.analyze(session.getId(), 999L, USER_ID);
+
+        assertThat(result).isEqualTo(new AnalyzeImportedVacancyResult.NotAvailable());
+        verify(analyzeVacancyUseCase, never()).analyze(any());
+    }
+
+    @Test
+    void analyze_userOwnershipMismatch_returnsNotAvailable() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        session.complete(UUID.randomUUID(), CLOCK);
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+
+        var result = service.analyze(session.getId(), CHAT_ID, 999L);
+
+        assertThat(result).isEqualTo(new AnalyzeImportedVacancyResult.NotAvailable());
+        verify(analyzeVacancyUseCase, never()).analyze(any());
+    }
+
+    @Test
+    void analyze_missingSession_returnsSameNonDisclosingResultAsOwnershipMismatch() {
+        UUID sessionId = UUID.randomUUID();
+        when(sessionRepository.findSessionById(sessionId)).thenReturn(Optional.empty());
+
+        var result = service.analyze(sessionId, CHAT_ID, USER_ID);
+
+        assertThat(result).isEqualTo(new AnalyzeImportedVacancyResult.NotAvailable());
+        verify(analyzeVacancyUseCase, never()).analyze(any());
+    }
+
+    @Test
+    void analyze_sessionNotCompleted_doesNotAnalyze() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+
+        var result = service.analyze(session.getId(), CHAT_ID, USER_ID);
+
+        assertThat(result).isEqualTo(
+                new AnalyzeImportedVacancyResult.InvalidState(ImportState.WAITING_FOR_CONFIRMATION));
+        verify(analyzeVacancyUseCase, never()).analyze(any());
+    }
+
+    @Test
+    void analyze_completedSessionWithoutVacancyId_returnsSafeInvariantResult() {
+        VacancyImportSession corrupted = mock(VacancyImportSession.class);
+        UUID sessionId = UUID.randomUUID();
+        when(corrupted.getTelegramChatId()).thenReturn(CHAT_ID);
+        when(corrupted.getTelegramUserId()).thenReturn(USER_ID);
+        when(corrupted.getState()).thenReturn(ImportState.COMPLETED);
+        when(sessionRepository.findSessionById(sessionId)).thenReturn(Optional.of(corrupted));
+
+        var result = service.analyze(sessionId, CHAT_ID, USER_ID);
+
+        assertThat(result).isEqualTo(new AnalyzeImportedVacancyResult.MissingLinkedVacancy(sessionId));
+        verify(analyzeVacancyUseCase, never()).analyze(any());
+    }
+
+    @Test
+    void analyze_inProgressResult_isMappedCorrectly() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        UUID vacancyId = UUID.randomUUID();
+        session.complete(vacancyId, CLOCK);
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+        when(analyzeVacancyUseCase.analyze(vacancyId)).thenReturn(new AnalyzeVacancyResult.InProgress());
+
+        var result = service.analyze(session.getId(), CHAT_ID, USER_ID);
+
+        assertThat(result).isEqualTo(new AnalyzeImportedVacancyResult.InProgress());
+    }
+
+    @Test
+    void analyze_failedResult_isMappedSafely() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        UUID vacancyId = UUID.randomUUID();
+        session.complete(vacancyId, CLOCK);
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+        when(analyzeVacancyUseCase.analyze(vacancyId)).thenReturn(new AnalyzeVacancyResult.Failed());
+
+        var result = service.analyze(session.getId(), CHAT_ID, USER_ID);
+
+        assertThat(result).isEqualTo(new AnalyzeImportedVacancyResult.Failed());
+    }
+
+    @Test
+    void analyze_vacancyNotFoundFromSharedUseCase_isMappedToMissingLinkedVacancy() {
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        UUID vacancyId = UUID.randomUUID();
+        session.complete(vacancyId, CLOCK);
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+        when(analyzeVacancyUseCase.analyze(vacancyId)).thenReturn(new AnalyzeVacancyResult.VacancyNotFound());
+
+        var result = service.analyze(session.getId(), CHAT_ID, USER_ID);
+
+        assertThat(result).isEqualTo(
+                new AnalyzeImportedVacancyResult.MissingLinkedVacancy(session.getId()));
+    }
+
     // ---- helpers ----
 
     private static final String VALID_DESCRIPTION =
@@ -474,5 +603,9 @@ class VacancyImportReviewServiceTest {
 
     private JobOffer jobOffer() {
         return new JobOffer("id", "Senior Java Backend Developer", "Example Company", null, null, VALID_DESCRIPTION, URL, "example.com");
+    }
+
+    private JobAnalysis jobAnalysis() {
+        return new JobAnalysis(85, List.of("Strong Java skills"), List.of(), List.of("Kafka"), "Good match");
     }
 }

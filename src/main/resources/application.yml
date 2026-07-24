@@ -88,6 +88,9 @@ jobsource:
 vacancy-import:
   session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}
 
+job-analysis:
+  claim-stale-after: ${JOB_ANALYSIS_CLAIM_STALE_AFTER:2m}
+
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}

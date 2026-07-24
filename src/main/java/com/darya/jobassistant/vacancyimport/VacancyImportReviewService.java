@@ -1,5 +1,7 @@
 package com.darya.jobassistant.vacancyimport;
 
+import com.darya.jobassistant.ai.AnalyzeVacancyUseCase;
+import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -7,6 +9,7 @@ import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import com.darya.jobassistant.vacancyimport.dto.AnalyzeImportedVacancyResult;
 import com.darya.jobassistant.vacancyimport.dto.ReviewVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportAction;
@@ -43,7 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
-public class VacancyImportReviewService implements ReviewVacancyImportUseCase {
+public class VacancyImportReviewService implements ReviewVacancyImportUseCase, AnalyzeImportedVacancyUseCase {
 
     private static final String FALLBACK_SOURCE = "manual_telegram";
 
@@ -52,6 +55,7 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase {
     private final VacancyRepository vacancyRepository;
     private final CompanyService companyService;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
+    private final AnalyzeVacancyUseCase analyzeVacancyUseCase;
     private final Clock clock;
     private final TransactionTemplate newTransaction;
 
@@ -61,6 +65,7 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase {
             VacancyRepository vacancyRepository,
             CompanyService companyService,
             VacancyJobOfferMapper vacancyJobOfferMapper,
+            AnalyzeVacancyUseCase analyzeVacancyUseCase,
             Clock clock,
             PlatformTransactionManager transactionManager) {
         this.sessionRepository = sessionRepository;
@@ -68,9 +73,47 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase {
         this.vacancyRepository = vacancyRepository;
         this.companyService = companyService;
         this.vacancyJobOfferMapper = vacancyJobOfferMapper;
+        this.analyzeVacancyUseCase = analyzeVacancyUseCase;
         this.clock = clock;
         this.newTransaction = new TransactionTemplate(transactionManager);
         this.newTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    @Override
+    public AnalyzeImportedVacancyResult analyze(UUID importSessionId, long telegramChatId, long telegramUserId) {
+        Optional<VacancyImportSession> maybeSession = sessionRepository.findSessionById(importSessionId);
+        if (maybeSession.isEmpty()) {
+            return new AnalyzeImportedVacancyResult.NotAvailable();
+        }
+        VacancyImportSession session = maybeSession.get();
+        if (session.getTelegramChatId() != telegramChatId || session.getTelegramUserId() != telegramUserId) {
+            // Deliberately identical to the "not found" branch above - see review()'s equivalent
+            // ownership check for why.
+            return new AnalyzeImportedVacancyResult.NotAvailable();
+        }
+        if (session.getState() != ImportState.COMPLETED) {
+            return new AnalyzeImportedVacancyResult.InvalidState(session.getState());
+        }
+        UUID vacancyId = session.getVacancyId();
+        if (vacancyId == null) {
+            log.error("Invariant violation: session {} is COMPLETED but has no linked vacancy", importSessionId);
+            return new AnalyzeImportedVacancyResult.MissingLinkedVacancy(importSessionId);
+        }
+
+        AnalyzeVacancyResult result = analyzeVacancyUseCase.analyze(vacancyId);
+        return switch (result) {
+            case AnalyzeVacancyResult.Available(var vacancy, var analysis, var newlyCreated) ->
+                    new AnalyzeImportedVacancyResult.Available(importSessionId, vacancyId, vacancy, analysis, newlyCreated);
+            case AnalyzeVacancyResult.InProgress ignored -> new AnalyzeImportedVacancyResult.InProgress();
+            case AnalyzeVacancyResult.Failed ignored -> new AnalyzeImportedVacancyResult.Failed();
+            // The linked vacancy was deleted after Save completed - not expected in current
+            // behavior (nothing deletes a Vacancy), but handled as the same safe invariant failure
+            // as a missing link rather than silently falling through.
+            case AnalyzeVacancyResult.VacancyNotFound ignored -> {
+                log.error("Invariant violation: session {} links to vacancy {} which no longer exists", importSessionId, vacancyId);
+                yield new AnalyzeImportedVacancyResult.MissingLinkedVacancy(importSessionId);
+            }
+        };
     }
 
     @Override
