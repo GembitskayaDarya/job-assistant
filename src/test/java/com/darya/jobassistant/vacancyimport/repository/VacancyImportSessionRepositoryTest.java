@@ -30,8 +30,10 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -57,6 +59,9 @@ class VacancyImportSessionRepositoryTest {
 
     @Autowired
     private CompanyRepository companyRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private EntityManager entityManager;
@@ -285,9 +290,11 @@ class VacancyImportSessionRepositoryTest {
     void vacancyId_foreignKeyRejectsUnknownVacancy() {
         VacancyImportSession waiting = sessionAtWaitingForConfirmation(950L, 951L);
 
-        repository.completeIfWaitingForConfirmation(waiting.getId(), UUID.randomUUID(), CLOCK.instant());
-
-        assertThatThrownBy(() -> entityManager.flush()).isInstanceOf(RuntimeException.class);
+        // Unlike an ORM-managed entity persist (deferred to flush time), this is a native
+        // executeUpdate() - it hits the database immediately, so the constraint violation
+        // surfaces from the call itself rather than from a later explicit flush.
+        assertThatThrownBy(() -> repository.completeIfWaitingForConfirmation(waiting.getId(), UUID.randomUUID(), CLOCK.instant()))
+                .isInstanceOf(RuntimeException.class);
     }
 
     @Test
@@ -384,23 +391,37 @@ class VacancyImportSessionRepositoryTest {
         assertThat(reloaded.getState()).isEqualTo(ImportState.EXPIRED);
     }
 
+    /**
+     * {@code @Transactional(NOT_SUPPORTED)} suspends {@code @DataJpaTest}'s own per-test ambient
+     * transaction, which otherwise would serialize everything below onto one connection and defeat
+     * the point of testing genuine concurrency. With no ambient transaction, every persistence
+     * operation - including the setup - needs its own explicit transaction (the {@code
+     * @PersistenceContext EntityManager} used both by this test and by {@code
+     * VacancyImportSessionRepositoryImpl}'s native queries requires one to be active), so this
+     * mirrors exactly how production code drives these same conditional updates: each call goes
+     * through its own {@link TransactionTemplate}, precisely like {@code
+     * VacancyImportReviewService}'s {@code PROPAGATION_REQUIRES_NEW} calls.
+     */
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void completeIfWaitingForConfirmation_concurrentSaveCalls_exactlyOneWinsAndOneVacancyLinked() throws Exception {
-        VacancyImportSession session = sessionAtWaitingForConfirmation(1020L, 1021L);
-        Vacancy vacancyA = persistVacancy();
-        Vacancy vacancyB = persistVacancy();
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+        VacancyImportSession session = transactionTemplate.execute(status -> sessionAtWaitingForConfirmation(1020L, 1021L));
+        Vacancy vacancyA = transactionTemplate.execute(status -> persistVacancy());
+        Vacancy vacancyB = transactionTemplate.execute(status -> persistVacancy());
         CyclicBarrier barrier = new CyclicBarrier(2);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             List<Future<Boolean>> futures = new ArrayList<>();
             futures.add(executor.submit(() -> {
                 barrier.await();
-                return repository.completeIfWaitingForConfirmation(session.getId(), vacancyA.getId(), CLOCK.instant().plusSeconds(1));
+                return transactionTemplate.execute(status ->
+                        repository.completeIfWaitingForConfirmation(session.getId(), vacancyA.getId(), CLOCK.instant().plusSeconds(1)));
             }));
             futures.add(executor.submit(() -> {
                 barrier.await();
-                return repository.completeIfWaitingForConfirmation(session.getId(), vacancyB.getId(), CLOCK.instant().plusSeconds(2));
+                return transactionTemplate.execute(status ->
+                        repository.completeIfWaitingForConfirmation(session.getId(), vacancyB.getId(), CLOCK.instant().plusSeconds(2)));
             }));
 
             List<Boolean> results = new ArrayList<>();
@@ -411,7 +432,8 @@ class VacancyImportSessionRepositoryTest {
             long winners = results.stream().filter(Boolean::booleanValue).count();
             assertThat(winners).isEqualTo(1);
 
-            VacancyImportSession finalState = repository.findSessionById(session.getId()).orElseThrow();
+            VacancyImportSession finalState =
+                    transactionTemplate.execute(status -> repository.findSessionById(session.getId()).orElseThrow());
             assertThat(finalState.getState()).isEqualTo(ImportState.COMPLETED);
             assertThat(finalState.getVacancyId()).isIn(vacancyA.getId(), vacancyB.getId());
         } finally {
