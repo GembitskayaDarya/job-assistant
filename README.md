@@ -6,11 +6,13 @@
 ![License](https://img.shields.io/badge/license-proprietary-lightgrey)
 
 A Spring Boot backend for tracking job applications, with a Telegram bot front-end for
-on-the-go status checks and an OpenAI-powered assistant for drafting cover letter suggestions.
+on-the-go status checks, a guided vacancy-import workflow, and an OpenAI-powered assistant for
+matching vacancies against your profile.
 
 ## Table of contents
 
 - [Description](#description)
+- [Guided vacancy import](#guided-vacancy-import)
 - [Architecture](#architecture)
 - [Technologies](#technologies)
 - [How to run](#how-to-run)
@@ -28,9 +30,43 @@ applied date, and notes — exposed through a REST API, with interviews and noti
 alongside.
 
 A Telegram bot is the primary front-end: `/start` registers you (or updates your username if it
-changed) and shows a welcome menu with quick-access buttons, `/list` shows your tracked
-applications, and `/help` lists everything available. An OpenAI integration can draft a cover
-letter opening paragraph from a job description.
+changed) and shows a welcome menu, `/add` walks you through importing a vacancy from a URL and
+description (see [Guided vacancy import](#guided-vacancy-import) below), `/list` shows your
+tracked applications, and `/help` lists everything available. An OpenAI integration extracts
+structured vacancy data during import and scores how well a vacancy matches your profile
+(`/analyze`, or the Analyze button after a Save).
+
+## Guided vacancy import
+
+`/add` starts a step-by-step import for one vacancy at a time:
+
+```text
+/add
+→ send the vacancy URL
+→ send the full vacancy description
+→ review the AI-recognized details
+→ press Save
+→ press Analyze
+```
+
+A few things worth being explicit about:
+
+- **The bot never opens or scrapes the URL itself.** You paste both the link and the full
+  vacancy description yourself; the URL is stored as-is (for the "Open vacancy" button and for
+  deduplication) and the description is what the AI actually reads to extract structured fields
+  (title, company, location, contract type, skills, salary) and, later, to score the match.
+- **Any public HTTP/HTTPS link works** — LinkedIn, Just Join IT, No Fluff Jobs, Pracuj.pl,
+  a company's own careers page, or anywhere else. There is no per-site adapter or whitelist: the
+  URL's hostname is only ever used as a human-readable source label, never as proof the link is
+  legitimate or that the pasted description matches it.
+- **Retry** discards the current description and asks for a new one, keeping the URL you already
+  provided. **Cancel** stops the import at any point before Save.
+- **Save** creates a new `Vacancy` — or reuses an existing one if you (or another chat) already
+  imported the same URL — and links it to the import session. **Analyze** runs the same AI
+  matching pipeline as `/analyze`; pressing it again returns the already-computed result instead
+  of calling the AI a second time.
+- An import session left idle expires after `VACANCY_IMPORT_SESSION_TTL` (24h by default) and is
+  automatically cleaned up by a background job — see [Environment variables](#environment-variables).
 
 ## Architecture
 
@@ -56,6 +92,8 @@ com.darya.jobassistant
 ├── interviews                 entity/dto/repository/mapper — no REST yet
 ├── notifications              entity/dto/repository/mapper/service — service is currently an empty stub
 ├── tracking                   Application entity/dto/repository/service/mapper/controller — the one full REST stack today
+├── vacancyimport               Guided /add workflow: session state machine, draft persistence, Save/Retry/Cancel/Analyze use cases
+├── vacancyextraction           AI extraction of structured vacancy data from a pasted description
 │
 ├── telegram                   Inbound delivery channel (the bot is the "UI")
 │   ├── JobAssistantTelegramBot.java   Auto-registered Spring long-polling bot
@@ -63,9 +101,10 @@ com.darya.jobassistant
 │   └── user/                          User entity/repository/service — registration, dedup, username sync
 │
 ├── integrations/               Ports & adapters boundary — see rationale above
-│   └── ai/openai/               OpenAI chat completion wrapper (only AI provider today)
+│   ├── jobsource/remoteok/      RemoteOkJobSourceAdapter — first (and currently only) job source
+│   └── ai/openai/               OpenAiAssistantService (chat) + JobAnalysisService (profile/job matching)
 │
-└── scheduler                  Periodic use cases spanning multiple features (reminders, sync) — not yet implemented
+└── scheduler                  Periodic jobs: vacancy ingestion, job monitoring, vacancy-import session cleanup
 ```
 
 `companies`, `vacancies`, `interviews`, and `notifications` currently expose their domain model
@@ -120,6 +159,20 @@ the raw OpenAPI spec at `http://localhost:8080/v3/api-docs`.
 Integration tests use Testcontainers to spin up a real PostgreSQL instance, so Docker must be
 running.
 
+To run a narrower slice:
+
+```bash
+# Focused, no Docker required — pure unit tests and in-memory/mocked composition tests
+# (e.g. the guided vacancy-import workflow, extraction, cleanup, /help, /start)
+./gradlew test --tests "com.darya.jobassistant.vacancyimport.*" \
+                --tests "com.darya.jobassistant.vacancyextraction.*" \
+                --tests "com.darya.jobassistant.telegram.command.*" \
+                --tests "com.darya.jobassistant.scheduler.*"
+
+# PostgreSQL/Testcontainers-backed tests only (requires Docker)
+./gradlew test --tests "*IntegrationTest" --tests "*RepositoryTest"
+```
+
 ## Docker
 
 Copy `.env.example` to `.env` and set `POSTGRES_PASSWORD` — Compose refuses to start without it,
@@ -170,7 +223,13 @@ directly):
 | `TELEGRAM_ENABLED`               | `false`         | Enables the Telegram bot when `true`              |
 | `TELEGRAM_BOT_TOKEN`             | *(empty)*       | Telegram bot token from `@BotFather`               |
 | `OPENAI_API_KEY`                 | *(empty)*       | OpenAI API key                                    |
-| `OPENAI_MODEL`                   | `gpt-4o-mini`   | OpenAI model used for cover letter suggestions    |
+| `OPENAI_MODEL`                   | `gpt-4o-mini`   | OpenAI model used for vacancy extraction and profile-match analysis |
+| `VACANCY_IMPORT_SESSION_TTL`     | `24h`           | How long an idle `/add` session stays active before it's eligible for expiration |
+| `VACANCY_IMPORT_CLEANUP_ENABLED` | `true`          | Enables the scheduled job that expires stale `/add` sessions — on by default since it's local-database maintenance only |
+| `VACANCY_IMPORT_CLEANUP_FIXED_DELAY` | `1h`        | Delay between cleanup runs                        |
+| `VACANCY_IMPORT_CLEANUP_INITIAL_DELAY` | `1m`      | Delay before the first cleanup run after startup  |
+| `VACANCY_IMPORT_CLEANUP_BATCH_SIZE` | `100`        | Max number of expired sessions expired per run     |
+| `JOB_ANALYSIS_CLAIM_STALE_AFTER` | `2m`            | How long an in-progress AI analysis claim is honored before it's considered abandoned and retried |
 | `WEBCLIENT_TIMEOUT_MS`           | `20000`         | Connect/read/write/response timeout for the shared `WebClient` (ms) |
 | `WEBCLIENT_MAX_CONNECTIONS`      | `50`            | Max pooled connections for the shared `WebClient` |
 | `WEBCLIENT_MAX_IDLE_TIME_MS`     | `30000`         | Max idle time before a pooled connection is evicted (ms) |
@@ -229,8 +288,10 @@ _Not yet available — add screenshots here as the project matures:_
 
 - [ ] Wire up the `/start` inline keyboard buttons (Search jobs, My CV, Applications, Settings)
       — they render today but don't yet respond to taps (no `callback_query` handling)
-- [ ] Vacancy ingestion from LinkedIn, Greenhouse, Lever, and RemoteOK (`integrations/jobsource`,
-      not yet built — see `CLAUDE.md`)
+- [ ] Automatic vacancy ingestion from more job providers — Greenhouse, Lever, Ashby, LinkedIn
+      (RemoteOK is already wired up; guided manual import via `/add` covers any other single URL
+      today — see [Guided vacancy import](#guided-vacancy-import))
+- [ ] Duplicate detection across job providers, and ranking + auto-sending best matches to Telegram
 - [ ] Actually send Telegram notifications — `NotificationService` exists but is currently an
       empty stub with no `NotifierPort`/`TelegramNotifier` wired up
 - [ ] Authentication/authorization for the REST API (currently unauthenticated)

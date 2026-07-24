@@ -17,18 +17,18 @@ public class StartCommand implements TelegramCommand {
     private static final String WELCOME_MESSAGE = """
             *Welcome to Job Assistant* 👋
 
-            I bring some engineering discipline to your job search — application tracking, interview scheduling, and, soon, automated vacancy sourcing and AI-drafted cover letters, all from Telegram instead of a spreadsheet.
+            I bring some engineering discipline to your job search — application tracking, guided vacancy import, and AI matching, all from Telegram instead of a spreadsheet.
 
             *Right now I can:*
             • Track applications — company, status, dates, notes (`/list`)
             • Keep interviews linked to the applications they belong to
+            • Guide you through importing a vacancy from a URL and description, then match it against your profile with AI (`/add`, `/analyze`)
 
             *Coming soon:*
-            • Pull vacancies from LinkedIn, Greenhouse, Lever, and RemoteOK
             • Store your CV and match it against open roles
             • Draft cover letters with OpenAI
 
-            Pick a starting point below, or send `/help` for the full command list.""";
+            Send `/help` for the full command list and a step-by-step guide to importing a vacancy.""";
 
     private final UserService userService;
 

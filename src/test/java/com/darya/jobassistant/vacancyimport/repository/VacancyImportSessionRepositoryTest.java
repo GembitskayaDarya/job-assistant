@@ -194,17 +194,96 @@ class VacancyImportSessionRepositoryTest {
     }
 
     @Test
-    void findExpiredActiveSessions_returnsOnlyActiveSessionsPastExpiration() {
+    void findExpiredActiveSessionIds_excludesStillFreshAndTerminalSessions() {
         Clock past = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
-        VacancyImportSession expired = repository.saveSession(
+        VacancyImportSession expiredActive = repository.saveSession(
                 VacancyImportSession.start(700L, 800L, past, Duration.ofMinutes(1)));
         VacancyImportSession stillFresh = repository.saveSession(VacancyImportSession.start(710L, 810L, CLOCK, TTL));
+        VacancyImportSession expiredButCancelled = VacancyImportSession.start(720L, 820L, past, Duration.ofMinutes(1));
+        expiredButCancelled.cancel(past);
+        repository.saveSession(expiredButCancelled);
         entityManager.flush();
 
-        var expiredSessions = repository.findExpiredActiveSessions(Instant.now(CLOCK));
+        List<UUID> candidates = repository.findExpiredActiveSessionIds(Instant.now(CLOCK), 100);
 
-        assertThat(expiredSessions).extracting(VacancyImportSession::getId).contains(expired.getId());
-        assertThat(expiredSessions).extracting(VacancyImportSession::getId).doesNotContain(stillFresh.getId());
+        assertThat(candidates).contains(expiredActive.getId());
+        assertThat(candidates).doesNotContain(stillFresh.getId(), expiredButCancelled.getId());
+    }
+
+    @Test
+    void findExpiredActiveSessionIds_ordersByExpiresAtAscendingAndRespectsLimit() {
+        Clock past = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
+        VacancyImportSession oldest = repository.saveSession(
+                VacancyImportSession.start(730L, 830L, past, Duration.ofMinutes(1)));
+        VacancyImportSession middle = repository.saveSession(
+                VacancyImportSession.start(731L, 831L, past, Duration.ofMinutes(2)));
+        VacancyImportSession newest = repository.saveSession(
+                VacancyImportSession.start(732L, 832L, past, Duration.ofMinutes(3)));
+        entityManager.flush();
+
+        List<UUID> limited = repository.findExpiredActiveSessionIds(Instant.now(CLOCK), 2);
+
+        assertThat(limited).hasSize(2);
+        assertThat(limited).containsExactly(oldest.getId(), middle.getId());
+        assertThat(limited).doesNotContain(newest.getId());
+    }
+
+    @Test
+    void expireIfActiveAndExpired_eligibleWaitingForUrlSession_transitionsToExpired() {
+        Clock past = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
+        VacancyImportSession session = repository.saveSession(VacancyImportSession.start(740L, 840L, past, Duration.ofMinutes(1)));
+        entityManager.flush();
+
+        boolean applied = repository.expireIfActiveAndExpired(session.getId(), Instant.now(CLOCK), Instant.now(CLOCK));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        assertThat(repository.findSessionById(session.getId()).orElseThrow().getState()).isEqualTo(ImportState.EXPIRED);
+    }
+
+    @Test
+    void expireIfActiveAndExpired_eligibleExtractingSession_transitionsToExpired() {
+        Clock past = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
+        VacancyImportSession session = VacancyImportSession.start(741L, 841L, past, Duration.ofMinutes(1));
+        session.provideUrl("https://example.com/job", past);
+        session.provideDescriptionAndStartExtraction("A perfectly valid vacancy description here.", past);
+        VacancyImportSession saved = repository.saveSession(session);
+        entityManager.flush();
+
+        boolean applied = repository.expireIfActiveAndExpired(saved.getId(), Instant.now(CLOCK), Instant.now(CLOCK));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        assertThat(repository.findSessionById(saved.getId()).orElseThrow().getState()).isEqualTo(ImportState.EXPIRED);
+    }
+
+    @Test
+    void expireIfActiveAndExpired_notYetExpired_doesNothing() {
+        VacancyImportSession session = repository.saveSession(VacancyImportSession.start(742L, 842L, CLOCK, TTL));
+        entityManager.flush();
+
+        boolean applied = repository.expireIfActiveAndExpired(session.getId(), CLOCK.instant(), CLOCK.instant());
+        entityManager.clear();
+
+        assertThat(applied).isFalse();
+        assertThat(repository.findSessionById(session.getId()).orElseThrow().getState()).isEqualTo(ImportState.WAITING_FOR_URL);
+    }
+
+    @Test
+    void expireIfActiveAndExpired_terminalSession_isNeverMutated() {
+        Clock past = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
+        VacancyImportSession session = VacancyImportSession.start(743L, 843L, past, Duration.ofMinutes(1));
+        session.cancel(past);
+        VacancyImportSession saved = repository.saveSession(session);
+        entityManager.flush();
+
+        boolean applied = repository.expireIfActiveAndExpired(saved.getId(), Instant.now(CLOCK), Instant.now(CLOCK));
+        entityManager.clear();
+
+        assertThat(applied).isFalse();
+        assertThat(repository.findSessionById(saved.getId()).orElseThrow().getState()).isEqualTo(ImportState.CANCELLED);
     }
 
     @Test

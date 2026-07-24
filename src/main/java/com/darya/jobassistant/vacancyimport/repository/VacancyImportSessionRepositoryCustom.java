@@ -1,6 +1,7 @@
 package com.darya.jobassistant.vacancyimport.repository;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public interface VacancyImportSessionRepositoryCustom {
@@ -81,4 +82,28 @@ public interface VacancyImportSessionRepositoryCustom {
      *      {@code WAITING_FOR_CONFIRMATION} by the time this statement ran
      */
     boolean expireIfWaitingForConfirmation(UUID sessionId, Instant updatedAt);
+
+    /**
+     * IDs of active (non-terminal) sessions whose {@code expires_at} is at or before {@code
+     * expiresBefore}, oldest expiration first, bounded to {@code limit} rows. Backs {@code
+     * VacancyImportExpirationService}'s cleanup batches - id-only and bounded so one scheduled run
+     * never loads an unbounded backlog into memory, unlike the per-callback checks above which
+     * only ever look at one session already known by id.
+     */
+    List<UUID> findExpiredActiveSessionIds(Instant expiresBefore, int limit);
+
+    /**
+     * Atomically transitions a session from any active state ({@code WAITING_FOR_URL}, {@code
+     * WAITING_FOR_DESCRIPTION}, {@code EXTRACTING}, or {@code WAITING_FOR_CONFIRMATION}) to
+     * {@code EXPIRED}, but only if it is still active and its {@code expires_at} is still at or
+     * before {@code expiresBefore}. The second condition matters because a session can legitimately
+     * be re-armed with a later {@code expires_at} between being selected as a cleanup candidate and
+     * this call running (not currently possible - sessions don't get their TTL extended today -
+     * but the guard costs nothing and removes the assumption). A zero-row result here is a normal
+     * skip: the user acted on the session (or another operation resolved it) between selection and
+     * this call, and that outcome must never be overwritten.
+     *
+     * @return true if this call performed the transition
+     */
+    boolean expireIfActiveAndExpired(UUID sessionId, Instant expiresBefore, Instant updatedAt);
 }

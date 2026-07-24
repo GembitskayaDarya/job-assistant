@@ -4,7 +4,6 @@ import com.darya.jobassistant.vacancyimport.entity.VacancyImportSessionEntity;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportSession;
 import com.darya.jobassistant.vacancyimport.model.VacancyImportSessionMapper;
-import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -13,8 +12,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
  * Application-facing VacancyImportSession persistence contract. Callers should only rely on
- * {@link #saveSession}, {@link #findSessionById}, {@link #findActiveSession} and
- * {@link #findExpiredActiveSessions} - these exclusively use the domain type
+ * {@link #saveSession}, {@link #findSessionById} and {@link #findActiveSession} - plus the
+ * bounded, id-only cleanup query and conditional expiration on {@link
+ * VacancyImportSessionRepositoryCustom} - these exclusively use the domain type
  * {@link VacancyImportSession}, never {@link VacancyImportSessionEntity}. The
  * {@code JpaRepository} superinterface is an implementation detail that lets this interface
  * stay the single port + adapter, per this project's repository convention (see
@@ -25,8 +25,6 @@ public interface VacancyImportSessionRepository
 
     List<VacancyImportSessionEntity> findByTelegramChatIdAndTelegramUserIdAndStateIn(
             Long telegramChatId, Long telegramUserId, Collection<ImportState> states);
-
-    List<VacancyImportSessionEntity> findByStateInAndExpiresAtBefore(Collection<ImportState> states, Instant threshold);
 
     default VacancyImportSession saveSession(VacancyImportSession session) {
         VacancyImportSessionEntity saved = save(VacancyImportSessionMapper.toEntity(session));
@@ -59,11 +57,5 @@ public interface VacancyImportSessionRepository
                 .stream()
                 .findFirst()
                 .map(VacancyImportSessionMapper::toDomain);
-    }
-
-    default List<VacancyImportSession> findExpiredActiveSessions(Instant now) {
-        return findByStateInAndExpiresAtBefore(ImportState.activeStates(), now).stream()
-                .map(VacancyImportSessionMapper::toDomain)
-                .toList();
     }
 }

@@ -87,6 +87,11 @@ jobsource:
 
 vacancy-import:
   session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}
+  cleanup:
+    enabled: ${VACANCY_IMPORT_CLEANUP_ENABLED:true}
+    fixed-delay: ${VACANCY_IMPORT_CLEANUP_FIXED_DELAY:1h}
+    initial-delay: ${VACANCY_IMPORT_CLEANUP_INITIAL_DELAY:1m}
+    batch-size: ${VACANCY_IMPORT_CLEANUP_BATCH_SIZE:100}
 
 job-analysis:
   claim-stale-after: ${JOB_ANALYSIS_CLAIM_STALE_AFTER:2m}

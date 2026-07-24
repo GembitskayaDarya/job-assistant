@@ -3,6 +3,7 @@ package com.darya.jobassistant.notifications.query;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.ai.entity.AnalysisStatus;
 import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.companies.entity.Company;
@@ -224,6 +225,7 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
         assertThatThrownBy(() -> {
             jobAnalysisRepository.saveAndFlush(JobAnalysisEntity.builder()
                     .vacancyId(vacancy.getId())
+                    .status(AnalysisStatus.COMPLETED)
                     .score(90)
                     .summary("Another analysis")
                     .pros(List.of())
@@ -248,6 +250,7 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
                 .build());
         jobAnalysisRepository.save(JobAnalysisEntity.builder()
                 .vacancyId(vacancy.getId())
+                .status(AnalysisStatus.COMPLETED)
                 .score(88)
                 .summary("Great match for the role")
                 .pros(List.of("Strong Java skills", "Kafka experience"))
@@ -302,6 +305,7 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
     private JobAnalysisEntity analyze(UUID vacancyId, int score) {
         return jobAnalysisRepository.save(JobAnalysisEntity.builder()
                 .vacancyId(vacancyId)
+                .status(AnalysisStatus.COMPLETED)
                 .score(score)
                 .summary("Summary")
                 .pros(List.of("Java"))

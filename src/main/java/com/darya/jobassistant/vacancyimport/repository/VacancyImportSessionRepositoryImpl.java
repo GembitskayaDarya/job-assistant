@@ -3,6 +3,7 @@ package com.darya.jobassistant.vacancyimport.repository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -53,6 +54,29 @@ public class VacancyImportSessionRepositoryImpl implements VacancyImportSessionR
             UPDATE vacancy_import_session
             SET state = 'EXPIRED', updated_at = :updatedAt
             WHERE id = :sessionId AND state = 'WAITING_FOR_CONFIRMATION'
+            """;
+
+    /**
+     * The active-state list mirrors {@code ImportState.activeStates()} and the partial unique
+     * index's own literal list in {@code V5__vacancy_import_session.sql} - both are hardcoded SQL
+     * literals rather than a bound parameter list, consistent with every other conditional
+     * transition in this class, and must be kept in sync if a new active state is ever added.
+     */
+    private static final String FIND_EXPIRED_ACTIVE_SESSION_IDS_SQL = """
+            SELECT id
+            FROM vacancy_import_session
+            WHERE state IN ('WAITING_FOR_URL', 'WAITING_FOR_DESCRIPTION', 'EXTRACTING', 'WAITING_FOR_CONFIRMATION')
+              AND expires_at <= :expiresBefore
+            ORDER BY expires_at ASC, id ASC
+            LIMIT :limit
+            """;
+
+    private static final String EXPIRE_IF_ACTIVE_AND_EXPIRED_SQL = """
+            UPDATE vacancy_import_session
+            SET state = 'EXPIRED', updated_at = :updatedAt
+            WHERE id = :sessionId
+              AND state IN ('WAITING_FOR_URL', 'WAITING_FOR_DESCRIPTION', 'EXTRACTING', 'WAITING_FOR_CONFIRMATION')
+              AND expires_at <= :expiresBefore
             """;
 
     @PersistenceContext
@@ -118,6 +142,25 @@ public class VacancyImportSessionRepositoryImpl implements VacancyImportSessionR
     public boolean expireIfWaitingForConfirmation(UUID sessionId, Instant updatedAt) {
         int updatedRows = entityManager.createNativeQuery(EXPIRE_SQL)
                 .setParameter("sessionId", sessionId)
+                .setParameter("updatedAt", updatedAt)
+                .executeUpdate();
+        return updatedRows == 1;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public List<UUID> findExpiredActiveSessionIds(Instant expiresBefore, int limit) {
+        return entityManager.createNativeQuery(FIND_EXPIRED_ACTIVE_SESSION_IDS_SQL)
+                .setParameter("expiresBefore", expiresBefore)
+                .setParameter("limit", limit)
+                .getResultList();
+    }
+
+    @Override
+    public boolean expireIfActiveAndExpired(UUID sessionId, Instant expiresBefore, Instant updatedAt) {
+        int updatedRows = entityManager.createNativeQuery(EXPIRE_IF_ACTIVE_AND_EXPIRED_SQL)
+                .setParameter("sessionId", sessionId)
+                .setParameter("expiresBefore", expiresBefore)
                 .setParameter("updatedAt", updatedAt)
                 .executeUpdate();
         return updatedRows == 1;
