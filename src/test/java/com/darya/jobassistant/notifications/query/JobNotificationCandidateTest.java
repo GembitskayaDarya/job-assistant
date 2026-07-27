@@ -84,7 +84,9 @@ class JobNotificationCandidateTest {
     }
 
     private PersistedJobAnalysis analysisFor(UUID vacancyId) {
-        JobAnalysis analysis = new JobAnalysis(85, List.of("Java"), List.of(), List.of(), "Strong match");
+        JobAnalysis analysis = new JobAnalysis(
+                85, List.of("Java"), List.of(), List.of(), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Strong match");
         return new PersistedJobAnalysis(UUID.randomUUID(), vacancyId, analysis, Instant.now());
     }
 }

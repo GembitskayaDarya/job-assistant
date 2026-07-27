@@ -647,7 +647,9 @@ class JobMonitoringServiceTest {
     }
 
     private JobAnalysis analysis(int score) {
-        return new JobAnalysis(score, List.of(), List.of(), List.of(), "Great match");
+        return new JobAnalysis(
+                score, List.of(), List.of(), List.of(), List.of(),
+                "No years stated; seniority appears broadly aligned.", "No preference conflicts detected.", "Great match");
     }
 
     private JobNotificationCandidate candidateFor(Vacancy vacancy, JobAnalysis analysis) {
@@ -658,7 +660,8 @@ class JobMonitoringServiceTest {
     private JobNotification notification() {
         return new JobNotification(
                 UUID.randomUUID(), RECIPIENT_CHAT_ID, "Backend Engineer", "Acme", "https://example.com/job",
-                90, "Great match", List.of(), List.of(), List.of());
+                90, "Great match", List.of(), List.of(), List.of(), List.of(),
+                "No years stated; seniority appears broadly aligned.", "No preference conflicts detected.");
     }
 
     private NotificationDelivery pendingDelivery(UUID vacancyId) {

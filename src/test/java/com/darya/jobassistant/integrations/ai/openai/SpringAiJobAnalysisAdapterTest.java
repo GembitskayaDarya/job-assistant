@@ -36,7 +36,9 @@ class SpringAiJobAnalysisAdapterTest {
 
     @Test
     void analyze_returnsStructuredResponseOnSuccess() {
-        JobAnalysis expected = new JobAnalysis(80, List.of("Java"), List.of(), List.of(), "Good match");
+        JobAnalysis expected = new JobAnalysis(
+                80, List.of("Java"), List.of(), List.of(), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Good match");
         when(chatClient.prompt()).thenReturn(requestSpec);
         when(requestSpec.system("system prompt")).thenReturn(requestSpec);
         when(requestSpec.user("user prompt")).thenReturn(requestSpec);

@@ -239,7 +239,9 @@ class VacancyImportWorkflowEndToEndTest {
                 new CandidatePreferences(
                         null, "Remote Europe", null, List.of(), false, List.of(), null, "Product company", null, null));
         lenient().when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        JobAnalysis analysis = new JobAnalysis(88, List.of("Strong Java and Kafka match"), List.of(), List.of(), "Great fit");
+        JobAnalysis analysis = new JobAnalysis(
+                88, List.of("Strong Java and Kafka match"), List.of(), List.of(), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Great fit");
         lenient().when(jobAnalysisAiPort.analyze(any(), any())).thenReturn(analysis);
 
         AnalyzeImportedVacancyResult result = reviewService.analyze(sessionId, CHAT_ID, USER_ID);
@@ -335,7 +337,8 @@ class VacancyImportWorkflowEndToEndTest {
                     .status(AnalysisStatus.IN_PROGRESS)
                     .pros(List.of())
                     .cons(List.of())
-                    .missingSkills(List.of())
+                    .missingRequiredSkills(List.of())
+                    .missingPreferredSkills(List.of())
                     .createdAt(claimedAt)
                     .updatedAt(claimedAt)
                     .build();
@@ -356,7 +359,10 @@ class VacancyImportWorkflowEndToEndTest {
                     .summary(analysis.summary())
                     .pros(analysis.pros())
                     .cons(analysis.cons())
-                    .missingSkills(analysis.missingSkills())
+                    .missingRequiredSkills(analysis.missingRequiredSkills())
+                    .missingPreferredSkills(analysis.missingPreferredSkills())
+                    .experienceAssessment(analysis.experienceAssessment())
+                    .preferencesAssessment(analysis.preferencesAssessment())
                     .createdAt(current.getCreatedAt())
                     .updatedAt(completedAt)
                     .build();

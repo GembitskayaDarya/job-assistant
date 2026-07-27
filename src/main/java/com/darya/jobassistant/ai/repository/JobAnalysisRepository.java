@@ -50,7 +50,10 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
                 .summary(analysis.summary())
                 .pros(analysis.pros())
                 .cons(analysis.cons())
-                .missingSkills(analysis.missingSkills())
+                .missingRequiredSkills(analysis.missingRequiredSkills())
+                .missingPreferredSkills(analysis.missingPreferredSkills())
+                .experienceAssessment(analysis.experienceAssessment())
+                .preferencesAssessment(analysis.preferencesAssessment())
                 .build());
         return toDomain(saved);
     }
@@ -72,8 +75,9 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
      * project already relies on elsewhere.
      */
     @Query(value = """
-            INSERT INTO job_analysis (vacancy_id, status, pros, cons, missing_skills, created_at, updated_at)
-            VALUES (:vacancyId, 'IN_PROGRESS', '{}', '{}', '{}', :claimedAt, :claimedAt)
+            INSERT INTO job_analysis
+                (vacancy_id, status, pros, cons, missing_required_skills, missing_preferred_skills, created_at, updated_at)
+            VALUES (:vacancyId, 'IN_PROGRESS', '{}', '{}', '{}', '{}', :claimedAt, :claimedAt)
             ON CONFLICT (vacancy_id) DO NOTHING
             RETURNING *
             """, nativeQuery = true)
@@ -96,7 +100,10 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
                 analysis.summary(),
                 analysis.pros(),
                 analysis.cons(),
-                analysis.missingSkills(),
+                analysis.missingRequiredSkills(),
+                analysis.missingPreferredSkills(),
+                analysis.experienceAssessment(),
+                analysis.preferencesAssessment(),
                 completedAt,
                 AnalysisStatus.COMPLETED,
                 AnalysisStatus.IN_PROGRESS);
@@ -107,7 +114,10 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
     @Query("""
             UPDATE JobAnalysisEntity e
             SET e.status = :completedStatus, e.score = :score, e.summary = :summary,
-                e.pros = :pros, e.cons = :cons, e.missingSkills = :missingSkills, e.updatedAt = :completedAt
+                e.pros = :pros, e.cons = :cons,
+                e.missingRequiredSkills = :missingRequiredSkills, e.missingPreferredSkills = :missingPreferredSkills,
+                e.experienceAssessment = :experienceAssessment, e.preferencesAssessment = :preferencesAssessment,
+                e.updatedAt = :completedAt
             WHERE e.vacancyId = :vacancyId AND e.status = :inProgressStatus
             """)
     int completeClaimIfInProgress(
@@ -116,7 +126,10 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
             @Param("summary") String summary,
             @Param("pros") List<String> pros,
             @Param("cons") List<String> cons,
-            @Param("missingSkills") List<String> missingSkills,
+            @Param("missingRequiredSkills") List<String> missingRequiredSkills,
+            @Param("missingPreferredSkills") List<String> missingPreferredSkills,
+            @Param("experienceAssessment") String experienceAssessment,
+            @Param("preferencesAssessment") String preferencesAssessment,
             @Param("completedAt") Instant completedAt,
             @Param("completedStatus") AnalysisStatus completedStatus,
             @Param("inProgressStatus") AnalysisStatus inProgressStatus);
@@ -159,7 +172,15 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
         return new PersistedJobAnalysis(
                 entity.getId(),
                 entity.getVacancyId(),
-                new JobAnalysis(entity.getScore(), entity.getPros(), entity.getCons(), entity.getMissingSkills(), entity.getSummary()),
+                new JobAnalysis(
+                        entity.getScore(),
+                        entity.getPros(),
+                        entity.getCons(),
+                        entity.getMissingRequiredSkills(),
+                        entity.getMissingPreferredSkills(),
+                        entity.getExperienceAssessment(),
+                        entity.getPreferencesAssessment(),
+                        entity.getSummary()),
                 entity.getCreatedAt());
     }
 }

@@ -129,6 +129,8 @@ class AnalyzeCommandTest {
     }
 
     private JobAnalysis jobAnalysis() {
-        return new JobAnalysis(85, List.of("Strong Java skills"), List.of(), List.of("Kafka"), "Good match");
+        return new JobAnalysis(
+                85, List.of("Strong Java skills"), List.of(), List.of("Kafka"), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Good match");
     }
 }

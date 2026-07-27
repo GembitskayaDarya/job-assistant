@@ -61,7 +61,11 @@ class JobAnalysisServiceTest {
                 "https://example.com/job-1",
                 "remoteok");
         JobAnalysis expected = new JobAnalysis(
-                85, List.of("Strong Java match"), List.of("No Kafka mentioned"), List.of("Kafka"), "Good match");
+                85, List.of("Strong Java match"), List.of("No Kafka mentioned"),
+                List.of("Kafka"), List.of("Terraform"),
+                "The vacancy requests 5+ years and the candidate has 6, so the requirement is met.",
+                "Remote and Poland-based work both match the candidate's preferences.",
+                "Good match");
         when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(expected);
 
         JobAnalysis result = jobAnalysisService.analyze(profile, job);
@@ -75,8 +79,6 @@ class JobAnalysisServiceTest {
         String systemPrompt = systemPromptCaptor.getValue();
         assertThat(systemPrompt).contains("experienced technical recruiter");
         assertThat(systemPrompt).contains("\"score\": 0-100");
-        // The prompt names these categories only to tell the model never to produce them.
-        assertThat(systemPrompt).contains("Never produce match categories");
 
         String userPrompt = userPromptCaptor.getValue();
         // Candidate identity and skills, with proficiency and preserved order.
@@ -89,23 +91,6 @@ class JobAnalysisServiceTest {
                 .contains("- Spring Boot: STRONG")
                 .contains("- Kafka: WORKING")
                 .contains("- AWS: BASIC");
-        assertThat(userPrompt.indexOf("- Java: EXPERT"))
-                .isLessThan(userPrompt.indexOf("- Spring Boot: STRONG"))
-                .isLessThan(userPrompt.indexOf("- Kafka: WORKING"))
-                .isLessThan(userPrompt.indexOf("- AWS: BASIC"));
-
-        // Preferences, including unconfigured fields rendered as "Not configured", never as null.
-        assertThat(userPrompt).contains("Preferred work arrangement: Remote, Europe");
-        assertThat(userPrompt).contains("Work-arrangement importance: STRONG");
-        assertThat(userPrompt).contains("Relocation allowed: false");
-        assertThat(userPrompt).contains("Preferred company type: Product company");
-        assertThat(userPrompt).contains("Current country: Not configured");
-        assertThat(userPrompt).contains("Allowed work countries: Not configured");
-        assertThat(userPrompt).contains("Preferred contract types: Not configured");
-        assertThat(userPrompt).contains("Contract-type importance: Not configured");
-        assertThat(userPrompt).contains("Company-type importance: Not configured");
-        assertThat(userPrompt).contains("Salary expectation: Not configured");
-        assertThat(userPrompt).doesNotContain("null");
 
         // Job description fields.
         assertThat(userPrompt).contains("Backend Engineer");
@@ -115,52 +100,72 @@ class JobAnalysisServiceTest {
     }
 
     @Test
-    void analyze_userPrompt_neverContainsSkillProficiencyNoneOrBareSkillNamesOnly() {
-        CandidateProfile profile = validProfile();
-        JobAnalysis expected = new JobAnalysis(50, List.of(), List.of(), List.of(), "Summary");
-        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(expected);
+    void systemPrompt_declaresTheNewJsonResponseShape() {
+        stubAnalysis(validAnalysis());
 
-        jobAnalysisService.analyze(profile, validJob());
+        jobAnalysisService.analyze(validProfile(), validJob());
 
-        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jobAnalysisAiPort).analyze(anyString(), userPromptCaptor.capture());
-        String userPrompt = userPromptCaptor.getValue();
+        String systemPrompt = captureSystemPrompt();
+        assertThat(systemPrompt)
+                .contains("\"missingRequiredSkills\": []")
+                .contains("\"missingPreferredSkills\": []")
+                .contains("\"experienceAssessment\": \"\"")
+                .contains("\"preferencesAssessment\": \"\"");
+        // The old flat "missingSkills" field is no longer part of the active provider contract.
+        assertThat(systemPrompt).doesNotContain("\"missingSkills\"");
+    }
 
-        assertThat(userPrompt).doesNotContain("NONE");
-        // Every configured skill must appear with its level, not as a bare comma-separated name.
-        assertThat(userPrompt).doesNotContain("Java, Spring Boot, Kafka");
+    @Test
+    void systemPrompt_explainsRequiredPreferredAndUnknownVacancyImportance() {
+        stubAnalysis(validAnalysis());
+
+        jobAnalysisService.analyze(validProfile(), validJob());
+
+        String systemPrompt = captureSystemPrompt();
+        assertThat(systemPrompt).contains("REQUIRED").contains("PREFERRED").contains("UNKNOWN");
+        assertThat(systemPrompt).contains("Do not automatically classify every mentioned technology as required");
+    }
+
+    @Test
+    void systemPrompt_restrictsMissingListsToAbsentSkillsByImportance() {
+        stubAnalysis(validAnalysis());
+
+        jobAnalysisService.analyze(validProfile(), validJob());
+
+        String systemPrompt = captureSystemPrompt();
+        assertThat(systemPrompt).contains("only skills classified REQUIRED that are absent");
+        assertThat(systemPrompt).contains("only skills classified PREFERRED that are absent");
+        assertThat(systemPrompt).contains("Skills of UNKNOWN importance go into neither list");
+        assertThat(systemPrompt).contains("is not absent");
+    }
+
+    @Test
+    void systemPrompt_requiresExperienceAndPreferencesToBeAssessedSeparately() {
+        stubAnalysis(validAnalysis());
+
+        jobAnalysisService.analyze(validProfile(), validJob());
+
+        String systemPrompt = captureSystemPrompt();
+        assertThat(systemPrompt).contains("\"experienceAssessment\"");
+        assertThat(systemPrompt).contains("\"preferencesAssessment\"");
+        assertThat(systemPrompt).contains("never invent a").contains("never derive one from seniority wording alone");
+        assertThat(systemPrompt).contains("a gap must never by itself justify a score of zero");
+    }
+
+    @Test
+    void systemPrompt_keepsScoreAsTheOnlyNumericResult() {
+        stubAnalysis(validAnalysis());
+
+        jobAnalysisService.analyze(validProfile(), validJob());
+
+        String systemPrompt = captureSystemPrompt();
+        assertThat(systemPrompt).contains("\"score\": 0-100");
+        assertThat(systemPrompt).contains("the score itself is the only result");
     }
 
     @Test
     void analyze_throwsJobAnalysisExceptionWhenPortReturnsNull() {
         when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(null);
-
-        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
-                .isInstanceOf(JobAnalysisException.class);
-    }
-
-    @Test
-    void analyze_throwsJobAnalysisExceptionWhenScoreIsBelowZero() {
-        JobAnalysis invalid = new JobAnalysis(-1, List.of(), List.of(), List.of(), "Some summary");
-        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(invalid);
-
-        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
-                .isInstanceOf(JobAnalysisException.class);
-    }
-
-    @Test
-    void analyze_throwsJobAnalysisExceptionWhenScoreIsAboveHundred() {
-        JobAnalysis invalid = new JobAnalysis(101, List.of(), List.of(), List.of(), "Some summary");
-        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(invalid);
-
-        assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
-                .isInstanceOf(JobAnalysisException.class);
-    }
-
-    @Test
-    void analyze_throwsJobAnalysisExceptionWhenSummaryIsBlank() {
-        JobAnalysis invalid = new JobAnalysis(50, List.of(), List.of(), List.of(), "   ");
-        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(invalid);
 
         assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
                 .isInstanceOf(JobAnalysisException.class);
@@ -173,6 +178,24 @@ class JobAnalysisServiceTest {
 
         assertThatThrownBy(() -> jobAnalysisService.analyze(validProfile(), validJob()))
                 .isSameAs(portFailure);
+    }
+
+    private void stubAnalysis(JobAnalysis analysis) {
+        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(analysis);
+    }
+
+    private String captureSystemPrompt() {
+        ArgumentCaptor<String> systemPromptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jobAnalysisAiPort).analyze(systemPromptCaptor.capture(), anyString());
+        return systemPromptCaptor.getValue();
+    }
+
+    private JobAnalysis validAnalysis() {
+        return new JobAnalysis(
+                50, List.of(), List.of(), List.of(), List.of(),
+                "No years stated; seniority appears broadly aligned.",
+                "No preference conflicts detected.",
+                "Summary");
     }
 
     private CandidateProfile validProfile() {

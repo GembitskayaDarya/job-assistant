@@ -284,7 +284,9 @@ class AnalyzeVacancyServiceTest {
     }
 
     private JobAnalysis jobAnalysis() {
-        return new JobAnalysis(85, List.of("Strong Java skills"), List.of(), List.of("Kafka"), "Good match");
+        return new JobAnalysis(
+                85, List.of("Strong Java skills"), List.of(), List.of("Kafka"), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Good match");
     }
 
     private JobAnalysisEntity inProgressEntity() {
@@ -294,7 +296,8 @@ class AnalyzeVacancyServiceTest {
                 .status(AnalysisStatus.IN_PROGRESS)
                 .pros(List.of())
                 .cons(List.of())
-                .missingSkills(List.of())
+                .missingRequiredSkills(List.of())
+                .missingPreferredSkills(List.of())
                 .createdAt(NOW)
                 .updatedAt(NOW)
                 .build();
@@ -309,7 +312,10 @@ class AnalyzeVacancyServiceTest {
                 .summary(analysis.summary())
                 .pros(analysis.pros())
                 .cons(analysis.cons())
-                .missingSkills(analysis.missingSkills())
+                .missingRequiredSkills(analysis.missingRequiredSkills())
+                .missingPreferredSkills(analysis.missingPreferredSkills())
+                .experienceAssessment(analysis.experienceAssessment())
+                .preferencesAssessment(analysis.preferencesAssessment())
                 .createdAt(NOW)
                 .updatedAt(NOW)
                 .build();

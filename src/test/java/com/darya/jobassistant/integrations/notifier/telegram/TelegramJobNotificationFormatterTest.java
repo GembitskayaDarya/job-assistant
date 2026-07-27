@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Test;
 
 class TelegramJobNotificationFormatterTest {
 
+    private static final String EXPERIENCE_ASSESSMENT = "6 years vs. no stated requirement.";
+    private static final String PREFERENCES_ASSESSMENT = "Remote preference matches.";
+
     private final TelegramJobNotificationFormatter formatter = new TelegramJobNotificationFormatter();
     private final UUID vacancyId = UUID.randomUUID();
 
@@ -17,7 +20,8 @@ class TelegramJobNotificationFormatterTest {
     void format_completeNotification_containsAllSections() {
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Strong overall match",
-                List.of("Solid Java background"), List.of("No Kafka experience"), List.of("Kafka", "Kubernetes"));
+                List.of("Solid Java background"), List.of("No Kafka experience"),
+                List.of("Kafka"), List.of("Kubernetes"));
 
         String message = formatter.format(notification);
 
@@ -29,6 +33,8 @@ class TelegramJobNotificationFormatterTest {
         assertThat(message).contains("No Kafka experience");
         assertThat(message).contains("Kafka");
         assertThat(message).contains("Kubernetes");
+        assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2(EXPERIENCE_ASSESSMENT));
+        assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2(PREFERENCES_ASSESSMENT));
         assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2("https://example.com/job-1"));
     }
 
@@ -36,7 +42,7 @@ class TelegramJobNotificationFormatterTest {
     void format_emptyProsSection_isOmitted() {
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Summary",
-                List.of(), List.of("Some con"), List.of("Some skill"));
+                List.of(), List.of("Some con"), List.of("Some skill"), List.of());
 
         String message = formatter.format(notification);
 
@@ -47,7 +53,7 @@ class TelegramJobNotificationFormatterTest {
     void format_emptyConsSection_isOmitted() {
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Summary",
-                List.of("Some pro"), List.of(), List.of("Some skill"));
+                List.of("Some pro"), List.of(), List.of("Some skill"), List.of());
 
         String message = formatter.format(notification);
 
@@ -55,28 +61,42 @@ class TelegramJobNotificationFormatterTest {
     }
 
     @Test
-    void format_emptyMissingSkillsSection_isOmitted() {
+    void format_emptyMissingRequiredSkillsSection_isOmitted() {
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Summary",
-                List.of("Some pro"), List.of("Some con"), List.of());
+                List.of("Some pro"), List.of("Some con"), List.of(), List.of("Some preferred skill"));
 
         String message = formatter.format(notification);
 
-        assertThat(message).doesNotContain("Missing Skills");
+        assertThat(message).doesNotContain("Missing Required Skills");
     }
 
     @Test
-    void format_allSectionsEmpty_omitsAllOptionalSections() {
+    void format_emptyMissingPreferredSkillsSection_isOmitted() {
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Summary",
-                List.of(), List.of(), List.of());
+                List.of("Some pro"), List.of("Some con"), List.of("Some required skill"), List.of());
+
+        String message = formatter.format(notification);
+
+        assertThat(message).doesNotContain("Missing Preferred Skills");
+    }
+
+    @Test
+    void format_allOptionalSectionsEmpty_omitsThemButKeepsMandatorySections() {
+        JobNotification notification = notification(
+                "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Summary",
+                List.of(), List.of(), List.of(), List.of());
 
         String message = formatter.format(notification);
 
         assertThat(message).doesNotContain("Strengths");
         assertThat(message).doesNotContain("Considerations");
-        assertThat(message).doesNotContain("Missing Skills");
+        assertThat(message).doesNotContain("Missing Required Skills");
+        assertThat(message).doesNotContain("Missing Preferred Skills");
         assertThat(message).contains("Backend Engineer");
+        assertThat(message).contains("Experience");
+        assertThat(message).contains("Preferences");
         assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2("https://example.com/job-1"));
     }
 
@@ -84,7 +104,7 @@ class TelegramJobNotificationFormatterTest {
     void format_preservesSourceOrderOfListItems() {
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Summary",
-                List.of("First pro", "Second pro", "Third pro"), List.of(), List.of());
+                List.of("First pro", "Second pro", "Third pro"), List.of(), List.of(), List.of());
 
         String message = formatter.format(notification);
 
@@ -100,7 +120,8 @@ class TelegramJobNotificationFormatterTest {
         JobNotification notification = notification(
                 "Senior_Engineer* [Backend]", "Acme.Corp!", "https://example.com/job-1", 85,
                 "Great fit (highly recommended) #1!",
-                List.of("Loves *bold* text"), List.of("Uses `code` blocks"), List.of("C++ experience"));
+                List.of("Loves *bold* text"), List.of("Uses `code` blocks"),
+                List.of("C++ experience"), List.of("Rust experience"));
 
         String message = formatter.format(notification);
 
@@ -110,13 +131,14 @@ class TelegramJobNotificationFormatterTest {
         assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2("Loves *bold* text"));
         assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2("Uses `code` blocks"));
         assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2("C++ experience"));
+        assertThat(message).contains(TelegramMessageUtils.escapeMarkdownV2("Rust experience"));
     }
 
     @Test
     void format_urlIsRenderedSafely() {
         String url = "https://example.com/jobs?id=123&ref=search-page.v2";
         JobNotification notification = notification(
-                "Backend Engineer", "Acme Corp", url, 85, "Summary", List.of(), List.of(), List.of());
+                "Backend Engineer", "Acme Corp", url, 85, "Summary", List.of(), List.of(), List.of(), List.of());
 
         String message = formatter.format(notification);
 
@@ -131,7 +153,7 @@ class TelegramJobNotificationFormatterTest {
         String longSummary = "S".repeat(3000);
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, longSummary,
-                manyLongPros, manyLongPros, manyLongPros);
+                manyLongPros, manyLongPros, manyLongPros, manyLongPros);
 
         String message = formatter.format(notification);
 
@@ -146,7 +168,7 @@ class TelegramJobNotificationFormatterTest {
         String longSummary = "S".repeat(3000);
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, longSummary,
-                manyLongPros, manyLongPros, manyLongPros);
+                manyLongPros, manyLongPros, manyLongPros, manyLongPros);
 
         String message = formatter.format(notification);
 
@@ -161,7 +183,7 @@ class TelegramJobNotificationFormatterTest {
         String hugeTitleWithBackslashes = ("Engineer\\_" + "x".repeat(10)).repeat(600);
         JobNotification notification = notification(
                 hugeTitleWithBackslashes, "Acme Corp", "https://example.com/job-1", 85, "Summary",
-                List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of());
 
         String message = formatter.format(notification);
 
@@ -177,7 +199,7 @@ class TelegramJobNotificationFormatterTest {
     void format_doesNotIncludeAnyDescriptionBeyondFormattedFields() {
         JobNotification notification = notification(
                 "Backend Engineer", "Acme Corp", "https://example.com/job-1", 85, "Short summary",
-                List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of());
 
         String message = formatter.format(notification);
 
@@ -187,7 +209,9 @@ class TelegramJobNotificationFormatterTest {
 
     private JobNotification notification(
             String title, String companyName, String url, int score, String summary,
-            List<String> pros, List<String> cons, List<String> missingSkills) {
-        return new JobNotification(vacancyId, 12345L, title, companyName, url, score, summary, pros, cons, missingSkills);
+            List<String> pros, List<String> cons, List<String> missingRequiredSkills, List<String> missingPreferredSkills) {
+        return new JobNotification(
+                vacancyId, 12345L, title, companyName, url, score, summary, pros, cons,
+                missingRequiredSkills, missingPreferredSkills, EXPERIENCE_ASSESSMENT, PREFERENCES_ASSESSMENT);
     }
 }

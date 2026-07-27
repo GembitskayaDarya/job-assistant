@@ -31,7 +31,7 @@ import org.hibernate.type.SqlTypes;
  *
  * <p>List fields use PostgreSQL {@code text[]} columns via {@code @JdbcTypeCode(SqlTypes.ARRAY)},
  * the same technique already established by {@code JobAnalysisEntity} for {@code pros}/{@code
- * cons}/{@code missingSkills}. These lists exist purely for a preview display and are never
+ * cons}/{@code missingRequiredSkills}. These lists exist purely for a preview display and are never
  * queried or filtered on individually, so a normalized child table would add join complexity
  * with no read benefit, and JSONB would add a mapping layer this project doesn't otherwise use for
  * list-of-string data - the existing array convention is the deliberate, consistent choice.

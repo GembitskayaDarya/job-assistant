@@ -230,7 +230,10 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
                     .summary("Another analysis")
                     .pros(List.of())
                     .cons(List.of())
-                    .missingSkills(List.of())
+                    .missingRequiredSkills(List.of())
+                    .missingPreferredSkills(List.of())
+                    .experienceAssessment("Not assessed.")
+                    .preferencesAssessment("Not assessed.")
                     .build());
         }).isInstanceOf(DataIntegrityViolationException.class);
     }
@@ -255,7 +258,10 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
                 .summary("Great match for the role")
                 .pros(List.of("Strong Java skills", "Kafka experience"))
                 .cons(List.of("No AWS mentioned"))
-                .missingSkills(List.of("AWS"))
+                .missingRequiredSkills(List.of("AWS"))
+                .missingPreferredSkills(List.of("Terraform"))
+                .experienceAssessment("6 years vs. no stated requirement.")
+                .preferencesAssessment("Remote preference matches.")
                 .build());
 
         List<JobNotificationCandidate> candidates = candidateQueryPort.findCandidates(RECIPIENT, 0, 10);
@@ -271,7 +277,10 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
         assertThat(candidate.analysis().analysis().summary()).isEqualTo("Great match for the role");
         assertThat(candidate.analysis().analysis().pros()).containsExactly("Strong Java skills", "Kafka experience");
         assertThat(candidate.analysis().analysis().cons()).containsExactly("No AWS mentioned");
-        assertThat(candidate.analysis().analysis().missingSkills()).containsExactly("AWS");
+        assertThat(candidate.analysis().analysis().missingRequiredSkills()).containsExactly("AWS");
+        assertThat(candidate.analysis().analysis().missingPreferredSkills()).containsExactly("Terraform");
+        assertThat(candidate.analysis().analysis().experienceAssessment()).isEqualTo("6 years vs. no stated requirement.");
+        assertThat(candidate.analysis().analysis().preferencesAssessment()).isEqualTo("Remote preference matches.");
     }
 
     @Test
@@ -310,7 +319,10 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
                 .summary("Summary")
                 .pros(List.of("Java"))
                 .cons(List.of())
-                .missingSkills(List.of())
+                .missingRequiredSkills(List.of())
+                .missingPreferredSkills(List.of())
+                .experienceAssessment("Not assessed.")
+                .preferencesAssessment("Not assessed.")
                 .build());
     }
 

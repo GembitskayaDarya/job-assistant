@@ -86,7 +86,9 @@ class VacancyImportWorkflowIntegrationTest extends AbstractIntegrationTest {
                 "Senior Java Backend Engineer", "Integration Test Co", "Remote", RemotePolicy.REMOTE,
                 List.of("B2B"), List.of("Java", "Kafka"), null);
         when(vacancyExtractionPort.extract(DESCRIPTION)).thenReturn(extracted);
-        JobAnalysis analysis = new JobAnalysis(90, List.of("Strong match"), List.of(), List.of(), "Great fit");
+        JobAnalysis analysis = new JobAnalysis(
+                90, List.of("Strong match"), List.of(), List.of(), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Great fit");
         when(jobAnalysisAiPort.analyze(any(), any())).thenReturn(analysis);
 
         UUID sessionId = startImport(CHAT_ID, USER_ID);

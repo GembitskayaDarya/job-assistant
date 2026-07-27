@@ -108,7 +108,8 @@ class JobAnalysisRepositoryTest {
         jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
         entityManager.flush();
         JobAnalysis analysis = new JobAnalysis(
-                77, List.of("Strong Java", "Kafka experience"), List.of("No AWS"), List.of("Kubernetes"), "Good overall match");
+                77, List.of("Strong Java", "Kafka experience"), List.of("No AWS"), List.of("Kubernetes"), List.of("Terraform"),
+                "6 years vs. 5+ requested - requirement met.", "Remote preference matches.", "Good overall match");
 
         boolean applied = jobAnalysisRepository.completeClaim(vacancyId, analysis, NOW.plusSeconds(5));
         entityManager.flush();
@@ -120,7 +121,10 @@ class JobAnalysisRepositoryTest {
         assertThat(persisted.get().analysis()).isEqualTo(analysis);
         assertThat(persisted.get().analysis().pros()).containsExactly("Strong Java", "Kafka experience");
         assertThat(persisted.get().analysis().cons()).containsExactly("No AWS");
-        assertThat(persisted.get().analysis().missingSkills()).containsExactly("Kubernetes");
+        assertThat(persisted.get().analysis().missingRequiredSkills()).containsExactly("Kubernetes");
+        assertThat(persisted.get().analysis().missingPreferredSkills()).containsExactly("Terraform");
+        assertThat(persisted.get().analysis().experienceAssessment()).isEqualTo("6 years vs. 5+ requested - requirement met.");
+        assertThat(persisted.get().analysis().preferencesAssessment()).isEqualTo("Remote preference matches.");
     }
 
     @Test
@@ -140,7 +144,10 @@ class JobAnalysisRepositoryTest {
         jobAnalysisRepository.persist(vacancyId, original);
         entityManager.flush();
 
-        boolean applied = jobAnalysisRepository.completeClaim(vacancyId, new JobAnalysis(1, List.of(), List.of(), List.of(), "different"), NOW);
+        boolean applied = jobAnalysisRepository.completeClaim(
+                vacancyId,
+                new JobAnalysis(1, List.of(), List.of(), List.of(), List.of(), "Not assessed.", "Not assessed.", "different"),
+                NOW);
         entityManager.clear();
 
         assertThat(applied).isFalse();
@@ -277,6 +284,8 @@ class JobAnalysisRepositoryTest {
     }
 
     private JobAnalysis analysis() {
-        return new JobAnalysis(85, List.of("Strong Java skills"), List.of(), List.of("Kafka"), "Good match");
+        return new JobAnalysis(
+                85, List.of("Strong Java skills"), List.of(), List.of("Kafka"), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Good match");
     }
 }

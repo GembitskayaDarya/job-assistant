@@ -21,7 +21,11 @@ public class JobMessageFormatter {
                 formatSalary(job),
                 formatMatch(analysis),
                 formatStrengths(analysis),
-                formatMissingSkills(analysis),
+                formatConsiderations(analysis),
+                formatMissingRequiredSkills(analysis),
+                formatMissingPreferredSkills(analysis),
+                formatExperienceAssessment(analysis),
+                formatPreferencesAssessment(analysis),
                 formatSummary(analysis),
                 formatLink(job));
     }
@@ -50,8 +54,24 @@ public class JobMessageFormatter {
         return "✅ Strengths\n" + formatBulletList(analysis.pros());
     }
 
-    private String formatMissingSkills(JobAnalysis analysis) {
-        return "⚠ Missing Skills\n" + formatBulletList(analysis.missingSkills());
+    private String formatConsiderations(JobAnalysis analysis) {
+        return "⚠️ Considerations\n" + formatBulletList(analysis.cons());
+    }
+
+    private String formatMissingRequiredSkills(JobAnalysis analysis) {
+        return "🧩 Missing Required Skills\n" + formatBulletList(analysis.missingRequiredSkills());
+    }
+
+    private String formatMissingPreferredSkills(JobAnalysis analysis) {
+        return "🔧 Missing Preferred Skills\n" + formatBulletList(analysis.missingPreferredSkills());
+    }
+
+    private String formatExperienceAssessment(JobAnalysis analysis) {
+        return "📈 Experience\n" + escape(analysis.experienceAssessment());
+    }
+
+    private String formatPreferencesAssessment(JobAnalysis analysis) {
+        return "🧭 Preferences\n" + escape(analysis.preferencesAssessment());
     }
 
     private String formatSummary(JobAnalysis analysis) {

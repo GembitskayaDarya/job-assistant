@@ -25,8 +25,11 @@ class JobMessageFormatterTest {
         JobAnalysis analysis = new JobAnalysis(
                 94,
                 List.of("Java", "Spring Boot", "Kafka", "AWS"),
-                List.of(),
+                List.of("No Terraform mentioned"),
                 List.of("Terraform"),
+                List.of("Kubernetes"),
+                "The vacancy requests 5+ years and the candidate has 6 years, so the requirement is met.",
+                "Remote arrangement and Poland-based work both match the candidate's preferences.",
                 "Excellent match. Strong backend experience. Worth applying.");
 
         String message = formatter.format(job, analysis);
@@ -38,7 +41,11 @@ class JobMessageFormatterTest {
                 "💰 Salary: $180k \\- $220k",
                 "⭐ Match: 94%",
                 "✅ Strengths\n• Java\n• Spring Boot\n• Kafka\n• AWS",
-                "⚠ Missing Skills\n• Terraform",
+                "⚠️ Considerations\n• No Terraform mentioned",
+                "🧩 Missing Required Skills\n• Terraform",
+                "🔧 Missing Preferred Skills\n• Kubernetes",
+                "📈 Experience\nThe vacancy requests 5\\+ years and the candidate has 6 years, so the requirement is met\\.",
+                "🧭 Preferences\nRemote arrangement and Poland\\-based work both match the candidate's preferences\\.",
                 "💬 Summary\nExcellent match\\. Strong backend experience\\. Worth applying\\.",
                 "🔗 https://stripe\\.com/jobs/123");
 
@@ -49,7 +56,7 @@ class JobMessageFormatterTest {
     void fallsBackToNotSpecifiedWhenSalaryAndLocationAreMissing() {
         JobOffer job = new JobOffer(
                 "1", "Backend Engineer", "Acme", null, null, "desc", "https://acme.example/jobs/1", "remoteok");
-        JobAnalysis analysis = new JobAnalysis(50, List.of("Java"), List.of(), List.of(), "Decent match.");
+        JobAnalysis analysis = analysis();
 
         String message = formatter.format(job, analysis);
 
@@ -62,7 +69,7 @@ class JobMessageFormatterTest {
     void fallsBackToNotSpecifiedWhenSalaryAndLocationAreBlank() {
         JobOffer job = new JobOffer(
                 "1", "Backend Engineer", "Acme", "   ", "  ", "desc", "https://acme.example/jobs/1", "remoteok");
-        JobAnalysis analysis = new JobAnalysis(50, List.of("Java"), List.of(), List.of(), "Decent match.");
+        JobAnalysis analysis = analysis();
 
         String message = formatter.format(job, analysis);
 
@@ -82,7 +89,7 @@ class JobMessageFormatterTest {
                 "desc",
                 "https://acme.example/jobs/1",
                 "manual_telegram");
-        JobAnalysis analysis = new JobAnalysis(70, List.of("Java"), List.of(), List.of(), "Good match.");
+        JobAnalysis analysis = analysis();
 
         String message = formatter.format(job, analysis);
 
@@ -92,16 +99,37 @@ class JobMessageFormatterTest {
     }
 
     @Test
-    void rendersNoneWhenStrengthsOrMissingSkillsAreEmpty() {
+    void rendersNoneWhenStrengthsConsOrMissingSkillsAreEmpty() {
         JobOffer job = new JobOffer(
                 "1", "Backend Engineer", "Acme", "Remote", "N/A", "desc", "https://acme.example/jobs/1", "remoteok");
-        JobAnalysis analysis = new JobAnalysis(10, List.of(), List.of(), List.of(), "Poor match.");
+        JobAnalysis analysis = new JobAnalysis(
+                10, List.of(), List.of(), List.of(), List.of(),
+                "No years stated; seniority appears broadly aligned.", "No preference information available.", "Poor match.");
 
         String message = formatter.format(job, analysis);
 
         assertThat(message)
                 .contains("✅ Strengths\n• None")
-                .contains("⚠ Missing Skills\n• None");
+                .contains("⚠️ Considerations\n• None")
+                .contains("🧩 Missing Required Skills\n• None")
+                .contains("🔧 Missing Preferred Skills\n• None");
+    }
+
+    @Test
+    void displaysExperienceAndPreferencesAssessments() {
+        JobOffer job = new JobOffer(
+                "1", "Backend Engineer", "Acme", "Remote", "N/A", "desc", "https://acme.example/jobs/1", "remoteok");
+        JobAnalysis analysis = new JobAnalysis(
+                60, List.of(), List.of(), List.of(), List.of(),
+                "The vacancy does not state a minimum number of years.",
+                "Contract type is not stated in the vacancy, so availability is unclear.",
+                "Decent match.");
+
+        String message = formatter.format(job, analysis);
+
+        assertThat(message).contains("📈 Experience\nThe vacancy does not state a minimum number of years\\.");
+        assertThat(message)
+                .contains("🧭 Preferences\nContract type is not stated in the vacancy, so availability is unclear\\.");
     }
 
     @Test
@@ -118,8 +146,11 @@ class JobMessageFormatterTest {
         JobAnalysis analysis = new JobAnalysis(
                 80,
                 List.of("Java (Core)"),
-                List.of(),
+                List.of("No AWS (yet)"),
                 List.of("AWS."),
+                List.of("Terraform!"),
+                "6 years - matches.",
+                "Remote - matches!",
                 "Strong fit - worth applying!");
 
         String message = formatter.format(job, analysis);
@@ -129,8 +160,16 @@ class JobMessageFormatterTest {
                 .contains("🏢 Company: Acme Corp\\. Inc\\!")
                 .contains("📍 Location: Remote \\- US")
                 .contains("• Java \\(Core\\)")
+                .contains("• No AWS \\(yet\\)")
                 .contains("• AWS\\.")
+                .contains("• Terraform\\!")
                 .contains("💬 Summary\nStrong fit \\- worth applying\\!")
                 .contains("🔗 https://acme\\.example/jobs/123");
+    }
+
+    private JobAnalysis analysis() {
+        return new JobAnalysis(
+                50, List.of("Java"), List.of(), List.of(), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Decent match.");
     }
 }

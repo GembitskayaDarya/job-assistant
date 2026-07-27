@@ -213,6 +213,7 @@ class TelegramJobNotificationAdapterTest {
     private JobNotification notification(long recipientChatId) {
         return new JobNotification(
                 vacancyId, recipientChatId, "Backend Engineer", "Acme Corp", "https://example.com/job-1",
-                85, "Strong match", List.of("Java"), List.of(), List.of("Kafka"));
+                85, "Strong match", List.of("Java"), List.of(), List.of("Kafka"), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.");
     }
 }

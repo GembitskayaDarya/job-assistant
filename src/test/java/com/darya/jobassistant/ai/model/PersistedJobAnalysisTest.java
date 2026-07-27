@@ -11,7 +11,9 @@ import org.junit.jupiter.api.Test;
 class PersistedJobAnalysisTest {
 
     private final UUID vacancyId = UUID.randomUUID();
-    private final JobAnalysis analysis = new JobAnalysis(80, List.of("Java"), List.of(), List.of(), "Good match");
+    private final JobAnalysis analysis = new JobAnalysis(
+            80, List.of("Java"), List.of(), List.of(), List.of(),
+            "6 years vs. no stated requirement.", "Remote preference matches.", "Good match");
 
     @Test
     void validInstance_isCreated() {

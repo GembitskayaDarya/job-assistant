@@ -55,6 +55,16 @@ public class JobAnalysisEntity extends BaseEntity {
     private List<String> cons;
 
     @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "missing_skills", columnDefinition = "text[]")
-    private List<String> missingSkills;
+    @Column(name = "missing_required_skills", columnDefinition = "text[]")
+    private List<String> missingRequiredSkills;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "missing_preferred_skills", columnDefinition = "text[]")
+    private List<String> missingPreferredSkills;
+
+    @Column(name = "experience_assessment", columnDefinition = "TEXT")
+    private String experienceAssessment;
+
+    @Column(name = "preferences_assessment", columnDefinition = "TEXT")
+    private String preferencesAssessment;
 }

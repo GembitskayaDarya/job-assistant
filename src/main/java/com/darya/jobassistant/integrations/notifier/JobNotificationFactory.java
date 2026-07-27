@@ -18,6 +18,9 @@ public class JobNotificationFactory {
                 analysis.summary(),
                 analysis.pros(),
                 analysis.cons(),
-                analysis.missingSkills());
+                analysis.missingRequiredSkills(),
+                analysis.missingPreferredSkills(),
+                analysis.experienceAssessment(),
+                analysis.preferencesAssessment());
     }
 }

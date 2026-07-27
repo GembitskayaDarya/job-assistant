@@ -13,7 +13,10 @@ public record JobNotification(
         String summary,
         List<String> pros,
         List<String> cons,
-        List<String> missingSkills
+        List<String> missingRequiredSkills,
+        List<String> missingPreferredSkills,
+        String experienceAssessment,
+        String preferencesAssessment
 ) {
     private static final int MIN_SCORE = 0;
     private static final int MAX_SCORE = 100;
@@ -41,9 +44,16 @@ public record JobNotification(
         if (summary == null || summary.isBlank()) {
             throw new IllegalArgumentException("summary must not be blank");
         }
+        if (experienceAssessment == null || experienceAssessment.isBlank()) {
+            throw new IllegalArgumentException("experienceAssessment must not be blank");
+        }
+        if (preferencesAssessment == null || preferencesAssessment.isBlank()) {
+            throw new IllegalArgumentException("preferencesAssessment must not be blank");
+        }
         pros = requireCleanList(pros, "pros");
         cons = requireCleanList(cons, "cons");
-        missingSkills = requireCleanList(missingSkills, "missingSkills");
+        missingRequiredSkills = requireCleanList(missingRequiredSkills, "missingRequiredSkills");
+        missingPreferredSkills = requireCleanList(missingPreferredSkills, "missingPreferredSkills");
     }
 
     private static List<String> requireCleanList(List<String> values, String fieldName) {

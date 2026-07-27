@@ -62,7 +62,10 @@ public class TelegramJobNotificationFormatter {
         sections.add(formatSummary(n, summaryMaxLength));
         addSectionIfPresent(sections, "✅ Strengths", n.pros(), itemMaxLength, maxItemsPerSection);
         addSectionIfPresent(sections, "⚠️ Considerations", n.cons(), itemMaxLength, maxItemsPerSection);
-        addSectionIfPresent(sections, "🧩 Missing Skills", n.missingSkills(), itemMaxLength, maxItemsPerSection);
+        addSectionIfPresent(sections, "🧩 Missing Required Skills", n.missingRequiredSkills(), itemMaxLength, maxItemsPerSection);
+        addSectionIfPresent(sections, "🔧 Missing Preferred Skills", n.missingPreferredSkills(), itemMaxLength, maxItemsPerSection);
+        sections.add(formatExperienceAssessment(n, summaryMaxLength));
+        sections.add(formatPreferencesAssessment(n, summaryMaxLength));
         sections.add(formatLink(n));
         return String.join("\n\n", sections);
     }
@@ -81,6 +84,14 @@ public class TelegramJobNotificationFormatter {
 
     private String formatSummary(JobNotification n, int summaryMaxLength) {
         return "💬 Summary\n" + escape(truncateWord(n.summary(), summaryMaxLength));
+    }
+
+    private String formatExperienceAssessment(JobNotification n, int summaryMaxLength) {
+        return "📈 Experience\n" + escape(truncateWord(n.experienceAssessment(), summaryMaxLength));
+    }
+
+    private String formatPreferencesAssessment(JobNotification n, int summaryMaxLength) {
+        return "🧭 Preferences\n" + escape(truncateWord(n.preferencesAssessment(), summaryMaxLength));
     }
 
     private String formatLink(JobNotification n) {
