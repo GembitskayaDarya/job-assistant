@@ -91,19 +91,28 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
      * the claim is taken.
      */
     default Optional<JobAnalysisEntity> claimIfAbsent(UUID vacancyId, Instant claimedAt, AnalysisOrigin origin) {
-        return claimIfAbsentWithOrigin(vacancyId, claimedAt, origin.name());
+        return claimIfAbsentWithOrigin(vacancyId, claimedAt, JobAnalysisModelVersion.CURRENT, origin.name());
     }
 
+    /**
+     * {@code analysis_version} has no column default (V11 drops it immediately after backfilling
+     * existing rows - see that migration), so it must always be supplied explicitly here, even
+     * though it is a placeholder until {@link #completeClaim} overwrites it: the claim row has no
+     * real analysis yet.
+     */
     @Query(value = """
             INSERT INTO job_analysis
                 (vacancy_id, status, pros, cons, missing_required_skills, missing_preferred_skills,
-                 analysis_origin, created_at, updated_at)
-            VALUES (:vacancyId, 'IN_PROGRESS', '{}', '{}', '{}', '{}', :origin, :claimedAt, :claimedAt)
+                 analysis_version, analysis_origin, created_at, updated_at)
+            VALUES (:vacancyId, 'IN_PROGRESS', '{}', '{}', '{}', '{}', :version, :origin, :claimedAt, :claimedAt)
             ON CONFLICT (vacancy_id) DO NOTHING
             RETURNING *
             """, nativeQuery = true)
     Optional<JobAnalysisEntity> claimIfAbsentWithOrigin(
-            @Param("vacancyId") UUID vacancyId, @Param("claimedAt") Instant claimedAt, @Param("origin") String origin);
+            @Param("vacancyId") UUID vacancyId,
+            @Param("claimedAt") Instant claimedAt,
+            @Param("version") int version,
+            @Param("origin") String origin);
 
     /**
      * Atomically transitions a claim from {@code IN_PROGRESS} to {@code COMPLETED}, storing the

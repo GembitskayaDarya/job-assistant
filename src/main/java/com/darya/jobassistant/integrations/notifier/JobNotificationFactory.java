@@ -14,13 +14,6 @@ public class JobNotificationFactory {
                 vacancy.getTitle(),
                 vacancy.getCompany().getName(),
                 vacancy.getUrl(),
-                analysis.score(),
-                analysis.summary(),
-                analysis.pros(),
-                analysis.cons(),
-                analysis.missingRequiredSkills(),
-                analysis.missingPreferredSkills(),
-                analysis.experienceAssessment(),
-                analysis.preferencesAssessment());
+                analysis);
     }
 }

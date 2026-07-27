@@ -6,10 +6,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.integrations.notifier.JobNotification;
+import com.darya.jobassistant.telegram.format.JobAnalysisTelegramFormatter;
 import com.darya.jobassistant.integrations.notifier.JobNotificationException;
 import com.darya.jobassistant.integrations.notifier.JobNotificationFailureType;
 import com.darya.jobassistant.integrations.notifier.JobNotificationResult;
+import com.darya.jobassistant.util.TelegramMessageUtils;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
@@ -40,7 +43,8 @@ class TelegramJobNotificationAdapterTest {
 
     @BeforeEach
     void setUp() {
-        adapter = new TelegramJobNotificationAdapter(telegramClient, new TelegramJobNotificationFormatter());
+        adapter = new TelegramJobNotificationAdapter(
+                telegramClient, new TelegramJobNotificationFormatter(new JobAnalysisTelegramFormatter()));
     }
 
     @Test
@@ -210,10 +214,101 @@ class TelegramJobNotificationAdapterTest {
                 .isNotInstanceOf(TelegramApiException.class);
     }
 
+    @Test
+    void send_oversizedAnalysis_sendsMultipleMessagesEachWithinTheProviderLimit() throws TelegramApiException {
+        Message sentMessage = new Message();
+        sentMessage.setMessageId(1);
+        when(telegramClient.execute(any(SendMessage.class))).thenReturn(sentMessage);
+
+        adapter.send(oversizedNotification(999L));
+
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, org.mockito.Mockito.atLeast(2)).execute(captor.capture());
+        for (SendMessage sent : captor.getAllValues()) {
+            assertThat(sent.getText().length()).isLessThanOrEqualTo(TelegramMessageUtils.MAX_MESSAGE_LENGTH);
+            assertThat(sent.getChatId()).isEqualTo("999");
+            assertThat(sent.getParseMode()).isEqualTo(ParseMode.MARKDOWNV2);
+        }
+    }
+
+    @Test
+    void send_oversizedAnalysis_neverDropsOrDuplicatesAnalysisContentAcrossChunks() throws TelegramApiException {
+        Message sentMessage = new Message();
+        when(telegramClient.execute(any(SendMessage.class))).thenReturn(sentMessage);
+        JobAnalysis oversized = oversizedAnalysis();
+
+        adapter.send(oversizedNotification(999L, oversized));
+
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, org.mockito.Mockito.atLeastOnce()).execute(captor.capture());
+        String combined = captor.getAllValues().stream().map(SendMessage::getText).reduce("", String::concat);
+        for (String pro : oversized.pros()) {
+            int occurrences = countOccurrences(combined, pro);
+            assertThat(occurrences).as("occurrences of '%s'", pro).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void send_oversizedAnalysis_returnsResultFromTheLastMessageSent() throws TelegramApiException {
+        Message first = new Message();
+        first.setMessageId(111);
+        Message last = new Message();
+        last.setMessageId(222);
+        when(telegramClient.execute(any(SendMessage.class))).thenReturn(first).thenReturn(last);
+
+        JobNotificationResult result = adapter.send(oversizedNotification(999L));
+
+        assertThat(result.externalMessageId()).contains("222");
+    }
+
+    @Test
+    void send_smallAnalysis_stillSendsExactlyOneMessage() throws TelegramApiException {
+        Message sentMessage = new Message();
+        when(telegramClient.execute(any(SendMessage.class))).thenReturn(sentMessage);
+
+        adapter.send(notification(999L));
+
+        verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    private int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = haystack.indexOf(needle, index)) != -1) {
+            count++;
+            index += needle.length();
+        }
+        return count;
+    }
+
     private JobNotification notification(long recipientChatId) {
+        JobAnalysis analysis = new JobAnalysis(
+                85, List.of("Java"), List.of(), List.of("Kafka"), List.of(),
+                "6 years vs. no stated requirement.", "Remote preference matches.", "Strong match");
         return new JobNotification(
-                vacancyId, recipientChatId, "Backend Engineer", "Acme Corp", "https://example.com/job-1",
-                85, "Strong match", List.of("Java"), List.of(), List.of("Kafka"), List.of(),
-                "6 years vs. no stated requirement.", "Remote preference matches.");
+                vacancyId, recipientChatId, "Backend Engineer", "Acme Corp", "https://example.com/job-1", analysis);
+    }
+
+    private JobNotification oversizedNotification(long recipientChatId) {
+        return oversizedNotification(recipientChatId, oversizedAnalysis());
+    }
+
+    private JobNotification oversizedNotification(long recipientChatId, JobAnalysis analysis) {
+        return new JobNotification(
+                vacancyId, recipientChatId, "Backend Engineer", "Acme Corp", "https://example.com/job-1", analysis);
+    }
+
+    private JobAnalysis oversizedAnalysis() {
+        List<String> longPros = java.util.stream.IntStream.range(0, 50)
+                .mapToObj(i -> "Pro number " + i + " ".repeat(50))
+                .toList();
+        List<String> longCons = java.util.stream.IntStream.range(0, 50)
+                .mapToObj(i -> "Con number " + i + " ".repeat(50))
+                .toList();
+        return new JobAnalysis(
+                85, longPros, longCons, List.of("Kafka"), List.of(),
+                "Experience assessment. ".repeat(200),
+                "Preferences assessment. ".repeat(200),
+                "Summary. ".repeat(200));
     }
 }

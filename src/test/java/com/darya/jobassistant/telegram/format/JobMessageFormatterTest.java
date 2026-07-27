@@ -9,7 +9,18 @@ import org.junit.jupiter.api.Test;
 
 class JobMessageFormatterTest {
 
-    private final JobMessageFormatter formatter = new JobMessageFormatter();
+    private final JobAnalysisTelegramFormatter analysisFormatter = new JobAnalysisTelegramFormatter();
+    private final JobMessageFormatter formatter = new JobMessageFormatter(analysisFormatter);
+
+    private final JobAnalysis representative = new JobAnalysis(
+            82,
+            List.of("Strong Java and Spring Boot experience", "Relevant Kafka production experience"),
+            List.of("AWS proficiency may be below the level expected"),
+            List.of("Kubernetes"),
+            List.of("GraphQL"),
+            "The vacancy requests 5+ years and the candidate has 6 years.",
+            "Remote work from Poland appears compatible. The contract type is not stated.",
+            "The candidate is a strong overall match with one notable infrastructure gap.");
 
     @Test
     void formatsCompleteJobWithAllFieldsPresent() {
@@ -22,43 +33,40 @@ class JobMessageFormatterTest {
                 "description",
                 "https://stripe.com/jobs/123",
                 "remoteok");
-        JobAnalysis analysis = new JobAnalysis(
-                94,
-                List.of("Java", "Spring Boot", "Kafka", "AWS"),
-                List.of("No Terraform mentioned"),
-                List.of("Terraform"),
-                List.of("Kubernetes"),
-                "The vacancy requests 5+ years and the candidate has 6 years, so the requirement is met.",
-                "Remote arrangement and Poland-based work both match the candidate's preferences.",
-                "Excellent match. Strong backend experience. Worth applying.");
 
-        String message = formatter.format(job, analysis);
+        String message = formatter.format(job, representative);
 
         String expected = String.join("\n\n",
                 "🔥 Senior Java Backend Engineer",
                 "🏢 Company: Stripe",
                 "📍 Location: Remote",
                 "💰 Salary: $180k \\- $220k",
-                "⭐ Match: 94%",
-                "✅ Strengths\n• Java\n• Spring Boot\n• Kafka\n• AWS",
-                "⚠️ Considerations\n• No Terraform mentioned",
-                "🧩 Missing Required Skills\n• Terraform",
-                "🔧 Missing Preferred Skills\n• Kubernetes",
-                "📈 Experience\nThe vacancy requests 5\\+ years and the candidate has 6 years, so the requirement is met\\.",
-                "🧭 Preferences\nRemote arrangement and Poland\\-based work both match the candidate's preferences\\.",
-                "💬 Summary\nExcellent match\\. Strong backend experience\\. Worth applying\\.",
+                analysisFormatter.format(representative),
                 "🔗 https://stripe\\.com/jobs/123");
 
         assertThat(message).isEqualTo(expected);
     }
 
     @Test
+    void format_embedsTheExactSharedAnalysisBlockExactlyOnce() {
+        JobOffer job = new JobOffer(
+                "1", "Backend Engineer", "Acme", "Remote", "N/A", "desc", "https://acme.example/jobs/1", "remoteok");
+
+        String message = formatter.format(job, representative);
+        String sharedBlock = analysisFormatter.format(representative);
+
+        assertThat(message).contains(sharedBlock);
+        int firstIndex = message.indexOf(sharedBlock);
+        int lastIndex = message.lastIndexOf(sharedBlock);
+        assertThat(firstIndex).isEqualTo(lastIndex);
+    }
+
+    @Test
     void fallsBackToNotSpecifiedWhenSalaryAndLocationAreMissing() {
         JobOffer job = new JobOffer(
                 "1", "Backend Engineer", "Acme", null, null, "desc", "https://acme.example/jobs/1", "remoteok");
-        JobAnalysis analysis = analysis();
 
-        String message = formatter.format(job, analysis);
+        String message = formatter.format(job, representative);
 
         assertThat(message)
                 .contains("📍 Location: Not specified")
@@ -69,9 +77,8 @@ class JobMessageFormatterTest {
     void fallsBackToNotSpecifiedWhenSalaryAndLocationAreBlank() {
         JobOffer job = new JobOffer(
                 "1", "Backend Engineer", "Acme", "   ", "  ", "desc", "https://acme.example/jobs/1", "remoteok");
-        JobAnalysis analysis = analysis();
 
-        String message = formatter.format(job, analysis);
+        String message = formatter.format(job, representative);
 
         assertThat(message)
                 .contains("📍 Location: Not specified")
@@ -89,9 +96,8 @@ class JobMessageFormatterTest {
                 "desc",
                 "https://acme.example/jobs/1",
                 "manual_telegram");
-        JobAnalysis analysis = analysis();
 
-        String message = formatter.format(job, analysis);
+        String message = formatter.format(job, representative);
 
         assertThat(message)
                 .contains("📍 Location: Warszawa/ Centrum")
@@ -133,7 +139,7 @@ class JobMessageFormatterTest {
     }
 
     @Test
-    void escapesMarkdownV2ReservedCharactersInDynamicFields() {
+    void escapesMarkdownV2ReservedCharactersInVacancyMetadata() {
         JobOffer job = new JobOffer(
                 "1",
                 "Senior Java Engineer (Backend)",
@@ -143,33 +149,23 @@ class JobMessageFormatterTest {
                 "desc",
                 "https://acme.example/jobs/123",
                 "remoteok");
-        JobAnalysis analysis = new JobAnalysis(
-                80,
-                List.of("Java (Core)"),
-                List.of("No AWS (yet)"),
-                List.of("AWS."),
-                List.of("Terraform!"),
-                "6 years - matches.",
-                "Remote - matches!",
-                "Strong fit - worth applying!");
 
-        String message = formatter.format(job, analysis);
+        String message = formatter.format(job, representative);
 
         assertThat(message)
                 .contains("🔥 Senior Java Engineer \\(Backend\\)")
                 .contains("🏢 Company: Acme Corp\\. Inc\\!")
                 .contains("📍 Location: Remote \\- US")
-                .contains("• Java \\(Core\\)")
-                .contains("• No AWS \\(yet\\)")
-                .contains("• AWS\\.")
-                .contains("• Terraform\\!")
-                .contains("💬 Summary\nStrong fit \\- worth applying\\!")
                 .contains("🔗 https://acme\\.example/jobs/123");
     }
 
-    private JobAnalysis analysis() {
-        return new JobAnalysis(
-                50, List.of("Java"), List.of(), List.of(), List.of(),
-                "6 years vs. no stated requirement.", "Remote preference matches.", "Decent match.");
+    @Test
+    void notificationOnlyMetadataNeverAppearsInTheMessage() {
+        JobOffer job = new JobOffer(
+                "1", "Backend Engineer", "Acme", "Remote", "N/A", "desc", "https://acme.example/jobs/1", "remoteok");
+
+        String message = formatter.format(job, representative);
+
+        assertThat(message).doesNotContain("recipientChatId").doesNotContain("analysisOrigin").doesNotContain("analysisVersion");
     }
 }
