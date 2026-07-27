@@ -1,11 +1,13 @@
 package com.darya.jobassistant.ai.entity;
 
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.entity.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.Getter;
@@ -24,6 +26,12 @@ import org.hibernate.type.SqlTypes;
  * claim row carrying no result yet; they are always present once {@code status} is
  * {@code COMPLETED}. There is no {@code FAILED} status: a failed AI call releases (deletes) its
  * claim row entirely, so the unique constraint never blocks a retry.
+ *
+ * <p>{@code reanalysisTargetVersion}/{@code reanalysisClaimedAt} are a second, independent claim
+ * mechanism for recalculating an already-{@code COMPLETED} row whose {@code analysisVersion} is
+ * outdated: unlike the {@code IN_PROGRESS} claim above, the row stays {@code COMPLETED} and every
+ * existing analysis field stays readable for the whole reanalysis attempt, so a concurrent reader
+ * never sees a gap. Both fields are null exactly when no reanalysis is in flight.
  */
 @Entity
 @Table(name = "job_analysis")
@@ -67,4 +75,17 @@ public class JobAnalysisEntity extends BaseEntity {
 
     @Column(name = "preferences_assessment", columnDefinition = "TEXT")
     private String preferencesAssessment;
+
+    @Column(name = "analysis_version", nullable = false)
+    private int analysisVersion;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "analysis_origin", nullable = false, length = 20)
+    private AnalysisOrigin analysisOrigin;
+
+    @Column(name = "reanalysis_target_version")
+    private Integer reanalysisTargetVersion;
+
+    @Column(name = "reanalysis_claimed_at")
+    private Instant reanalysisClaimedAt;
 }

@@ -12,8 +12,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.darya.jobassistant.ai.entity.AnalysisStatus;
+import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
 import com.darya.jobassistant.ai.exception.JobAnalysisException;
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.candidates.CandidatePreferences;
@@ -46,6 +50,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -182,6 +187,66 @@ class JobMonitoringServiceTest {
         inOrder.verify(jobAnalysisService).analyze(profile, secondOffer);
     }
 
+    // E2. A vacancy that already has a completed MANUAL analysis at the current version is
+    // skipped entirely - monitoring never reanalyzes it or sends AI a request for it.
+    @Test
+    void monitor_vacancyWithExistingCurrentVersionManualAnalysis_skipsWithoutCallingAi() {
+        Vacancy vacancy = vacancy();
+        JobOffer offer = offer("1");
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
+        when(jobAnalysisRepository.findByVacancyId(vacancy.getId()))
+                .thenReturn(Optional.of(existingAnalysisEntity(JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL)));
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        verifyNoInteractions(jobAnalysisService);
+        verify(jobAnalysisRepository, never()).persist(any(), any(), any());
+        assertThat(result.analyzedCount()).isZero();
+        assertThat(result.failedCount()).isZero();
+    }
+
+    // E3. A vacancy with an outdated (stale-version) completed MANUAL analysis is also skipped -
+    // monitoring never reanalyzes merely because analysisVersion < CURRENT.
+    @Test
+    void monitor_vacancyWithExistingStaleVersionManualAnalysis_skipsWithoutCallingAi() {
+        Vacancy vacancy = vacancy();
+        JobOffer offer = offer("1");
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
+        when(jobAnalysisRepository.findByVacancyId(vacancy.getId()))
+                .thenReturn(Optional.of(existingAnalysisEntity(1, AnalysisOrigin.MANUAL)));
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        verifyNoInteractions(jobAnalysisService);
+        verify(jobAnalysisRepository, never()).persist(any(), any(), any());
+        assertThat(result.analyzedCount()).isZero();
+    }
+
+    // E4. A vacancy with an existing completed LEGACY analysis is skipped the same way.
+    @Test
+    void monitor_vacancyWithExistingLegacyAnalysis_skipsWithoutCallingAi() {
+        Vacancy vacancy = vacancy();
+        JobOffer offer = offer("1");
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
+        when(jobAnalysisRepository.findByVacancyId(vacancy.getId()))
+                .thenReturn(Optional.of(existingAnalysisEntity(1, AnalysisOrigin.LEGACY)));
+        when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        JobMonitoringResult result = service.monitor(command(50, 5));
+
+        verifyNoInteractions(jobAnalysisService);
+        verify(jobAnalysisRepository, never()).persist(any(), any(), any());
+        assertThat(result.analyzedCount()).isZero();
+    }
+
     // F. Successful analysis is persisted and increments analyzedCount only after persistence succeeds
     @Test
     void monitor_successfulAnalysis_isPersistedAndIncrementsAnalyzedCount() {
@@ -196,7 +261,7 @@ class JobMonitoringServiceTest {
 
         JobMonitoringResult result = service.monitor(command(50, 5));
 
-        verify(jobAnalysisRepository).persist(vacancy.getId(), analysis);
+        verify(jobAnalysisRepository).persist(vacancy.getId(), analysis, AnalysisOrigin.MONITORING);
         assertThat(result.analyzedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
     }
@@ -221,8 +286,8 @@ class JobMonitoringServiceTest {
 
         assertThat(result.analyzedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isEqualTo(1);
-        verify(jobAnalysisRepository).persist(succeeding.getId(), okAnalysis);
-        verify(jobAnalysisRepository, never()).persist(eq(failing.getId()), any());
+        verify(jobAnalysisRepository).persist(succeeding.getId(), okAnalysis, AnalysisOrigin.MONITORING);
+        verify(jobAnalysisRepository, never()).persist(eq(failing.getId()), any(), any());
     }
 
     // H. JobAnalysis persistence failure increments failedCount once and remaining Vacancies continue
@@ -240,14 +305,15 @@ class JobMonitoringServiceTest {
         when(vacancyJobOfferMapper.toJobOffer(succeeding)).thenReturn(succeedingOffer);
         when(jobAnalysisService.analyze(profile, failingOffer)).thenReturn(failingAnalysis);
         when(jobAnalysisService.analyze(profile, succeedingOffer)).thenReturn(okAnalysis);
-        when(jobAnalysisRepository.persist(failing.getId(), failingAnalysis)).thenThrow(new RuntimeException("db down"));
+        when(jobAnalysisRepository.persist(failing.getId(), failingAnalysis, AnalysisOrigin.MONITORING))
+                .thenThrow(new RuntimeException("db down"));
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
         JobMonitoringResult result = service.monitor(command(50, 5));
 
         assertThat(result.analyzedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isEqualTo(1);
-        verify(jobAnalysisRepository).persist(succeeding.getId(), okAnalysis);
+        verify(jobAnalysisRepository).persist(succeeding.getId(), okAnalysis, AnalysisOrigin.MONITORING);
     }
 
     // I. Backlog query occurs after all new analysis persistence attempts
@@ -265,7 +331,7 @@ class JobMonitoringServiceTest {
         service.monitor(command(50, 5));
 
         InOrder inOrder = inOrder(jobAnalysisRepository, jobNotificationCandidateQueryPort);
-        inOrder.verify(jobAnalysisRepository).persist(vacancy.getId(), analysis);
+        inOrder.verify(jobAnalysisRepository).persist(vacancy.getId(), analysis, AnalysisOrigin.MONITORING);
         inOrder.verify(jobNotificationCandidateQueryPort).findCandidates(any(), anyInt(), anyInt());
     }
 
@@ -652,9 +718,27 @@ class JobMonitoringServiceTest {
                 "No years stated; seniority appears broadly aligned.", "No preference conflicts detected.", "Great match");
     }
 
+    private JobAnalysisEntity existingAnalysisEntity(int version, AnalysisOrigin origin) {
+        return JobAnalysisEntity.builder()
+                .id(UUID.randomUUID())
+                .status(AnalysisStatus.COMPLETED)
+                .score(80)
+                .summary("Already analyzed")
+                .pros(List.of())
+                .cons(List.of())
+                .missingRequiredSkills(List.of())
+                .missingPreferredSkills(List.of())
+                .experienceAssessment("Not assessed.")
+                .preferencesAssessment("Not assessed.")
+                .analysisVersion(version)
+                .analysisOrigin(origin)
+                .build();
+    }
+
     private JobNotificationCandidate candidateFor(Vacancy vacancy, JobAnalysis analysis) {
         return new JobNotificationCandidate(
-                vacancy, new PersistedJobAnalysis(UUID.randomUUID(), vacancy.getId(), analysis, FIXED_INSTANT));
+                vacancy, new PersistedJobAnalysis(
+                        UUID.randomUUID(), vacancy.getId(), analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MONITORING, FIXED_INSTANT));
     }
 
     private JobNotification notification() {

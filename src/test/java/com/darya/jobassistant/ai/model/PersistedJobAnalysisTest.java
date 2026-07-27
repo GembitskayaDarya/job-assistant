@@ -17,33 +17,61 @@ class PersistedJobAnalysisTest {
 
     @Test
     void validInstance_isCreated() {
-        PersistedJobAnalysis persisted = new PersistedJobAnalysis(UUID.randomUUID(), vacancyId, analysis, Instant.now());
+        PersistedJobAnalysis persisted = new PersistedJobAnalysis(
+                UUID.randomUUID(), vacancyId, analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL, Instant.now());
 
         assertThat(persisted.vacancyId()).isEqualTo(vacancyId);
         assertThat(persisted.analysis()).isSameAs(analysis);
+        assertThat(persisted.analysisVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+        assertThat(persisted.analysisOrigin()).isEqualTo(AnalysisOrigin.MANUAL);
     }
 
     @Test
     void nullId_isRejected() {
-        assertThatThrownBy(() -> new PersistedJobAnalysis(null, vacancyId, analysis, Instant.now()))
+        assertThatThrownBy(() -> new PersistedJobAnalysis(
+                null, vacancyId, analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL, Instant.now()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void nullVacancyId_isRejected() {
-        assertThatThrownBy(() -> new PersistedJobAnalysis(UUID.randomUUID(), null, analysis, Instant.now()))
+        assertThatThrownBy(() -> new PersistedJobAnalysis(
+                UUID.randomUUID(), null, analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL, Instant.now()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void nullAnalysis_isRejected() {
-        assertThatThrownBy(() -> new PersistedJobAnalysis(UUID.randomUUID(), vacancyId, null, Instant.now()))
+        assertThatThrownBy(() -> new PersistedJobAnalysis(
+                UUID.randomUUID(), vacancyId, null, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL, Instant.now()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void zeroAnalysisVersion_isRejected() {
+        assertThatThrownBy(() -> new PersistedJobAnalysis(
+                UUID.randomUUID(), vacancyId, analysis, 0, AnalysisOrigin.MANUAL, Instant.now()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void negativeAnalysisVersion_isRejected() {
+        assertThatThrownBy(() -> new PersistedJobAnalysis(
+                UUID.randomUUID(), vacancyId, analysis, -1, AnalysisOrigin.MANUAL, Instant.now()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void nullAnalysisOrigin_isRejected() {
+        assertThatThrownBy(() -> new PersistedJobAnalysis(
+                UUID.randomUUID(), vacancyId, analysis, JobAnalysisModelVersion.CURRENT, null, Instant.now()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void nullCreatedAt_isRejected() {
-        assertThatThrownBy(() -> new PersistedJobAnalysis(UUID.randomUUID(), vacancyId, analysis, null))
+        assertThatThrownBy(() -> new PersistedJobAnalysis(
+                UUID.randomUUID(), vacancyId, analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

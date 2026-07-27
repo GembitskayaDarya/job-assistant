@@ -14,19 +14,29 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Exercises the V10 migration's backward-compatible backfill in isolation from the rest of the
- * Spring context - plain JDBC and Flyway's Java API only, no {@code @DataJpaTest}/JPA involved.
- * Migrates only up to V9 (the last pre-Step-6 schema version), inserts a row shaped exactly like
- * a real pre-migration completed analysis, then migrates the rest of the way and asserts what
- * V10 is responsible for: the legacy {@code missing_skills} values land in
- * {@code missing_required_skills}, the new text assessments get a non-blank legacy fallback, and
- * the original {@code missing_skills} column is retained rather than dropped.
+ * Exercises the V10 and V11 migrations' backward-compatible backfills in isolation from the rest
+ * of the Spring context - plain JDBC and Flyway's Java API only, no {@code @DataJpaTest}/JPA
+ * involved. Migrates only up to V9 (the last pre-Step-6 schema version), inserts a row shaped
+ * exactly like a real pre-migration completed analysis, then migrates the rest of the way and
+ * asserts what V10 and V11 are responsible for: the legacy {@code missing_skills} values land in
+ * {@code missing_required_skills}, the new text assessments get a non-blank legacy fallback, the
+ * row becomes {@code analysis_version = 1} / {@code analysis_origin = 'LEGACY'} (never {@code
+ * MONITORING}), and the original {@code missing_skills} column is retained rather than dropped.
+ *
+ * <p>The container is deliberately a non-static {@code @Container} field, so Testcontainers
+ * starts a fresh database - and therefore a fresh Flyway schema history - for every {@code @Test}
+ * method. Flyway's {@code target()} only ever migrates forward, never rolls back, so a single
+ * shared (static) container would let whichever test method happens to run first migrate the
+ * database all the way to "latest"; every other test's own {@code migrateTo("9")} would then
+ * silently become a no-op against an already-fully-migrated schema instead of the intended
+ * pre-V10 snapshot, making the test outcome depend on JUnit's (unspecified) method execution
+ * order.
  */
 @Testcontainers
 class JobAnalysisMigrationTest {
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    private final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
     @Test
     void migration_backfillsLegacyMissingSkillsAndProvidesAssessmentFallbacksForCompletedRows() throws Exception {
@@ -58,7 +68,8 @@ class JobAnalysisMigrationTest {
                 Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
                         SELECT missing_skills, missing_required_skills, missing_preferred_skills,
-                               experience_assessment, preferences_assessment
+                               experience_assessment, preferences_assessment,
+                               analysis_version, analysis_origin
                         FROM job_analysis WHERE id = '%s'
                         """.formatted(analysisId))) {
             assertThat(resultSet.next()).isTrue();
@@ -74,6 +85,10 @@ class JobAnalysisMigrationTest {
             assertThat((Object[]) missingPreferredSkills.getArray()).isEmpty();
             assertThat(resultSet.getString("experience_assessment")).isEqualTo("Not assessed in the legacy analysis.");
             assertThat(resultSet.getString("preferences_assessment")).isEqualTo("Not assessed in the legacy analysis.");
+            // V11: every pre-existing row becomes version 1, origin LEGACY - never MONITORING,
+            // so it can never be inferred as (or become eligible as) a monitoring-produced result.
+            assertThat(resultSet.getInt("analysis_version")).isEqualTo(1);
+            assertThat(resultSet.getString("analysis_origin")).isEqualTo("LEGACY");
         }
     }
 
@@ -105,9 +120,38 @@ class JobAnalysisMigrationTest {
         }
     }
 
+    @Test
+    void v11Constraints_rejectInvalidOriginAndNonPositiveVersions() throws Exception {
+        migrateTo("latest");
+
+        UUID vacancyId = UUID.randomUUID();
+        UUID companyId = UUID.randomUUID();
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("INSERT INTO company (id, name) VALUES ('%s', 'Constraint Co')".formatted(companyId));
+            statement.execute("""
+                    INSERT INTO vacancy (id, company_id, title) VALUES ('%s', '%s', 'Role')
+                    """.formatted(vacancyId, companyId));
+        }
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class, () -> statement.execute("""
+                    INSERT INTO job_analysis
+                        (vacancy_id, status, score, summary, pros, cons, analysis_version, analysis_origin)
+                    VALUES ('%s', 'COMPLETED', 50, 's', '{}', '{}', 1, 'BOGUS')
+                    """.formatted(vacancyId)));
+        }
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class, () -> statement.execute("""
+                    INSERT INTO job_analysis
+                        (vacancy_id, status, score, summary, pros, cons, analysis_version, analysis_origin)
+                    VALUES ('%s', 'COMPLETED', 50, 's', '{}', '{}', 0, 'LEGACY')
+                    """.formatted(vacancyId)));
+        }
+    }
+
     private void migrateTo(String target) {
         Flyway.configure()
-                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")
                 .target(target)
                 .load()
@@ -115,6 +159,6 @@ class JobAnalysisMigrationTest {
     }
 
     private Connection jdbcConnection() throws Exception {
-        return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        return DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     }
 }

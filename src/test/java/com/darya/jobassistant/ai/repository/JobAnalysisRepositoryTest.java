@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.ai.entity.AnalysisStatus;
 import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
@@ -68,7 +70,7 @@ class JobAnalysisRepositoryTest {
     void claimIfAbsent_newVacancy_insertsInProgressRow() {
         UUID vacancyId = persistVacancy().getId();
 
-        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
         entityManager.flush();
 
         assertThat(claimed).isPresent();
@@ -81,10 +83,10 @@ class JobAnalysisRepositoryTest {
     @Test
     void claimIfAbsent_secondCallForSameVacancy_returnsEmpty() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
         entityManager.flush();
 
-        Optional<JobAnalysisEntity> second = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        Optional<JobAnalysisEntity> second = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
 
         assertThat(second).isEmpty();
         assertThat(countByVacancyId(vacancyId)).isEqualTo(1);
@@ -93,10 +95,10 @@ class JobAnalysisRepositoryTest {
     @Test
     void claimIfAbsent_vacancyAlreadyHasCompletedAnalysis_returnsEmptyAndDoesNotOverwrite() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.persist(vacancyId, analysis());
+        jobAnalysisRepository.persist(vacancyId, analysis(), AnalysisOrigin.MONITORING);
         entityManager.flush();
 
-        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
 
         assertThat(claimed).isEmpty();
         assertThat(jobAnalysisRepository.findCompletedByVacancyId(vacancyId)).isPresent();
@@ -105,7 +107,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void completeClaim_inProgressClaim_transitionsToCompletedAndStoresResultWithListsSurvivingRoundTrip() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
         entityManager.flush();
         JobAnalysis analysis = new JobAnalysis(
                 77, List.of("Strong Java", "Kafka experience"), List.of("No AWS"), List.of("Kubernetes"), List.of("Terraform"),
@@ -141,7 +143,7 @@ class JobAnalysisRepositoryTest {
     void completeClaim_alreadyCompleted_doesNotOverwriteTheExistingAnalysis() {
         UUID vacancyId = persistVacancy().getId();
         JobAnalysis original = analysis();
-        jobAnalysisRepository.persist(vacancyId, original);
+        jobAnalysisRepository.persist(vacancyId, original, AnalysisOrigin.MONITORING);
         entityManager.flush();
 
         boolean applied = jobAnalysisRepository.completeClaim(
@@ -157,7 +159,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void reclaimStaleClaim_freshClaim_isNotReclaimed() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
         entityManager.flush();
 
         boolean reclaimed = jobAnalysisRepository.reclaimStaleClaim(vacancyId, NOW.plusSeconds(10), NOW.minusSeconds(1));
@@ -168,7 +170,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void reclaimStaleClaim_staleClaim_isReclaimedAndUpdatedAtAdvances() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
         entityManager.flush();
         Instant later = NOW.plusSeconds(600);
         Instant staleThreshold = NOW.plusSeconds(120);
@@ -186,7 +188,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void releaseClaim_inProgressClaim_deletesRowAndAllowsANewClaimAfterwards() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
         entityManager.flush();
 
         boolean released = jobAnalysisRepository.releaseClaim(vacancyId);
@@ -196,14 +198,14 @@ class JobAnalysisRepositoryTest {
         assertThat(released).isTrue();
         assertThat(countByVacancyId(vacancyId)).isEqualTo(0);
 
-        Optional<JobAnalysisEntity> reclaimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW.plusSeconds(1));
+        Optional<JobAnalysisEntity> reclaimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW.plusSeconds(1), AnalysisOrigin.MANUAL);
         assertThat(reclaimed).isPresent();
     }
 
     @Test
     void releaseClaim_completedAnalysis_doesNotDeleteIt() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.persist(vacancyId, analysis());
+        jobAnalysisRepository.persist(vacancyId, analysis(), AnalysisOrigin.MONITORING);
         entityManager.flush();
 
         boolean released = jobAnalysisRepository.releaseClaim(vacancyId);
@@ -215,7 +217,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void findCompletedByVacancyId_inProgressClaim_returnsEmpty() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
         entityManager.flush();
 
         assertThat(jobAnalysisRepository.findCompletedByVacancyId(vacancyId)).isEmpty();
@@ -225,7 +227,7 @@ class JobAnalysisRepositoryTest {
     void persist_plainInsertPath_storesCompletedAnalysis() {
         UUID vacancyId = persistVacancy().getId();
 
-        PersistedJobAnalysis persisted = jobAnalysisRepository.persist(vacancyId, analysis());
+        PersistedJobAnalysis persisted = jobAnalysisRepository.persist(vacancyId, analysis(), AnalysisOrigin.MONITORING);
         entityManager.flush();
         entityManager.clear();
 
@@ -246,7 +248,8 @@ class JobAnalysisRepositoryTest {
             for (int i = 0; i < 2; i++) {
                 futures.add(executor.submit(() -> {
                     barrier.await();
-                    return transactionTemplate.execute(status -> jobAnalysisRepository.claimIfAbsent(vacancyId, NOW).isPresent());
+                    return transactionTemplate.execute(
+                            status -> jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL).isPresent());
                 }));
             }
 
@@ -262,6 +265,208 @@ class JobAnalysisRepositoryTest {
         } finally {
             executor.shutdown();
         }
+    }
+
+    @Test
+    void attemptReanalysisClaim_outdatedCompletedRow_claimsSuccessfullyAndPreservesOldContent() {
+        UUID vacancyId = persistVacancy().getId();
+        JobAnalysis original = analysis();
+        persistCompletedAnalysis(vacancyId, original, 1, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        entityManager.clear();
+
+        boolean claimed = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(claimed).isTrue();
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(AnalysisStatus.COMPLETED);
+        assertThat(reloaded.getReanalysisTargetVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+        assertThat(reloaded.getReanalysisClaimedAt()).isEqualTo(NOW);
+        // The old content, version and origin stay exactly as they were while the claim is held.
+        assertThat(reloaded.getAnalysisVersion()).isEqualTo(1);
+        assertThat(reloaded.getAnalysisOrigin()).isEqualTo(AnalysisOrigin.MONITORING);
+        assertThat(JobAnalysisRepository.toDomain(reloaded).analysis()).isEqualTo(original);
+    }
+
+    @Test
+    void attemptReanalysisClaim_alreadyCurrentVersionRow_isNotEligible() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL);
+        entityManager.flush();
+
+        boolean claimed = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+
+        assertThat(claimed).isFalse();
+    }
+
+    @Test
+    void attemptReanalysisClaim_freshExistingClaim_cannotBeStolenBySecondCaller() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), 1, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        boolean first = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+        entityManager.flush();
+
+        boolean second = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW.plusSeconds(1), NOW.minusSeconds(1));
+
+        assertThat(first).isTrue();
+        assertThat(second).isFalse();
+    }
+
+    @Test
+    void attemptReanalysisClaim_staleExistingClaim_canBeReclaimed() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), 1, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        boolean first = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+
+        Instant later = NOW.plusSeconds(600);
+        Instant staleThreshold = NOW.plusSeconds(120);
+        boolean reclaimed = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, later, staleThreshold);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(first).isTrue();
+        assertThat(reclaimed).isTrue();
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getReanalysisClaimedAt()).isEqualTo(later);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void attemptReanalysisClaim_concurrentCallsForSameVacancy_exactlyOneWins() throws Exception {
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+        UUID vacancyId = transactionTemplate.execute(status -> {
+            UUID id = persistVacancy().getId();
+            persistCompletedAnalysis(id, analysis(), 1, AnalysisOrigin.MONITORING);
+            return id;
+        });
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            List<Future<Boolean>> futures = new ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                futures.add(executor.submit(() -> {
+                    barrier.await();
+                    return transactionTemplate.execute(
+                            status -> jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1)));
+                }));
+            }
+
+            List<Boolean> results = new ArrayList<>();
+            for (Future<Boolean> future : futures) {
+                results.add(future.get(10, TimeUnit.SECONDS));
+            }
+
+            long winners = results.stream().filter(Boolean::booleanValue).count();
+            assertThat(winners).isEqualTo(1);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    void completeReanalysis_ownedClaim_updatesContentVersionAndOriginAndClearsClaimFields() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), 1, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+        JobAnalysis newAnalysis = new JobAnalysis(
+                92, List.of("Even stronger match"), List.of(), List.of(), List.of(),
+                "6 years vs. 5+ requested - requirement met.", "Remote preference matches.", "Great match");
+
+        boolean applied = jobAnalysisRepository.completeReanalysis(vacancyId, newAnalysis, NOW, NOW.plusSeconds(10));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(AnalysisStatus.COMPLETED);
+        assertThat(JobAnalysisRepository.toDomain(reloaded).analysis()).isEqualTo(newAnalysis);
+        assertThat(reloaded.getAnalysisVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+        assertThat(reloaded.getAnalysisOrigin()).isEqualTo(AnalysisOrigin.MANUAL);
+        assertThat(reloaded.getReanalysisTargetVersion()).isNull();
+        assertThat(reloaded.getReanalysisClaimedAt()).isNull();
+    }
+
+    @Test
+    void completeReanalysis_claimNoLongerOwned_doesNotOverwriteOldContent() {
+        UUID vacancyId = persistVacancy().getId();
+        JobAnalysis original = analysis();
+        persistCompletedAnalysis(vacancyId, original, 1, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        JobAnalysis newAnalysis = new JobAnalysis(
+                92, List.of("Even stronger match"), List.of(), List.of(), List.of(),
+                "6 years vs. 5+ requested - requirement met.", "Remote preference matches.", "Great match");
+
+        // No claim was ever taken (reanalysis_claimed_at is null), so this claimedAt token can
+        // never match - simulating "our claim was reclaimed by someone else in the meantime".
+        boolean applied = jobAnalysisRepository.completeReanalysis(vacancyId, newAnalysis, NOW, NOW.plusSeconds(10));
+        entityManager.clear();
+
+        assertThat(applied).isFalse();
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(JobAnalysisRepository.toDomain(reloaded).analysis()).isEqualTo(original);
+        assertThat(reloaded.getAnalysisVersion()).isEqualTo(1);
+        assertThat(reloaded.getAnalysisOrigin()).isEqualTo(AnalysisOrigin.MONITORING);
+    }
+
+    @Test
+    void releaseReanalysisClaim_ownedClaim_clearsClaimFieldsAndPreservesOldContentVersionAndOrigin() {
+        UUID vacancyId = persistVacancy().getId();
+        JobAnalysis original = analysis();
+        persistCompletedAnalysis(vacancyId, original, 1, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+
+        boolean released = jobAnalysisRepository.releaseReanalysisClaim(vacancyId, NOW);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(released).isTrue();
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(AnalysisStatus.COMPLETED);
+        assertThat(reloaded.getReanalysisTargetVersion()).isNull();
+        assertThat(reloaded.getReanalysisClaimedAt()).isNull();
+        assertThat(reloaded.getAnalysisVersion()).isEqualTo(1);
+        assertThat(reloaded.getAnalysisOrigin()).isEqualTo(AnalysisOrigin.MONITORING);
+        assertThat(JobAnalysisRepository.toDomain(reloaded).analysis()).isEqualTo(original);
+    }
+
+    @Test
+    void releaseReanalysisClaim_notOwned_doesNothing() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), 1, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+
+        boolean released = jobAnalysisRepository.releaseReanalysisClaim(vacancyId, NOW);
+
+        assertThat(released).isFalse();
+    }
+
+    private JobAnalysisEntity persistCompletedAnalysis(UUID vacancyId, JobAnalysis analysis, int version, AnalysisOrigin origin) {
+        return jobAnalysisRepository.save(JobAnalysisEntity.builder()
+                .vacancyId(vacancyId)
+                .status(AnalysisStatus.COMPLETED)
+                .score(analysis.score())
+                .summary(analysis.summary())
+                .pros(analysis.pros())
+                .cons(analysis.cons())
+                .missingRequiredSkills(analysis.missingRequiredSkills())
+                .missingPreferredSkills(analysis.missingPreferredSkills())
+                .experienceAssessment(analysis.experienceAssessment())
+                .preferencesAssessment(analysis.preferencesAssessment())
+                .analysisVersion(version)
+                .analysisOrigin(origin)
+                .build());
     }
 
     private long countByVacancyId(UUID vacancyId) {

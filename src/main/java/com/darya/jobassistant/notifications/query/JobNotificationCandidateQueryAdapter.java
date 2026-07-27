@@ -33,6 +33,11 @@ public class JobNotificationCandidateQueryAdapter implements JobNotificationCand
      * each matching vacancy contributes exactly one (vacancy, analysis) pair, which is why no
      * "pick the latest analysis" logic is needed here.
      *
+     * <p>{@code ja.analysis_origin = 'MONITORING'} is the single source of truth for notification
+     * eligibility: an analysis a user triggered themselves ({@code MANUAL}) or one that predates
+     * origin tracking ({@code LEGACY}) must never be sent as a new monitoring notification, no
+     * matter its score - this is never inferred from vacancy source/URL/provider.
+     *
      * <p>Ordering: score DESC (best matches first), then {@code job_analysis.created_at} ASC as
      * the stable age tiebreaker for equal scores (the analysis that has been sitting in the
      * backlog longest goes first), then {@code vacancy.id} ASC as the final deterministic
@@ -42,7 +47,8 @@ public class JobNotificationCandidateQueryAdapter implements JobNotificationCand
             SELECT v.id
             FROM vacancy v
             JOIN job_analysis ja ON ja.vacancy_id = v.id
-            WHERE ja.score >= :minimumScore
+            WHERE ja.analysis_origin = 'MONITORING'
+              AND ja.score >= :minimumScore
               AND NOT EXISTS (
                   SELECT 1
                   FROM notification_delivery nd

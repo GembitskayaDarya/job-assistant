@@ -5,7 +5,9 @@ import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
 import com.darya.jobassistant.ai.entity.AnalysisStatus;
 import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
 import com.darya.jobassistant.ai.exception.JobAnalysisException;
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.candidates.CandidateProfile;
@@ -33,12 +35,22 @@ import org.springframework.transaction.support.TransactionTemplate;
  * own (a single interactive command has no concurrent-caller problem; a Telegram callback that
  * any owner of the chat can press, possibly more than once in quick succession, does).
  *
+ * <p>Every analysis this service starts or completes is {@link AnalysisOrigin#MANUAL}: both the
+ * ordinary {@code /analyze} command and the guided-import "Analyze" callback go through this same
+ * use case, so there is exactly one place that decides that origin.
+ *
+ * <p>A completed analysis whose {@code analysisVersion} is below {@link
+ * JobAnalysisModelVersion#CURRENT} is safely recalculated here too (see {@link #acquireClaim}):
+ * the row stays {@code COMPLETED} and its previous content stays fully readable for the entire
+ * reanalysis attempt, via the repository's separate reanalysis-claim mechanism.
+ *
  * <p>Deliberately has no class-level {@code @Transactional}, for the same reason as {@code
  * VacancyImportReviewService}: {@link JobAnalysisService#analyze} makes an external AI call, which
  * must never run inside an open database transaction. Every persistence step instead goes through
  * its own short {@link TransactionTemplate} call - see {@link #acquireClaim} (Transaction A: check
- * for an existing analysis or claim the vacancy) and {@link #runAnalysis} (Transaction B: persist
- * the result, only after the AI call - which sits between the two - has returned).
+ * for an existing analysis or claim the vacancy) and {@link #runNewAnalysis}/{@link
+ * #runReanalysis} (Transaction B: persist the result, only after the AI call - which sits between
+ * the two - has returned).
  */
 @Slf4j
 @Service
@@ -85,8 +97,9 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
 
         ClaimOutcome claim = newTransaction.execute(status -> acquireClaim(vacancyId));
         return switch (claim) {
-            case ClaimOutcome.Owned ignored -> runAnalysis(vacancyId, jobOffer);
-            case ClaimOutcome.AlreadyCompleted(var analysis) -> new AnalyzeVacancyResult.Available(jobOffer, analysis, false);
+            case ClaimOutcome.NewClaim ignored -> runNewAnalysis(vacancyId, jobOffer);
+            case ClaimOutcome.ReanalysisClaim(var claimedAt) -> runReanalysis(vacancyId, jobOffer, claimedAt);
+            case ClaimOutcome.AlreadyAvailable(var analysis) -> new AnalyzeVacancyResult.Available(jobOffer, analysis, false);
             case ClaimOutcome.StillInProgress ignored -> new AnalyzeVacancyResult.InProgress();
         };
     }
@@ -99,16 +112,17 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
      */
     private ClaimOutcome acquireClaim(UUID vacancyId) {
         Instant now = Instant.now(clock);
-        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, now);
+        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, now, AnalysisOrigin.MANUAL);
         if (claimed.isPresent()) {
-            return new ClaimOutcome.Owned();
+            return new ClaimOutcome.NewClaim();
         }
 
         JobAnalysisEntity current = jobAnalysisRepository.findByVacancyId(vacancyId)
                 .orElseThrow(() -> new IllegalStateException(
                         "claimIfAbsent found an existing row for vacancy " + vacancyId + " but none could be loaded"));
+
         if (current.getStatus() == AnalysisStatus.COMPLETED) {
-            return new ClaimOutcome.AlreadyCompleted(JobAnalysisRepository.toDomain(current).analysis());
+            return acquireForCompletedRow(vacancyId, current, now);
         }
 
         // IN_PROGRESS: only a claim whose updatedAt is older than the configured stale threshold
@@ -118,7 +132,31 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
         // long as the owning attempt keeps running.
         Instant staleThreshold = now.minus(properties.claimStaleAfter());
         boolean reclaimed = jobAnalysisRepository.reclaimStaleClaim(vacancyId, now, staleThreshold);
-        return reclaimed ? new ClaimOutcome.Owned() : new ClaimOutcome.StillInProgress();
+        return reclaimed ? new ClaimOutcome.NewClaim() : new ClaimOutcome.StillInProgress();
+    }
+
+    /**
+     * A completed row at the current version is simply returned. An outdated one is safely
+     * recalculated via the reanalysis-claim mechanism instead: if this call wins the claim, the
+     * old content stays put and readable while the AI call runs; if another caller already owns a
+     * valid (non-stale) reanalysis claim, or the row was upgraded to current between our read and
+     * this attempt, the still-readable completed content is returned without calling AI again.
+     */
+    private ClaimOutcome acquireForCompletedRow(UUID vacancyId, JobAnalysisEntity current, Instant now) {
+        if (current.getAnalysisVersion() >= JobAnalysisModelVersion.CURRENT) {
+            return new ClaimOutcome.AlreadyAvailable(JobAnalysisRepository.toDomain(current).analysis());
+        }
+
+        Instant staleThreshold = now.minus(properties.claimStaleAfter());
+        boolean reanalysisClaimed = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, now, staleThreshold);
+        if (reanalysisClaimed) {
+            return new ClaimOutcome.ReanalysisClaim(now);
+        }
+
+        JobAnalysisEntity latest = jobAnalysisRepository.findByVacancyId(vacancyId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Completed analysis for vacancy " + vacancyId + " disappeared during reanalysis claim attempt"));
+        return new ClaimOutcome.AlreadyAvailable(JobAnalysisRepository.toDomain(latest).analysis());
     }
 
     /**
@@ -126,7 +164,7 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
      * strictly between the commit of {@link #acquireClaim}'s transaction and the start of
      * Transaction B below.
      */
-    private AnalyzeVacancyResult runAnalysis(UUID vacancyId, JobOffer jobOffer) {
+    private AnalyzeVacancyResult runNewAnalysis(UUID vacancyId, JobOffer jobOffer) {
         CandidateProfile profile = candidateProfileProvider.getProfile();
         JobAnalysis analysis;
         try {
@@ -147,9 +185,33 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
     }
 
     /**
-     * Reached only if the claim this call owned was no longer {@code IN_PROGRESS} by the time the
-     * result was ready - not expected in normal operation (nothing else can complete or release a
-     * claim this call exclusively owns), but handled defensively rather than discarding a
+     * Mirrors {@link #runNewAnalysis} except failure never touches the row's existing completed
+     * content: only the reanalysis claim fields are cleared, so the previous analysis, its
+     * version and its origin are exactly as they were before this attempt started.
+     */
+    private AnalyzeVacancyResult runReanalysis(UUID vacancyId, JobOffer jobOffer, Instant claimedAt) {
+        CandidateProfile profile = candidateProfileProvider.getProfile();
+        JobAnalysis analysis;
+        try {
+            analysis = jobAnalysisService.analyze(profile, jobOffer);
+        } catch (JobAnalysisException e) {
+            log.warn("Vacancy reanalysis failed for vacancy {}", vacancyId, e);
+            newTransaction.executeWithoutResult(status -> jobAnalysisRepository.releaseReanalysisClaim(vacancyId, claimedAt));
+            return new AnalyzeVacancyResult.Failed();
+        }
+
+        Instant completedAt = Instant.now(clock);
+        boolean completed = newTransaction.execute(
+                status -> jobAnalysisRepository.completeReanalysis(vacancyId, analysis, claimedAt, completedAt));
+        if (completed) {
+            return new AnalyzeVacancyResult.Available(jobOffer, analysis, true);
+        }
+        return resolveAfterLostCompletion(vacancyId, jobOffer);
+    }
+
+    /**
+     * Reached only if the claim this call owned was no longer valid by the time the result was
+     * ready - not expected in normal operation, but handled defensively rather than discarding a
      * successful analysis: whatever is authoritative now is reloaded and returned.
      */
     private AnalyzeVacancyResult resolveAfterLostCompletion(UUID vacancyId, JobOffer jobOffer) {
@@ -160,10 +222,13 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
     }
 
     private sealed interface ClaimOutcome {
-        record Owned() implements ClaimOutcome {
+        record NewClaim() implements ClaimOutcome {
         }
 
-        record AlreadyCompleted(JobAnalysis analysis) implements ClaimOutcome {
+        record ReanalysisClaim(Instant claimedAt) implements ClaimOutcome {
+        }
+
+        record AlreadyAvailable(JobAnalysis analysis) implements ClaimOutcome {
         }
 
         record StillInProgress() implements ClaimOutcome {

@@ -3,7 +3,9 @@ package com.darya.jobassistant.notifications.query;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -87,6 +89,7 @@ class JobNotificationCandidateTest {
         JobAnalysis analysis = new JobAnalysis(
                 85, List.of("Java"), List.of(), List.of(), List.of(),
                 "6 years vs. no stated requirement.", "Remote preference matches.", "Strong match");
-        return new PersistedJobAnalysis(UUID.randomUUID(), vacancyId, analysis, Instant.now());
+        return new PersistedJobAnalysis(
+                UUID.randomUUID(), vacancyId, analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MONITORING, Instant.now());
     }
 }

@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.ai.entity.AnalysisStatus;
 import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
+import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
@@ -86,6 +88,36 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
         List<JobNotificationCandidate> candidates = candidateQueryPort.findCandidates(RECIPIENT, 60, 10);
 
         assertThat(candidates).isEmpty();
+    }
+
+    @Test
+    void completedManualAnalysisAboveThreshold_isNotReturned() {
+        Vacancy vacancy = newVacancy();
+        analyze(vacancy.getId(), 90, AnalysisOrigin.MANUAL);
+
+        List<JobNotificationCandidate> candidates = candidateQueryPort.findCandidates(RECIPIENT, 60, 10);
+
+        assertThat(candidates).isEmpty();
+    }
+
+    @Test
+    void completedLegacyAnalysisAboveThreshold_isNotReturned() {
+        Vacancy vacancy = newVacancy();
+        analyze(vacancy.getId(), 90, AnalysisOrigin.LEGACY);
+
+        List<JobNotificationCandidate> candidates = candidateQueryPort.findCandidates(RECIPIENT, 60, 10);
+
+        assertThat(candidates).isEmpty();
+    }
+
+    @Test
+    void completedMonitoringAnalysisAboveThreshold_isReturned() {
+        Vacancy vacancy = newVacancy();
+        analyze(vacancy.getId(), 90, AnalysisOrigin.MONITORING);
+
+        List<JobNotificationCandidate> candidates = candidateQueryPort.findCandidates(RECIPIENT, 60, 10);
+
+        assertThat(candidates).extracting(c -> c.vacancy().getId()).containsExactly(vacancy.getId());
     }
 
     @Test
@@ -234,6 +266,8 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
                     .missingPreferredSkills(List.of())
                     .experienceAssessment("Not assessed.")
                     .preferencesAssessment("Not assessed.")
+                    .analysisVersion(JobAnalysisModelVersion.CURRENT)
+                    .analysisOrigin(AnalysisOrigin.MONITORING)
                     .build());
         }).isInstanceOf(DataIntegrityViolationException.class);
     }
@@ -262,6 +296,8 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
                 .missingPreferredSkills(List.of("Terraform"))
                 .experienceAssessment("6 years vs. no stated requirement.")
                 .preferencesAssessment("Remote preference matches.")
+                .analysisVersion(JobAnalysisModelVersion.CURRENT)
+                .analysisOrigin(AnalysisOrigin.MONITORING)
                 .build());
 
         List<JobNotificationCandidate> candidates = candidateQueryPort.findCandidates(RECIPIENT, 0, 10);
@@ -312,6 +348,10 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
     }
 
     private JobAnalysisEntity analyze(UUID vacancyId, int score) {
+        return analyze(vacancyId, score, AnalysisOrigin.MONITORING);
+    }
+
+    private JobAnalysisEntity analyze(UUID vacancyId, int score, AnalysisOrigin origin) {
         return jobAnalysisRepository.save(JobAnalysisEntity.builder()
                 .vacancyId(vacancyId)
                 .status(AnalysisStatus.COMPLETED)
@@ -323,6 +363,8 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
                 .missingPreferredSkills(List.of())
                 .experienceAssessment("Not assessed.")
                 .preferencesAssessment("Not assessed.")
+                .analysisVersion(JobAnalysisModelVersion.CURRENT)
+                .analysisOrigin(origin)
                 .build());
     }
 

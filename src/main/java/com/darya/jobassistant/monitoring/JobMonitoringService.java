@@ -1,5 +1,6 @@
 package com.darya.jobassistant.monitoring;
 
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.candidates.CandidateProfile;
@@ -146,15 +147,25 @@ public class JobMonitoringService implements JobMonitoringUseCase {
      * toward {@code analyzedCount} only once both the AI analysis and its persistence succeed;
      * either failing counts once toward {@code failedCount} for that vacancy, and processing
      * continues with the rest.
+     *
+     * <p>A vacancy that already has any {@code job_analysis} row - regardless of its version or
+     * origin - is skipped entirely rather than analyzed: monitoring only ever fills in analyses
+     * for vacancies that have none yet, never reanalyzes an outdated or manually-produced one.
+     * That is what keeps a version bump from triggering surprise bulk AI calls, and what keeps
+     * monitoring from taking ownership of a vacancy a user already analyzed themselves. Skipped
+     * vacancies count toward neither {@code analyzedCount} nor {@code failedCount}.
      */
     private AnalysisOutcome analyzeAndPersistAll(List<Vacancy> newVacancies, CandidateProfile profile) {
         int analyzedCount = 0;
         int failedCount = 0;
         for (Vacancy vacancy : newVacancies) {
+            if (jobAnalysisRepository.findByVacancyId(vacancy.getId()).isPresent()) {
+                continue;
+            }
             try {
                 JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
                 JobAnalysis analysis = jobAnalysisService.analyze(profile, jobOffer);
-                jobAnalysisRepository.persist(vacancy.getId(), analysis);
+                jobAnalysisRepository.persist(vacancy.getId(), analysis, AnalysisOrigin.MONITORING);
                 analyzedCount++;
             } catch (RuntimeException e) {
                 failedCount++;

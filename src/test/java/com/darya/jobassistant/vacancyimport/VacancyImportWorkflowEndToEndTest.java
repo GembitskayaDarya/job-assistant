@@ -12,7 +12,9 @@ import com.darya.jobassistant.ai.AnalyzeVacancyService;
 import com.darya.jobassistant.ai.config.JobAnalysisProperties;
 import com.darya.jobassistant.ai.entity.AnalysisStatus;
 import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
+import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.candidates.CandidatePreferences;
@@ -325,12 +327,13 @@ class VacancyImportWorkflowEndToEndTest {
     }
 
     private void stubJobAnalysisRepository() {
-        lenient().when(jobAnalysisRepository.claimIfAbsent(any(), any())).thenAnswer(inv -> {
+        lenient().when(jobAnalysisRepository.claimIfAbsent(any(), any(), any())).thenAnswer(inv -> {
             if (persistedAnalysis.get() != null) {
                 return Optional.empty();
             }
             UUID vacancyId = inv.getArgument(0);
             Instant claimedAt = inv.getArgument(1);
+            AnalysisOrigin origin = inv.getArgument(2);
             JobAnalysisEntity claim = JobAnalysisEntity.builder()
                     .id(UUID.randomUUID())
                     .vacancyId(vacancyId)
@@ -339,6 +342,7 @@ class VacancyImportWorkflowEndToEndTest {
                     .cons(List.of())
                     .missingRequiredSkills(List.of())
                     .missingPreferredSkills(List.of())
+                    .analysisOrigin(origin)
                     .createdAt(claimedAt)
                     .updatedAt(claimedAt)
                     .build();
@@ -363,6 +367,8 @@ class VacancyImportWorkflowEndToEndTest {
                     .missingPreferredSkills(analysis.missingPreferredSkills())
                     .experienceAssessment(analysis.experienceAssessment())
                     .preferencesAssessment(analysis.preferencesAssessment())
+                    .analysisVersion(JobAnalysisModelVersion.CURRENT)
+                    .analysisOrigin(current.getAnalysisOrigin())
                     .createdAt(current.getCreatedAt())
                     .updatedAt(completedAt)
                     .build();
