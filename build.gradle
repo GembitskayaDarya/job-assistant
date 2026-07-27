@@ -63,4 +63,9 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+
+    // Points spring.config.import's CANDIDATE_PROFILE_PATH placeholder at the deterministic
+    // test fixture instead of the developer's real, gitignored config/candidate-profile.yml -
+    // otherwise a fresh checkout without that file would fail every Spring context test.
+    systemProperty 'CANDIDATE_PROFILE_PATH', file('src/test/resources/candidate-profile-test.yml').absolutePath
 }

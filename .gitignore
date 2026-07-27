@@ -30,6 +30,10 @@ logs/
 .env.*
 !.env.example
 
+### Candidate profile (personal data) ###
+config/candidate-profile.yml
+!config/candidate-profile.example.yml
+
 ### IntelliJ IDEA ###
 .idea/
 *.iws

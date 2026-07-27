@@ -15,6 +15,7 @@ matching vacancies against your profile.
 - [Guided vacancy import](#guided-vacancy-import)
 - [Architecture](#architecture)
 - [Technologies](#technologies)
+- [Candidate profile](#candidate-profile)
 - [How to run](#how-to-run)
 - [Docker](#docker)
 - [Environment variables](#environment-variables)
@@ -128,6 +129,61 @@ the core web flow. Database schema is version-controlled with Flyway migrations
 - **JUnit 5**, **Mockito** + **Testcontainers** for integration tests
 - **Docker** / Docker Compose
 
+## Candidate profile
+
+`application.yml` configures the application itself (database, Telegram, AI model, scheduling,
+...); it contains no personal data. The candidate profile used for AI vacancy matching — target
+role/seniority, experience, skills with proficiency, languages, and work preferences — lives in
+its own file, loaded via Spring's Config Data import:
+
+```yaml
+spring:
+  config:
+    import: file:${CANDIDATE_PROFILE_PATH:./config/candidate-profile.yml}
+```
+
+### First-time setup
+
+```bash
+cp config/candidate-profile.example.yml config/candidate-profile.yml
+```
+
+Then edit `config/candidate-profile.yml` with your own role, skills, and preferences.
+`config/candidate-profile.yml` is listed in `.gitignore`, so your personal data is never
+committed — only `config/candidate-profile.example.yml` (a generic template) is tracked. This
+file is required for the application to start; it is not a secret-management mechanism, just a
+place to keep personal profile data out of the source tree.
+
+Skills absent from the file are treated as unknown, negligible, or intentionally excluded — don't
+add an entry to say "no", just omit it. Supported proficiency values, most to least confident:
+
+- `EXPERT` — deep knowledge, can design solutions and guide others
+- `STRONG` — confident production experience, can troubleshoot difficult problems
+- `WORKING` — can independently complete normal implementation tasks
+- `BASIC` — understands the fundamentals, may need guidance for non-trivial work
+
+`NONE` is not a supported proficiency value.
+
+### Default startup
+
+```bash
+./gradlew bootRun
+```
+
+Loads `config/candidate-profile.yml` from the project root by default. If that file is missing,
+startup fails fast rather than falling back to an empty or fake profile — copy the example file
+as shown above, or set `CANDIDATE_PROFILE_PATH` (below).
+
+### Custom profile path
+
+```bash
+CANDIDATE_PROFILE_PATH=/absolute/path/to/my-candidate-profile.yml \
+./gradlew bootRun
+```
+
+Useful for keeping your profile entirely outside the repository, or switching between multiple
+profiles without editing `config/candidate-profile.yml` in place.
+
 ## How to run
 
 ### Prerequisites
@@ -137,7 +193,8 @@ the core web flow. Database schema is version-controlled with Flyway migrations
 
 ### Locally with Gradle
 
-Start a local PostgreSQL instance (or use `docker compose up postgres`), then:
+Start a local PostgreSQL instance (or use `docker compose up postgres`), then set up your
+candidate profile (see [Candidate profile](#candidate-profile) above) if you haven't already:
 
 ```bash
 export DB_HOST=localhost
@@ -211,6 +268,7 @@ directly):
 
 | Variable                        | Default        | Description                                     |
 |----------------------------------|-----------------|---------------------------------------------------|
+| `CANDIDATE_PROFILE_PATH`         | `./config/candidate-profile.yml` | Path to the personal candidate profile YAML file — see [Candidate profile](#candidate-profile) |
 | `DB_HOST`                        | `localhost`     | PostgreSQL host                                   |
 | `DB_PORT`                        | `5432`          | PostgreSQL port                                   |
 | `DB_NAME`                        | `job_assistant` | Database name                                     |

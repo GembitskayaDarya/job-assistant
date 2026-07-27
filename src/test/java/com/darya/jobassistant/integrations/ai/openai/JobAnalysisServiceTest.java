@@ -44,7 +44,8 @@ class JobAnalysisServiceTest {
                 List.of(
                         new CandidateSkill("Java", SkillProficiency.EXPERT, null),
                         new CandidateSkill("Spring Boot", SkillProficiency.STRONG, null),
-                        new CandidateSkill("Kafka", SkillProficiency.WORKING, null)),
+                        new CandidateSkill("Kafka", SkillProficiency.WORKING, null),
+                        new CandidateSkill("AWS", SkillProficiency.BASIC, null)),
                 List.of("English", "Polish"),
                 6,
                 new CandidatePreferences(
@@ -74,20 +75,60 @@ class JobAnalysisServiceTest {
         String systemPrompt = systemPromptCaptor.getValue();
         assertThat(systemPrompt).contains("experienced technical recruiter");
         assertThat(systemPrompt).contains("\"score\": 0-100");
+        // The prompt names these categories only to tell the model never to produce them.
+        assertThat(systemPrompt).contains("Never produce match categories");
 
         String userPrompt = userPromptCaptor.getValue();
+        // Candidate identity and skills, with proficiency and preserved order.
         assertThat(userPrompt).contains("Senior Java Backend Engineer");
-        assertThat(userPrompt).contains("Java, Spring Boot, Kafka");
-        assertThat(userPrompt).contains("English, Polish");
-        assertThat(userPrompt).contains("6 years");
-        assertThat(userPrompt).contains("Product company");
-        assertThat(userPrompt).contains("Remote, Europe");
+        assertThat(userPrompt).contains("Target seniority: Senior");
+        assertThat(userPrompt).contains("Total experience years: 6");
+        assertThat(userPrompt).contains("Languages: English, Polish");
+        assertThat(userPrompt)
+                .contains("- Java: EXPERT")
+                .contains("- Spring Boot: STRONG")
+                .contains("- Kafka: WORKING")
+                .contains("- AWS: BASIC");
+        assertThat(userPrompt.indexOf("- Java: EXPERT"))
+                .isLessThan(userPrompt.indexOf("- Spring Boot: STRONG"))
+                .isLessThan(userPrompt.indexOf("- Kafka: WORKING"))
+                .isLessThan(userPrompt.indexOf("- AWS: BASIC"));
+
+        // Preferences, including unconfigured fields rendered as "Not configured", never as null.
+        assertThat(userPrompt).contains("Preferred work arrangement: Remote, Europe");
+        assertThat(userPrompt).contains("Work-arrangement importance: STRONG");
+        assertThat(userPrompt).contains("Relocation allowed: false");
+        assertThat(userPrompt).contains("Preferred company type: Product company");
+        assertThat(userPrompt).contains("Current country: Not configured");
+        assertThat(userPrompt).contains("Allowed work countries: Not configured");
+        assertThat(userPrompt).contains("Preferred contract types: Not configured");
+        assertThat(userPrompt).contains("Contract-type importance: Not configured");
+        assertThat(userPrompt).contains("Company-type importance: Not configured");
+        assertThat(userPrompt).contains("Salary expectation: Not configured");
+        assertThat(userPrompt).doesNotContain("null");
+
+        // Job description fields.
         assertThat(userPrompt).contains("Backend Engineer");
         assertThat(userPrompt).contains("Acme Corp");
         assertThat(userPrompt).contains("120k-140k");
         assertThat(userPrompt).contains("Build backend services");
-        // Step 3 only wires skill names through - proficiency levels must not leak into the prompt yet.
-        assertThat(userPrompt).doesNotContain("EXPERT").doesNotContain("SkillProficiency");
+    }
+
+    @Test
+    void analyze_userPrompt_neverContainsSkillProficiencyNoneOrBareSkillNamesOnly() {
+        CandidateProfile profile = validProfile();
+        JobAnalysis expected = new JobAnalysis(50, List.of(), List.of(), List.of(), "Summary");
+        when(jobAnalysisAiPort.analyze(anyString(), anyString())).thenReturn(expected);
+
+        jobAnalysisService.analyze(profile, validJob());
+
+        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jobAnalysisAiPort).analyze(anyString(), userPromptCaptor.capture());
+        String userPrompt = userPromptCaptor.getValue();
+
+        assertThat(userPrompt).doesNotContain("NONE");
+        // Every configured skill must appear with its level, not as a bare comma-separated name.
+        assertThat(userPrompt).doesNotContain("Java, Spring Boot, Kafka");
     }
 
     @Test

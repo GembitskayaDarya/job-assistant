@@ -1,0 +1,62 @@
+# Example candidate profile - a copyable template, not real personal data.
+#
+# First-time setup:
+#   cp config/candidate-profile.example.yml config/candidate-profile.yml
+# then edit the values below to describe yourself. config/candidate-profile.yml is gitignored,
+# so your personal data never gets committed.
+#
+# Everything under `candidate:` feeds the AI vacancy-analysis prompt (JobAnalysisService):
+# target role/seniority/experience, skills with proficiency, languages, and work preferences.
+candidate:
+  # Role and seniority you're targeting - used to judge fit against a vacancy's stated role.
+  target-role: Senior Java Backend Developer
+  target-seniority: Senior
+
+  # Total years of professional experience, compared against a vacancy's stated requirement
+  # (if any) - a small gap has a small effect on the AI match score, not an automatic zero.
+  experience-years: 5
+
+  languages:
+    - English
+
+  # A skill absent from this list is treated as unknown, negligible, or intentionally excluded -
+  # don't add an entry just to say "no". Supported proficiency values, most to least confident:
+  #   EXPERT   - deep knowledge, can design solutions and guide others
+  #   STRONG   - confident production experience, can troubleshoot difficult problems
+  #   WORKING  - can independently complete normal implementation tasks
+  #   BASIC    - understands the fundamentals, may need guidance for non-trivial work
+  # NONE is not a supported value - just omit skills you don't have.
+  skills:
+    - name: Java
+      proficiency: STRONG
+    - name: Spring Boot
+      proficiency: WORKING
+    - name: Docker
+      proficiency: BASIC
+    - name: PostgreSQL
+      proficiency: EXPERT
+
+  preferences:
+    # Country you currently work/live from.
+    current-country: Poland
+
+    # Work arrangement you prefer, and how much it should weigh in the match score:
+    # REQUIRED (a conflict significantly hurts the score), STRONG (important but not
+    # disqualifying), PREFERRED (small influence), or NEUTRAL (no score impact).
+    preferred-work-arrangement: Remote
+    work-arrangement-importance: STRONG
+
+    # Countries you're able to work from/for, regardless of arrangement.
+    allowed-work-countries:
+      - Poland
+    relocation-allowed: false
+
+    preferred-contract-types:
+      - B2B
+    contract-type-importance: PREFERRED
+
+    preferred-company-type: Product
+    company-type-importance: PREFERRED
+
+    # Leave blank if you don't want salary to influence the AI match score at all.
+    salary-expectation:

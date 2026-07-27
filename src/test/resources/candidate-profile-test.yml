@@ -1,0 +1,35 @@
+# Deterministic candidate profile used only by the test suite (wired via CANDIDATE_PROFILE_PATH
+# in the Gradle `test` task - see build.gradle). Keeps full-context tests independent of the
+# developer's real, gitignored config/candidate-profile.yml.
+candidate:
+  target-role: Senior Java Backend Engineer
+  target-seniority: Senior
+  experience-years: 6
+
+  languages:
+    - English
+    - Polish
+
+  skills:
+    - name: Java
+      proficiency: EXPERT
+    - name: Spring Boot
+      proficiency: STRONG
+    - name: Kafka
+      proficiency: WORKING
+    - name: AWS
+      proficiency: BASIC
+
+  preferences:
+    current-country: Poland
+    preferred-work-arrangement: Remote
+    work-arrangement-importance: STRONG
+    allowed-work-countries:
+      - Poland
+    relocation-allowed: false
+    preferred-contract-types:
+      - B2B
+    contract-type-importance: PREFERRED
+    preferred-company-type: Product
+    company-type-importance: PREFERRED
+    salary-expectation:

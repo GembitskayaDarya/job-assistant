@@ -3,21 +3,22 @@ package com.darya.jobassistant.candidates;
 /**
  * How confidently the candidate can use a given skill. Deliberately has no separate
  * experience-type dimension (e.g. commercial vs. pet-project) - proficiency alone is the model.
+ *
+ * <p>A skill absent from {@code CandidateProfile.skills} means the candidate does not know it,
+ * has only negligible exposure, or intentionally excluded it as irrelevant - absence is never
+ * modeled as an explicit skill entry, so there is no "not known" level here.
  */
 public enum SkillProficiency {
 
-    /** The candidate does not know or cannot currently use the skill. */
-    NONE,
-
-    /** Understands the fundamentals but has limited practical confidence. */
+    /** Understands the fundamentals and may need guidance for non-trivial work. */
     BASIC,
 
-    /** Can independently use the skill in regular development tasks. */
+    /** Can independently complete normal implementation tasks. */
     WORKING,
 
-    /** Confidently uses the skill and understands common production concerns. */
+    /** Has confident production experience and can troubleshoot difficult problems. */
     STRONG,
 
-    /** Has deep knowledge and can make design decisions, explain trade-offs and guide others. */
+    /** Has deep knowledge, understands trade-offs and can design or guide others. */
     EXPERT
 }
