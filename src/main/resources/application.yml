@@ -83,6 +83,14 @@ jobsource:
     fixed-delay-ms: ${JOBSOURCE_INGESTION_FIXED_DELAY_MS:3600000}
     initial-delay-ms: ${JOBSOURCE_INGESTION_INITIAL_DELAY_MS:10000}
 
+firecrawl:
+  enabled: ${FIRECRAWL_ENABLED:false}
+  api-key: ${FIRECRAWL_API_KEY:}
+  base-url: ${FIRECRAWL_BASE_URL:https://api.firecrawl.dev}
+  search-limit: ${FIRECRAWL_SEARCH_LIMIT:10}
+  connect-timeout: ${FIRECRAWL_CONNECT_TIMEOUT:5s}
+  read-timeout: ${FIRECRAWL_READ_TIMEOUT:30s}
+
 vacancy-import:
   session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}
   cleanup:
