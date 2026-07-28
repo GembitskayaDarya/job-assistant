@@ -47,7 +47,9 @@ public class Vacancy extends BaseEntity {
      * {@code VacancyCreationService} always canonicalizes {@link #url} before building a new
      * {@code Vacancy}, so no application code path constructs one with a null canonical URL
      * either; this {@code nullable = false} only makes that existing invariant visible to
-     * Hibernate's own schema validation.
+     * Hibernate's own schema validation. The database additionally rejects an empty or
+     * whitespace-only value via {@code ck_vacancy_canonical_url_not_blank}, which has no
+     * Hibernate-side annotation counterpart here - see V13.
      */
     @Column(name = "canonical_url", nullable = false)
     private String canonicalUrl;

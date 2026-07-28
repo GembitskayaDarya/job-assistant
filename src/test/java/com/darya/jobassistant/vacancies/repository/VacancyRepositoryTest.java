@@ -196,6 +196,32 @@ class VacancyRepositoryTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    /**
+     * Since Sprint 8 Step 4B2D (migration V13), {@code ck_vacancy_canonical_url_not_blank} rejects
+     * an empty or whitespace-only {@code canonical_url} that {@code NOT NULL} alone would admit -
+     * this is the real-database proof, independent of {@code VacancyCanonicalUrlMigrationTest}'s
+     * plain-JDBC coverage of the same constraint, that the violation surfaces through Hibernate's
+     * exception chain exactly like any other database-level rejection.
+     */
+    @Test
+    void saveIfAbsent_blankCanonicalUrl_violatesNotBlankCheckConstraint() {
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
+        Vacancy candidate = Vacancy.builder()
+                .company(company)
+                .title("Backend Engineer")
+                .description("Build backend services")
+                .url(uniqueUrl())
+                .canonicalUrl("   ")
+                .source("remoteok")
+                .build();
+
+        DataIntegrityViolationException exception = catchThrowableOfType(
+                DataIntegrityViolationException.class, () -> vacancyRepository.saveIfAbsent(candidate));
+
+        assertThat(exception).isNotNull();
+        assertThat(exception.getMostSpecificCause().getMessage()).contains("ck_vacancy_canonical_url_not_blank");
+    }
+
     @Test
     void saveIfAbsent_twoDistinctCanonicalUrls_bothInserted() {
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());

@@ -59,6 +59,13 @@ END $$;
 ALTER TABLE vacancy
     ALTER COLUMN canonical_url SET NOT NULL;
 
+-- NOT NULL alone still admits '' or whitespace-only values for any future row - this CHECK closes
+-- that gap at the database level, independent of and in addition to VacancyUrlCanonicalizer, which
+-- never produces such a value itself. Deliberately minimal: no URI validation, no normalization.
+ALTER TABLE vacancy
+    ADD CONSTRAINT ck_vacancy_canonical_url_not_blank
+    CHECK (length(btrim(canonical_url)) > 0);
+
 -- Atomic index swap: create the new full (non-partial) unique index under a temporary name first,
 -- so the table is never left without unique protection between statements, then drop the old
 -- partial index and rename the new one into its place. All three statements are part of this same

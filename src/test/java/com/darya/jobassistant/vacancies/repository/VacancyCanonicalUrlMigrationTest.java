@@ -210,6 +210,60 @@ class VacancyCanonicalUrlMigrationTest {
                     """)) {
                 assertThat(temporaryIndex.next()).isFalse(); // item 6: temporary index name does not remain
             }
+            try (ResultSet checkConstraint = statement.executeQuery("""
+                    SELECT convalidated FROM pg_constraint
+                    WHERE conrelid = 'vacancy'::regclass AND conname = 'ck_vacancy_canonical_url_not_blank'
+                    """)) {
+                assertThat(checkConstraint.next()).isTrue();
+                assertThat(checkConstraint.getBoolean("convalidated")).isTrue();
+            }
+        }
+    }
+
+    @Test
+    void v13_checkConstraint_rejectsEmptyAndWhitespaceOnlyCanonicalUrl_butAcceptsNormalValues() throws Exception {
+        migrateTo("13");
+        UUID companyId = UUID.randomUUID();
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("INSERT INTO company (id, name) VALUES ('%s', 'Acme')".formatted(companyId));
+        }
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            SQLException emptyFailure = assertThrows(SQLException.class, () -> statement.execute("""
+                    INSERT INTO vacancy (id, company_id, title, url, canonical_url)
+                    VALUES ('%s', '%s', 'Role', 'https://example.com/job-empty', '')
+                    """.formatted(UUID.randomUUID(), companyId)));
+            assertThat(emptyFailure.getMessage()).contains("ck_vacancy_canonical_url_not_blank");
+        }
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            SQLException blankFailure = assertThrows(SQLException.class, () -> statement.execute("""
+                    INSERT INTO vacancy (id, company_id, title, url, canonical_url)
+                    VALUES ('%s', '%s', 'Role', 'https://example.com/job-whitespace', '   ')
+                    """.formatted(UUID.randomUUID(), companyId)));
+            assertThat(blankFailure.getMessage()).contains("ck_vacancy_canonical_url_not_blank");
+        }
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            assertThrows(SQLException.class, () -> statement.execute("""
+                    INSERT INTO vacancy (id, company_id, title, url, canonical_url)
+                    VALUES ('%s', '%s', 'Role', 'https://example.com/job-null-canonical', NULL)
+                    """.formatted(UUID.randomUUID(), companyId)));
+        }
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    INSERT INTO vacancy (id, company_id, title, url, canonical_url)
+                    VALUES ('%s', '%s', 'Role', 'https://example.com/job-normal', 'https://example.com/job-normal')
+                    """.formatted(UUID.randomUUID(), companyId));
+        }
+
+        try (Connection connection = jdbcConnection();
+                Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(
+                        "SELECT COUNT(*) FROM vacancy WHERE company_id = '%s'".formatted(companyId))) {
+            assertThat(resultSet.next()).isTrue();
+            assertThat(resultSet.getLong(1)).isEqualTo(1L);
         }
     }
 
@@ -328,6 +382,12 @@ class VacancyCanonicalUrlMigrationTest {
                     """)) {
                 assertThat(temporaryIndex.next()).isFalse();
             }
+            try (ResultSet checkConstraint = statement.executeQuery("""
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'vacancy'::regclass AND conname = 'ck_vacancy_canonical_url_not_blank'
+                    """)) {
+                assertThat(checkConstraint.next()).isFalse();
+            }
         }
     }
 
@@ -349,6 +409,13 @@ class VacancyCanonicalUrlMigrationTest {
                 assertThat(indexInfo.next()).isTrue();
                 assertThat(indexInfo.getBoolean("indisunique")).isTrue();
                 assertThat(indexInfo.getString("indpred")).isNull();
+            }
+            try (ResultSet checkConstraint = statement.executeQuery("""
+                    SELECT convalidated FROM pg_constraint
+                    WHERE conrelid = 'vacancy'::regclass AND conname = 'ck_vacancy_canonical_url_not_blank'
+                    """)) {
+                assertThat(checkConstraint.next()).isTrue();
+                assertThat(checkConstraint.getBoolean("convalidated")).isTrue();
             }
         }
     }
