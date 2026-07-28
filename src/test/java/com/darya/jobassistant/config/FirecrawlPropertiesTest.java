@@ -47,6 +47,24 @@ class FirecrawlPropertiesTest {
     }
 
     @Test
+    void enabled_rejectsSearchLimitAbove100() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 101, CONNECT_TIMEOUT, READ_TIMEOUT))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_acceptsSearchLimitOfOne() {
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 1, CONNECT_TIMEOUT, READ_TIMEOUT))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void enabled_acceptsSearchLimitOf100() {
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 100, CONNECT_TIMEOUT, READ_TIMEOUT))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void enabled_rejectsNullConnectTimeout() {
         assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, null, READ_TIMEOUT))
                 .isInstanceOf(IllegalArgumentException.class);

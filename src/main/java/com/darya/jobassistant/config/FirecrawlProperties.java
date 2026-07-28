@@ -20,6 +20,8 @@ public record FirecrawlProperties(
         Duration readTimeout
 ) {
 
+    private static final int MAX_SEARCH_LIMIT = 100;
+
     public FirecrawlProperties {
         if (enabled) {
             if (!StringUtils.hasText(apiKey)) {
@@ -28,8 +30,10 @@ public record FirecrawlProperties(
             if (!StringUtils.hasText(baseUrl)) {
                 throw new IllegalArgumentException("firecrawl.base-url must be set when firecrawl.enabled=true");
             }
-            if (searchLimit <= 0) {
-                throw new IllegalArgumentException("firecrawl.search-limit must be positive when firecrawl.enabled=true");
+            if (searchLimit <= 0 || searchLimit > MAX_SEARCH_LIMIT) {
+                throw new IllegalArgumentException(
+                        "firecrawl.search-limit must be between 1 and " + MAX_SEARCH_LIMIT
+                                + " when firecrawl.enabled=true, but was " + searchLimit);
             }
             if (connectTimeout == null || !connectTimeout.isPositive()) {
                 throw new IllegalArgumentException(

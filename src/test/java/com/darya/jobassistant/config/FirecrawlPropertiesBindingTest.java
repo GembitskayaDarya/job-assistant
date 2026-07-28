@@ -84,6 +84,19 @@ class FirecrawlPropertiesBindingTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void binding_enabledWithSearchLimitAbove100_failsContext() {
+        contextRunner
+                .withPropertyValues(
+                        "firecrawl.enabled=true",
+                        "firecrawl.api-key=test-key",
+                        "firecrawl.base-url=https://api.firecrawl.dev",
+                        "firecrawl.search-limit=101",
+                        "firecrawl.connect-timeout=5s",
+                        "firecrawl.read-timeout=30s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     @EnableConfigurationProperties(FirecrawlProperties.class)
     static class TestConfig {
     }

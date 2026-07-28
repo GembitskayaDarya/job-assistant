@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.codec.json.Jackson2JsonDecoder;
@@ -38,7 +39,14 @@ public class WebClientConfig {
 
     private final WebClientProperties webClientProperties;
 
+    /**
+     * {@code @Primary} so unqualified {@code WebClient} injection (e.g. {@code
+     * RemoteOkJobSourceAdapter}) keeps resolving to this shared client unambiguously once a
+     * second, differently-configured {@code WebClient} bean (the Firecrawl-specific one) can also
+     * exist in the context.
+     */
     @Bean
+    @Primary
     public WebClient webClient(ObjectMapper objectMapper) {
         return WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(buildHttpClient()))
