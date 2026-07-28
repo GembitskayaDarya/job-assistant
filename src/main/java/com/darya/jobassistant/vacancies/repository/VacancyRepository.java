@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -156,4 +157,22 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
             where v.canonicalUrl is not null
             """)
     List<PopulatedCanonicalUrlRow> findPopulatedCanonicalUrlRows();
+
+    /**
+     * Backs {@code VacancyCanonicalUrlBackfillService}'s APPLY step: sets {@code canonical_url}
+     * for exactly one row, only if it is still {@code NULL} - mirrors the conditional-update
+     * pattern {@code VacancyImportSessionRepositoryCustom} uses for state transitions (e.g. {@code
+     * completeIfWaitingForConfirmation}), so a row already backfilled by a concurrent run (or one
+     * that no longer matches the plan) is never silently overwritten. {@code url} is never touched
+     * - only {@code canonical_url} is set. Returns 0 if the row's {@code canonical_url} was already
+     * non-null (or the row no longer exists); the caller treats anything other than exactly 1 as an
+     * invariant violation.
+     */
+    @Modifying
+    @Query("""
+            update Vacancy v
+            set v.canonicalUrl = :canonicalUrl
+            where v.id = :vacancyId and v.canonicalUrl is null
+            """)
+    int setCanonicalUrlIfNull(@Param("vacancyId") UUID vacancyId, @Param("canonicalUrl") String canonicalUrl);
 }

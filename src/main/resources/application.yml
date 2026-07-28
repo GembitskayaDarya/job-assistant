@@ -113,6 +113,11 @@ vacancy-canonical-url-audit:
   batch-size: ${VACANCY_CANONICAL_URL_AUDIT_BATCH_SIZE:500}
   max-reported-issues: ${VACANCY_CANONICAL_URL_AUDIT_MAX_REPORTED_ISSUES:100}
 
+vacancy-canonical-url-backfill:
+  enabled: ${VACANCY_CANONICAL_URL_BACKFILL_ENABLED:false}
+  mode: ${VACANCY_CANONICAL_URL_BACKFILL_MODE:DRY_RUN}
+  batch-size: ${VACANCY_CANONICAL_URL_BACKFILL_BATCH_SIZE:500}
+
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}
