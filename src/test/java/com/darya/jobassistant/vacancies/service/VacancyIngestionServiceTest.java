@@ -3,15 +3,13 @@ package com.darya.jobassistant.vacancies.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.darya.jobassistant.companies.entity.Company;
-import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -26,10 +24,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * All persistence now goes through {@link VacancyCreationService} (see that class's own test for
- * canonicalization/duplicate/concurrency coverage) - this class only tests {@link
- * VacancyIngestionService}'s own responsibilities: mapping a {@link JobOffer} to a {@link Vacancy}
- * candidate, match-policy filtering, and result aggregation.
+ * All persistence - including company resolution/creation - now goes through {@link
+ * VacancyCreationService} (see that class's own test for canonicalization/duplicate/concurrency/
+ * company-atomicity coverage) - this class only tests {@link VacancyIngestionService}'s own
+ * responsibilities: mapping a {@link JobOffer} into a provider-neutral {@link
+ * VacancyCreationCommand}, match-policy filtering, and result aggregation. {@link
+ * VacancyIngestionService} itself never resolves a {@code Company} or touches {@link
+ * com.darya.jobassistant.companies.service.CompanyService}.
  */
 @ExtendWith(MockitoExtension.class)
 class VacancyIngestionServiceTest {
@@ -38,47 +39,41 @@ class VacancyIngestionServiceTest {
     private VacancyCreationService vacancyCreationService;
 
     @Mock
-    private CompanyService companyService;
-
-    @Mock
     private JobOfferMatchPolicy jobOfferMatchPolicy;
 
     private VacancyIngestionService vacancyIngestionService;
 
     @BeforeEach
     void setUp() {
-        vacancyIngestionService = new VacancyIngestionService(vacancyCreationService, companyService, jobOfferMatchPolicy);
+        vacancyIngestionService = new VacancyIngestionService(vacancyCreationService, jobOfferMatchPolicy);
     }
 
     @Test
-    void persist_newOffer_resolvesCompanyAndDelegatesToCreationService() {
+    void persist_newOffer_buildsCreationCommandAndDelegatesToCreationService() {
         JobOffer job = jobOffer("https://example.com/job-1");
-        Company company = Company.builder().name("Acme Corp").build();
-        when(companyService.findOrCreateByName("Acme Corp")).thenReturn(company);
-        Vacancy createdVacancy = Vacancy.builder().id(UUID.randomUUID()).company(company).title(job.title()).build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        Vacancy createdVacancy = Vacancy.builder().id(UUID.randomUUID()).title(job.title()).build();
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(createdVacancy, true));
 
         Vacancy result = vacancyIngestionService.persist(job);
 
         assertThat(result).isSameAs(createdVacancy);
 
-        ArgumentCaptor<Vacancy> vacancyCaptor = ArgumentCaptor.forClass(Vacancy.class);
-        verify(vacancyCreationService).createIfAbsent(vacancyCaptor.capture());
-        Vacancy candidate = vacancyCaptor.getValue();
-        assertThat(candidate.getCompany()).isSameAs(company);
-        assertThat(candidate.getTitle()).isEqualTo(job.title());
-        assertThat(candidate.getDescription()).isEqualTo(job.description());
-        assertThat(candidate.getUrl()).isEqualTo(job.url());
-        assertThat(candidate.getSource()).isEqualTo(job.source());
+        ArgumentCaptor<VacancyCreationCommand> commandCaptor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
+        verify(vacancyCreationService).createIfAbsent(commandCaptor.capture());
+        VacancyCreationCommand command = commandCaptor.getValue();
+        assertThat(command.companyName()).isEqualTo(job.company());
+        assertThat(command.title()).isEqualTo(job.title());
+        assertThat(command.description()).isEqualTo(job.description());
+        assertThat(command.url()).isEqualTo(job.url());
+        assertThat(command.source()).isEqualTo(job.source());
     }
 
     @Test
     void persist_existingCanonicalUrl_returnsExistingVacancyUnchanged() {
         JobOffer job = jobOffer("https://example.com/job-1");
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy existing = Vacancy.builder().id(UUID.randomUUID()).title("Old title").build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(existing, false));
 
         Vacancy result = vacancyIngestionService.persist(job);
@@ -90,9 +85,8 @@ class VacancyIngestionServiceTest {
     @Test
     void persist_repeatedEquivalentJobOffer_doesNotCreateDuplicateRecord() {
         JobOffer job = jobOffer("https://example.com/job-1");
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy existing = Vacancy.builder().id(UUID.randomUUID()).title(job.title()).build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(existing, false));
 
         Vacancy first = vacancyIngestionService.persist(job);
@@ -104,21 +98,19 @@ class VacancyIngestionServiceTest {
     }
 
     @Test
-    void persist_blankUrl_throwsWithoutTouchingCreationServiceOrCompanyService() {
+    void persist_blankUrl_throwsWithoutTouchingCreationService() {
         JobOffer job = new JobOffer("job-1", "Backend Engineer", "Acme", "Remote", null, "desc", "  ", "remoteok");
 
         assertThatThrownBy(() -> vacancyIngestionService.persist(job))
                 .isInstanceOf(IllegalArgumentException.class);
 
         verify(vacancyCreationService, never()).createIfAbsent(any());
-        verify(companyService, never()).findOrCreateByName(any());
     }
 
     @Test
     void persist_doesNotConsultMatchPolicy() {
         JobOffer job = jobOffer("https://example.com/job-1");
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), false));
 
         vacancyIngestionService.persist(job);
@@ -131,10 +123,9 @@ class VacancyIngestionServiceTest {
         JobOffer offerOne = jobOffer("https://example.com/job-1");
         JobOffer offerTwo = jobOffer("https://example.com/job-2");
         when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy savedOne = Vacancy.builder().id(UUID.randomUUID()).title(offerOne.title()).build();
         Vacancy savedTwo = Vacancy.builder().id(UUID.randomUUID()).title(offerTwo.title()).build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class))).thenReturn(
                 new VacancyCreationResult(savedOne, true), new VacancyCreationResult(savedTwo, true));
 
         VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(offerOne, offerTwo));
@@ -145,25 +136,22 @@ class VacancyIngestionServiceTest {
     }
 
     @Test
-    void ingest_callsCreationServiceWithVacancyMappedFromOffer() {
+    void ingest_callsCreationServiceWithCommandMappedFromOffer() {
         JobOffer offer = jobOffer("https://example.com/job-1");
         when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
-        Company company = Company.builder().name("Acme Corp").build();
-        when(companyService.findOrCreateByName("Acme Corp")).thenReturn(company);
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), true));
 
         vacancyIngestionService.ingest(List.of(offer));
 
-        ArgumentCaptor<Vacancy> vacancyCaptor = ArgumentCaptor.forClass(Vacancy.class);
-        verify(vacancyCreationService).createIfAbsent(vacancyCaptor.capture());
-        Vacancy passed = vacancyCaptor.getValue();
-        assertThat(passed.getId()).isNull();
-        assertThat(passed.getCompany()).isSameAs(company);
-        assertThat(passed.getTitle()).isEqualTo(offer.title());
-        assertThat(passed.getDescription()).isEqualTo(offer.description());
-        assertThat(passed.getUrl()).isEqualTo(offer.url());
-        assertThat(passed.getSource()).isEqualTo(offer.source());
+        ArgumentCaptor<VacancyCreationCommand> commandCaptor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
+        verify(vacancyCreationService).createIfAbsent(commandCaptor.capture());
+        VacancyCreationCommand passed = commandCaptor.getValue();
+        assertThat(passed.companyName()).isEqualTo(offer.company());
+        assertThat(passed.title()).isEqualTo(offer.title());
+        assertThat(passed.description()).isEqualTo(offer.description());
+        assertThat(passed.url()).isEqualTo(offer.url());
+        assertThat(passed.source()).isEqualTo(offer.source());
     }
 
     @Test
@@ -171,8 +159,7 @@ class VacancyIngestionServiceTest {
         JobOffer offerOne = jobOffer("https://example.com/job-1");
         JobOffer offerTwo = jobOffer("https://example.com/job-2");
         when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), false));
 
         VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(offerOne, offerTwo));
@@ -188,11 +175,10 @@ class VacancyIngestionServiceTest {
         JobOffer existingOffer = jobOffer("https://example.com/existing-job");
         JobOffer anotherNewOffer = jobOffer("https://example.com/another-new-job");
         when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy savedFirst = Vacancy.builder().id(UUID.randomUUID()).title("first").build();
         Vacancy savedSecond = Vacancy.builder().id(UUID.randomUUID()).title("second").build();
         Vacancy existing = Vacancy.builder().id(UUID.randomUUID()).title("existing").build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class))).thenReturn(
                 new VacancyCreationResult(savedFirst, true),
                 new VacancyCreationResult(existing, false),
                 new VacancyCreationResult(savedSecond, true));
@@ -209,8 +195,7 @@ class VacancyIngestionServiceTest {
         JobOffer offer = jobOffer("https://example.com/job-1");
         when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
         UUID vacancyId = UUID.randomUUID();
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(Vacancy.builder().id(vacancyId).build(), true));
 
         VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(offer));
@@ -224,9 +209,8 @@ class VacancyIngestionServiceTest {
         JobOffer failing = new JobOffer("job-1", "Backend Engineer", "Acme", "Remote", null, "desc", "  ", "remoteok");
         JobOffer succeeding = jobOffer("https://example.com/job-2");
         when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy saved = Vacancy.builder().id(UUID.randomUUID()).build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(saved, true));
 
         VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(failing, succeeding));
@@ -241,9 +225,8 @@ class VacancyIngestionServiceTest {
         JobOffer failing = jobOffer("https://example.com/job-1");
         JobOffer succeeding = jobOffer("https://example.com/job-2");
         when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy saved = Vacancy.builder().id(UUID.randomUUID()).build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db unavailable"))
                 .thenReturn(new VacancyCreationResult(saved, true));
 
@@ -267,7 +250,7 @@ class VacancyIngestionServiceTest {
     }
 
     @Test
-    void ingest_rejectedOffer_doesNotCallCompanyServiceOrCreationServiceAndIsNotCountedEitherWay() {
+    void ingest_rejectedOffer_doesNotCallCreationServiceAndIsNotCountedEitherWay() {
         JobOffer rejected = jobOffer("https://example.com/rejected");
         when(jobOfferMatchPolicy.matches(rejected)).thenReturn(false);
 
@@ -276,7 +259,6 @@ class VacancyIngestionServiceTest {
         assertThat(result.fetchedCount()).isEqualTo(1);
         assertThat(result.persistedVacancies()).isEmpty();
         assertThat(result.alreadyKnownCount()).isZero();
-        verify(companyService, never()).findOrCreateByName(any());
         verify(vacancyCreationService, never()).createIfAbsent(any());
     }
 
@@ -290,10 +272,9 @@ class VacancyIngestionServiceTest {
         when(jobOfferMatchPolicy.matches(acceptedFirst)).thenReturn(true);
         when(jobOfferMatchPolicy.matches(rejectedSecond)).thenReturn(false);
         when(jobOfferMatchPolicy.matches(acceptedSecond)).thenReturn(true);
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy savedFirst = Vacancy.builder().id(UUID.randomUUID()).title("accepted-1").build();
         Vacancy savedSecond = Vacancy.builder().id(UUID.randomUUID()).title("accepted-2").build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class))).thenReturn(
                 new VacancyCreationResult(savedFirst, true), new VacancyCreationResult(savedSecond, true));
 
         VacancyIngestionResult result = vacancyIngestionService.ingest(
@@ -302,7 +283,6 @@ class VacancyIngestionServiceTest {
         assertThat(result.fetchedCount()).isEqualTo(4);
         assertThat(result.persistedVacancies()).containsExactly(savedFirst, savedSecond);
         verify(vacancyCreationService, times(2)).createIfAbsent(any());
-        verify(companyService, times(2)).findOrCreateByName(eq("Acme Corp"));
     }
 
     @Test
@@ -311,9 +291,8 @@ class VacancyIngestionServiceTest {
         JobOffer accepted = jobOffer("https://example.com/accepted");
         when(jobOfferMatchPolicy.matches(rejected)).thenReturn(false);
         when(jobOfferMatchPolicy.matches(accepted)).thenReturn(true);
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().name("Acme Corp").build());
         Vacancy saved = Vacancy.builder().id(UUID.randomUUID()).build();
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class)))
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(saved, true));
 
         VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(rejected, accepted));

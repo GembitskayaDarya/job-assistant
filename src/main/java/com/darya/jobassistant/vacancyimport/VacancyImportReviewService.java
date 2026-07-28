@@ -2,9 +2,8 @@ package com.darya.jobassistant.vacancyimport;
 
 import com.darya.jobassistant.ai.AnalyzeVacancyUseCase;
 import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
-import com.darya.jobassistant.companies.entity.Company;
-import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
@@ -34,16 +33,23 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Applies the confirmation-step decision (Save/Retry/Cancel) to a {@code WAITING_FOR_CONFIRMATION}
  * session. Kept separate from {@link VacancyImportService}: that class owns the URL/description/
  * extraction pipeline, this one owns the review-and-finalize pipeline, and Save pulls in a
- * different set of collaborators ({@link VacancyRepository}, {@link CompanyService}) that the
- * extraction pipeline has no reason to depend on.
+ * different collaborator ({@link VacancyCreationService}) that the extraction pipeline has no
+ * reason to depend on.
  *
  * <p>Follows the same no-ambient-{@code @Transactional} discipline as {@link VacancyImportService}
  * and for the same reason: every write goes through its own {@link TransactionTemplate} call, so
  * each one commits (or rolls back) independently rather than sharing one transaction that could
- * hold locks across unrelated operations. Unlike extraction, Save has no external provider call to
- * keep outside a transaction - creating/finding the {@code Vacancy} and completing the session
- * happen together in one transaction, exactly per the conceptual Save transaction in the project's
- * design notes, so a losing conditional completion can roll back an orphan Vacancy insert too.
+ * hold locks across unrelated operations.
+ *
+ * <p>Unlike before {@code VacancyCreationService}'s own isolated-transaction correction, Save's
+ * {@code newTransaction} here no longer has "creating the Vacancy" as part of its own atomic unit
+ * of work: {@link #saveOrFindVacancy} delegates to {@link VacancyCreationService#createIfAbsent},
+ * which always commits (or rolls back) the {@code Vacancy} - and any {@code Company} it needed to
+ * create - in its own separate, already-isolated transaction, before this method's {@code
+ * newTransaction} even proceeds to {@code session.complete(...)}. A losing conditional session
+ * completion (see {@code status.setRollbackOnly()} below) therefore rolls back only the session
+ * update, never an already-committed Vacancy/Company pair; {@link #resolveLostRace} exists
+ * precisely to report whichever concurrent operation actually won the session race in that case.
  */
 @Slf4j
 @Service
@@ -55,7 +61,6 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
     private final VacancyImportDraftRepository draftRepository;
     private final VacancyRepository vacancyRepository;
     private final VacancyCreationService vacancyCreationService;
-    private final CompanyService companyService;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
     private final AnalyzeVacancyUseCase analyzeVacancyUseCase;
     private final Clock clock;
@@ -66,7 +71,6 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
             VacancyImportDraftRepository draftRepository,
             VacancyRepository vacancyRepository,
             VacancyCreationService vacancyCreationService,
-            CompanyService companyService,
             VacancyJobOfferMapper vacancyJobOfferMapper,
             AnalyzeVacancyUseCase analyzeVacancyUseCase,
             Clock clock,
@@ -75,7 +79,6 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
         this.draftRepository = draftRepository;
         this.vacancyRepository = vacancyRepository;
         this.vacancyCreationService = vacancyCreationService;
-        this.companyService = companyService;
         this.vacancyJobOfferMapper = vacancyJobOfferMapper;
         this.analyzeVacancyUseCase = analyzeVacancyUseCase;
         this.clock = clock;
@@ -179,7 +182,7 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
 
         try {
             SaveOutcome outcome = newTransaction.execute(status -> {
-                VacancyOutcome vacancyOutcome = saveOrFindVacancy(buildVacancyCandidate(session, draft));
+                VacancyOutcome vacancyOutcome = saveOrFindVacancy(buildCreationCommand(session, draft));
                 Vacancy vacancy = vacancyOutcome.vacancy();
                 session.complete(vacancy.getId(), clock);
                 boolean transitioned = sessionRepository.completeIfWaitingForConfirmation(sessionId, vacancy.getId(), session.getUpdatedAt());
@@ -285,35 +288,47 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
      * Reuses {@link VacancyCreationService} - the same canonical-URL-aware, database-enforced
      * dedup boundary automatic ingestion already relies on - rather than a find-then-insert check
      * from application code, so a manual import can never race its way into a duplicate Vacancy,
-     * and shares the exact same canonical identity RemoteOK ingestion uses. An existing vacancy
-     * under the same canonical URL is reused exactly as-is (no field is overwritten): matches
-     * {@code VacancyIngestionService}'s established no-merge convention for duplicates.
+     * and shares the exact same canonical identity RemoteOK ingestion uses. Company
+     * resolution/creation happens entirely inside {@link VacancyCreationService#createIfAbsent} -
+     * this class never resolves a {@code Company} itself (see the corrected {@link
+     * #buildCreationCommand}). An existing vacancy under the same canonical URL is reused exactly
+     * as-is (no field is overwritten): matches {@code VacancyIngestionService}'s established
+     * no-merge convention for duplicates.
      */
-    private VacancyOutcome saveOrFindVacancy(Vacancy candidate) {
-        VacancyCreationResult result = vacancyCreationService.createIfAbsent(candidate);
+    private VacancyOutcome saveOrFindVacancy(VacancyCreationCommand command) {
+        VacancyCreationResult result = vacancyCreationService.createIfAbsent(command);
         return new VacancyOutcome(result.vacancy(), result.newlyCreated());
     }
 
     /**
-     * Builds the candidate {@code Vacancy} from the session's own preserved inputs, not the
-     * preview text: {@code description} is the untouched raw description the user sent (never the
-     * AI extraction, never a summary), and {@code url} is the normalized source URL captured back
-     * in step 2 of the import. {@code location}, {@code remoteMode} and {@code salaryText} are
+     * Builds the creation command from the session's own preserved inputs, not the preview text:
+     * {@code description} is the untouched raw description the user sent (never the AI
+     * extraction, never a summary), and {@code url} is the normalized source URL captured back in
+     * step 2 of the import. {@code location}, {@code remoteMode} and {@code salaryText} are
      * copied verbatim from the draft; {@code contractTypes} and {@code requiredSkills} still have
      * no corresponding column and are left out rather than growing the schema for this step.
+     *
+     * <p>Deliberately does not resolve a {@code Company} here (unlike before this class's
+     * transaction-ownership correction): a {@code Company} the caller resolved outside {@link
+     * VacancyCreationService}'s own isolated transaction could end up existing only in this
+     * method's suspended, uncommitted transaction while the {@code Vacancy} insert runs in a
+     * separate {@code REQUIRES_NEW} one - exactly the {@code vacancy_company_id_fkey} failure
+     * that correction fixed.
      */
-    private Vacancy buildVacancyCandidate(VacancyImportSession session, VacancyImportDraft draft) {
-        Company company = companyService.findOrCreateByName(draft.data().company());
-        return Vacancy.builder()
-                .company(company)
-                .title(draft.data().title())
-                .description(session.getRawDescription())
-                .url(session.getSourceUrl())
-                .source(sourceIdentifier(session.getSourceUrl()))
-                .location(draft.data().location())
-                .remoteMode(draft.data().remotePolicy())
-                .salaryText(draft.data().salaryText())
-                .build();
+    private VacancyCreationCommand buildCreationCommand(VacancyImportSession session, VacancyImportDraft draft) {
+        return new VacancyCreationCommand(
+                draft.data().company(),
+                draft.data().title(),
+                session.getRawDescription(),
+                session.getSourceUrl(),
+                draft.data().location(),
+                draft.data().remotePolicy(),
+                null,
+                null,
+                null,
+                draft.data().salaryText(),
+                sourceIdentifier(session.getSourceUrl()),
+                null);
     }
 
     /**

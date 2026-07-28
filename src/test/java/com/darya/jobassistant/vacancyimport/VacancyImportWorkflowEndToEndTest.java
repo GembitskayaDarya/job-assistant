@@ -139,14 +139,15 @@ class VacancyImportWorkflowEndToEndTest {
         CompanyService companyService = new CompanyService(companyRepository, new CompanyMapper());
         VacancyJobOfferMapper vacancyJobOfferMapper = new VacancyJobOfferMapper();
         VacancyQueryService vacancyQueryService = new VacancyQueryService(vacancyRepository);
-        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        VacancyCreationService vacancyCreationService =
+                new VacancyCreationService(vacancyRepository, companyService, transactionManager);
         JobAnalysisService jobAnalysisService = new JobAnalysisService(jobAnalysisAiPort);
         AnalyzeVacancyService analyzeVacancyService = new AnalyzeVacancyService(
                 vacancyQueryService, vacancyJobOfferMapper, candidateProfileProvider, jobAnalysisService,
                 jobAnalysisRepository, CLOCK, new JobAnalysisProperties(Duration.ofMinutes(2)), transactionManager);
 
         reviewService = new VacancyImportReviewService(
-                sessionRepository, draftRepository, vacancyRepository, vacancyCreationService, companyService,
+                sessionRepository, draftRepository, vacancyRepository, vacancyCreationService,
                 vacancyJobOfferMapper, analyzeVacancyService, CLOCK, transactionManager);
 
         stubSessionRepository();

@@ -12,8 +12,8 @@ import com.darya.jobassistant.ai.AnalyzeVacancyUseCase;
 import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.companies.entity.Company;
-import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
@@ -46,6 +46,12 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 
+/**
+ * {@link VacancyImportReviewService} never resolves a {@code Company} itself - that now happens
+ * entirely inside {@link VacancyCreationService#createIfAbsent}, so there is no {@code
+ * CompanyService} mock here at all; {@link #vacancyCreationService} is mocked as a single
+ * black-box collaborator.
+ */
 @ExtendWith(MockitoExtension.class)
 class VacancyImportReviewServiceTest {
 
@@ -69,9 +75,6 @@ class VacancyImportReviewServiceTest {
     private VacancyCreationService vacancyCreationService;
 
     @Mock
-    private CompanyService companyService;
-
-    @Mock
     private VacancyJobOfferMapper vacancyJobOfferMapper;
 
     @Mock
@@ -88,7 +91,7 @@ class VacancyImportReviewServiceTest {
     @BeforeEach
     void setUp() {
         service = new VacancyImportReviewService(
-                sessionRepository, draftRepository, vacancyRepository, vacancyCreationService, companyService,
+                sessionRepository, draftRepository, vacancyRepository, vacancyCreationService,
                 vacancyJobOfferMapper, analyzeVacancyUseCase, CLOCK, transactionManager);
     }
 
@@ -99,12 +102,11 @@ class VacancyImportReviewServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         VacancyImportSession session = sessionAtWaitingForConfirmation();
         VacancyImportDraft draft = draft(session.getId(), validExtractedData());
-        Company company = company("Example Company");
-        Vacancy inserted = vacancy(company);
+        Vacancy inserted = vacancy(company("Example Company"));
         when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
-        when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(inserted, true));
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenReturn(new VacancyCreationResult(inserted, true));
         when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), inserted.getId(), NOW)).thenReturn(true);
         when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
 
@@ -115,25 +117,25 @@ class VacancyImportReviewServiceTest {
         assertThat(session.getVacancyId()).isEqualTo(inserted.getId());
         verify(draftRepository).findDraftBySessionId(session.getId());
 
-        ArgumentCaptor<Vacancy> candidateCaptor = ArgumentCaptor.forClass(Vacancy.class);
-        verify(vacancyCreationService).createIfAbsent(candidateCaptor.capture());
-        Vacancy candidate = candidateCaptor.getValue();
-        assertThat(candidate.getTitle()).isEqualTo("Senior Java Backend Developer");
-        assertThat(candidate.getCompany()).isEqualTo(company);
-        assertThat(candidate.getUrl()).isEqualTo(URL);
+        ArgumentCaptor<VacancyCreationCommand> commandCaptor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
+        verify(vacancyCreationService).createIfAbsent(commandCaptor.capture());
+        VacancyCreationCommand command = commandCaptor.getValue();
+        assertThat(command.title()).isEqualTo("Senior Java Backend Developer");
+        assertThat(command.companyName()).isEqualTo("Example Company");
+        assertThat(command.url()).isEqualTo(URL);
         // The raw description preserved on the session - not any draft field - becomes the
-        // persisted Vacancy description; ExtractedVacancyData has no description field at all.
-        assertThat(candidate.getDescription()).isEqualTo(session.getRawDescription());
-        assertThat(candidate.getDescription()).isEqualTo(VALID_DESCRIPTION);
+        // command's description; ExtractedVacancyData has no description field at all.
+        assertThat(command.description()).isEqualTo(session.getRawDescription());
+        assertThat(command.description()).isEqualTo(VALID_DESCRIPTION);
         // Regression coverage: location, remoteMode and salaryText must survive the
-        // draft -> Vacancy conversion on Save, not just title/company/description/url.
-        assertThat(candidate.getLocation()).isEqualTo("Europe");
-        assertThat(candidate.getRemoteMode()).isEqualTo(RemotePolicy.REMOTE);
-        assertThat(candidate.getSalaryText()).isEqualTo("10-15k PLN");
+        // draft -> command conversion on Save, not just title/company/description/url.
+        assertThat(command.location()).isEqualTo("Europe");
+        assertThat(command.remoteMode()).isEqualTo(RemotePolicy.REMOTE);
+        assertThat(command.salaryText()).isEqualTo("10-15k PLN");
     }
 
     @Test
-    void save_draftWithLocationAndSalaryText_copiesThemVerbatimToTheVacancy() {
+    void save_draftWithLocationAndSalaryText_copiesThemVerbatimToTheCreationCommand() {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         VacancyImportSession session = sessionAtWaitingForConfirmation();
         ExtractedVacancyData data = new ExtractedVacancyData(
@@ -145,23 +147,22 @@ class VacancyImportReviewServiceTest {
                 List.of("Java", "Kafka"),
                 "120-175 PLN netto/h +VAT");
         VacancyImportDraft draft = draft(session.getId(), data);
-        Company company = company("Example Company");
-        Vacancy inserted = vacancy(company);
+        Vacancy inserted = vacancy(company("Example Company"));
         when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
-        when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(inserted, true));
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenReturn(new VacancyCreationResult(inserted, true));
         when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), inserted.getId(), NOW)).thenReturn(true);
         when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
 
         service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
 
-        ArgumentCaptor<Vacancy> candidateCaptor = ArgumentCaptor.forClass(Vacancy.class);
-        verify(vacancyCreationService).createIfAbsent(candidateCaptor.capture());
-        Vacancy candidate = candidateCaptor.getValue();
-        assertThat(candidate.getLocation()).isEqualTo("Warszawa/ Centrum");
-        assertThat(candidate.getRemoteMode()).isEqualTo(RemotePolicy.HYBRID);
-        assertThat(candidate.getSalaryText()).isEqualTo("120-175 PLN netto/h +VAT");
+        ArgumentCaptor<VacancyCreationCommand> commandCaptor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
+        verify(vacancyCreationService).createIfAbsent(commandCaptor.capture());
+        VacancyCreationCommand command = commandCaptor.getValue();
+        assertThat(command.location()).isEqualTo("Warszawa/ Centrum");
+        assertThat(command.remoteMode()).isEqualTo(RemotePolicy.HYBRID);
+        assertThat(command.salaryText()).isEqualTo("120-175 PLN netto/h +VAT");
     }
 
     @Test
@@ -169,12 +170,11 @@ class VacancyImportReviewServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         VacancyImportSession session = sessionAtWaitingForConfirmation();
         VacancyImportDraft draft = draft(session.getId(), validExtractedData());
-        Company company = company("Example Company");
-        Vacancy existing = vacancy(company);
+        Vacancy existing = vacancy(company("Example Company"));
         when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
-        when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(existing, false));
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenReturn(new VacancyCreationResult(existing, false));
         when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), existing.getId(), NOW)).thenReturn(true);
         when(vacancyJobOfferMapper.toJobOffer(existing)).thenReturn(jobOffer());
 
@@ -274,8 +274,8 @@ class VacancyImportReviewServiceTest {
                 .thenReturn(Optional.of(session))
                 .thenReturn(Optional.of(winnerSession(session.getId(), winningVacancy.getId())));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
-        when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(inserted, true));
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenReturn(new VacancyCreationResult(inserted, true));
         when(sessionRepository.completeIfWaitingForConfirmation(eq(session.getId()), eq(inserted.getId()), any())).thenReturn(false);
         when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
         when(vacancyRepository.findByIdWithCompany(winningVacancy.getId())).thenReturn(Optional.of(winningVacancy));
@@ -353,7 +353,6 @@ class VacancyImportReviewServiceTest {
     void retry_lostRaceAgainstConcurrentSave_reportsTheWinningSavedResult() {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         VacancyImportSession session = sessionAtWaitingForConfirmation();
-        UUID winningVacancyId = UUID.randomUUID();
         Vacancy winningVacancy = vacancy(company("Example Company"));
         when(sessionRepository.findSessionById(session.getId()))
                 .thenReturn(Optional.of(session))

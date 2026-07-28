@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.companies.entity.Company;
+import com.darya.jobassistant.companies.mapper.CompanyMapper;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
+import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.config.JpaAuditingConfig;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -60,7 +63,7 @@ class VacancyRepositoryTest {
 
     @Test
     void saveIfAbsent_newUrl_insertsAndReturnsInsertedWithDurableUuid() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String url = uniqueUrl();
 
         VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(vacancy(company, url));
@@ -74,7 +77,7 @@ class VacancyRepositoryTest {
 
     @Test
     void saveIfAbsent_sameUrlCalledTwice_secondCallReportsAlreadyExistsAndOnlyOneRowExists() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String url = uniqueUrl();
 
         VacancyPersistenceResult first = vacancyRepository.saveIfAbsent(vacancy(company, url));
@@ -89,7 +92,7 @@ class VacancyRepositoryTest {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void saveIfAbsent_concurrentCallsWithSameUrl_exactlyOneInsertedAndOneAlreadyExists() throws Exception {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String url = uniqueUrl();
         CyclicBarrier barrier = new CyclicBarrier(2);
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -120,7 +123,7 @@ class VacancyRepositoryTest {
 
     @Test
     void saveIfAbsent_locationRemoteModeAndSalaryText_arePersistedAndReturnedVerbatim() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String url = uniqueUrl();
         Vacancy candidate = Vacancy.builder()
                 .company(company)
@@ -143,7 +146,7 @@ class VacancyRepositoryTest {
 
     @Test
     void saveIfAbsent_persistsCanonicalUrlAlongsideOriginalUrlUnchanged() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String rawUrl = "HTTPS://EXAMPLE.COM:443/jobs/" + UUID.randomUUID() + "/?utm_source=linkedin#top";
 
         VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, rawUrl));
@@ -155,7 +158,7 @@ class VacancyRepositoryTest {
 
     @Test
     void findByCanonicalUrl_findsInsertedVacancy() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String rawUrl = uniqueUrl();
         VacancyPersistenceResult inserted = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, rawUrl));
 
@@ -167,7 +170,7 @@ class VacancyRepositoryTest {
 
     @Test
     void findByCanonicalUrl_legacyRowWithNullCanonicalUrl_isNeverMatched() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String rawUrl = uniqueUrl();
         Vacancy legacyRow = vacancy(company, rawUrl);
         legacyRow.setCanonicalUrl(null);
@@ -180,7 +183,7 @@ class VacancyRepositoryTest {
 
     @Test
     void multipleLegacyNullCanonicalUrls_areAllowed() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
 
         Vacancy first = vacancy(company, uniqueUrl());
         first.setCanonicalUrl(null);
@@ -193,7 +196,7 @@ class VacancyRepositoryTest {
 
     @Test
     void saveIfAbsent_twoDistinctCanonicalUrls_bothInserted() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
 
         VacancyPersistenceResult first = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, uniqueUrl()));
         VacancyPersistenceResult second = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, uniqueUrl()));
@@ -213,7 +216,7 @@ class VacancyRepositoryTest {
      */
     @Test
     void saveIfAbsent_duplicateCanonicalUrlWithDifferentRawUrl_violatesPartialUniqueIndex() {
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String firstUrl = "https://example.com/jobs/" + suffix;
         String secondUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
@@ -227,32 +230,40 @@ class VacancyRepositoryTest {
 
     @Test
     void vacancyCreationService_urlVariantsDifferingByCosmeticFormatting_resolveToOneVacancy() {
-        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        VacancyCreationService vacancyCreationService =
+                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String canonicalForm = "https://example.com/jobs/" + suffix;
         // Tracking parameter, uppercase scheme/host, default port, fragment, non-root trailing slash.
         String messyVariant = "HTTPS://EXAMPLE.COM:443/jobs/" + suffix + "/?utm_source=linkedin#details";
 
-        VacancyCreationResult first = vacancyCreationService.createIfAbsent(vacancy(company, canonicalForm));
-        VacancyCreationResult second = vacancyCreationService.createIfAbsent(vacancy(company, messyVariant));
+        VacancyCreationResult first = vacancyCreationService.createIfAbsent(command(company.getName(), canonicalForm));
+        VacancyCreationResult second = vacancyCreationService.createIfAbsent(command(company.getName(), messyVariant));
 
         assertThat(first.newlyCreated()).isTrue();
         assertThat(second.newlyCreated()).isFalse();
         assertThat(second.vacancy().getId()).isEqualTo(first.vacancy().getId());
-        assertThat(vacancyRepository.findAll()).hasSize(1);
+        // Scoped to this test's own canonical value, not the whole table: VacancyCreationService
+        // commits each creation attempt in its own isolated transaction (by design - see its
+        // javadoc), so @DataJpaTest's per-method rollback does not undo rows earlier test methods
+        // in this class already committed.
+        assertThat(vacancyRepository.findAll().stream()
+                .filter(v -> canonicalize(canonicalForm).value().equals(v.getCanonicalUrl()))
+                .count()).isEqualTo(1);
     }
 
     @Test
     void vacancyCreationService_urlsDifferingByMeaningfulQueryParameter_remainDistinct() {
-        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        VacancyCreationService vacancyCreationService =
+                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String english = "https://example.com/jobs/" + suffix + "?language=en";
         String polish = "https://example.com/jobs/" + suffix + "?language=pl";
 
-        VacancyCreationResult first = vacancyCreationService.createIfAbsent(vacancy(company, english));
-        VacancyCreationResult second = vacancyCreationService.createIfAbsent(vacancy(company, polish));
+        VacancyCreationResult first = vacancyCreationService.createIfAbsent(command(company.getName(), english));
+        VacancyCreationResult second = vacancyCreationService.createIfAbsent(command(company.getName(), polish));
 
         assertThat(first.newlyCreated()).isTrue();
         assertThat(second.newlyCreated()).isTrue();
@@ -261,14 +272,15 @@ class VacancyRepositoryTest {
 
     @Test
     void vacancyCreationService_httpAndHttps_remainDistinct() {
-        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        VacancyCreationService vacancyCreationService =
+                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
 
         VacancyCreationResult httpResult =
-                vacancyCreationService.createIfAbsent(vacancy(company, "http://example.com/jobs/" + suffix));
+                vacancyCreationService.createIfAbsent(command(company.getName(), "http://example.com/jobs/" + suffix));
         VacancyCreationResult httpsResult =
-                vacancyCreationService.createIfAbsent(vacancy(company, "https://example.com/jobs/" + suffix));
+                vacancyCreationService.createIfAbsent(command(company.getName(), "https://example.com/jobs/" + suffix));
 
         assertThat(httpResult.newlyCreated()).isTrue();
         assertThat(httpsResult.newlyCreated()).isTrue();
@@ -288,8 +300,9 @@ class VacancyRepositoryTest {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void vacancyCreationService_concurrentCallsWithDifferentRawUrlsSameCanonical_exactlyOneRowCreated() throws Exception {
-        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        VacancyCreationService vacancyCreationService =
+                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String firstUrl = "https://example.com/jobs/" + suffix;
         String secondUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
@@ -299,11 +312,11 @@ class VacancyRepositoryTest {
             List<Future<VacancyCreationResult>> futures = new ArrayList<>();
             futures.add(executor.submit(() -> {
                 barrier.await();
-                return vacancyCreationService.createIfAbsent(vacancy(company, firstUrl));
+                return vacancyCreationService.createIfAbsent(command(company.getName(), firstUrl));
             }));
             futures.add(executor.submit(() -> {
                 barrier.await();
-                return vacancyCreationService.createIfAbsent(vacancy(company, secondUrl));
+                return vacancyCreationService.createIfAbsent(command(company.getName(), secondUrl));
             }));
 
             // Both futures must complete without throwing at all - get() would rethrow (wrapped
@@ -343,16 +356,17 @@ class VacancyRepositoryTest {
      */
     @Test
     void vacancyCreationService_canonicalConflict_doesNotPoisonCallersOuterTransaction() {
-        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        VacancyCreationService vacancyCreationService =
+                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
         TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
         outerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
-        vacancyCreationService.createIfAbsent(vacancy(company, "https://example.com/jobs/" + suffix));
+        vacancyCreationService.createIfAbsent(command(company.getName(), "https://example.com/jobs/" + suffix));
 
         String conflictingUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
         VacancyCreationResult resultAfterConflictInsideOuterTransaction = outerTransaction.execute(status -> {
-            VacancyCreationResult conflictResult = vacancyCreationService.createIfAbsent(vacancy(company, conflictingUrl));
+            VacancyCreationResult conflictResult = vacancyCreationService.createIfAbsent(command(company.getName(), conflictingUrl));
             // If the isolated-insert rollback had poisoned this outer transaction, this second,
             // unrelated write would fail here with a transaction-aborted error.
             companyRepository.save(Company.builder().name("Another Co - " + suffix).build());
@@ -364,22 +378,24 @@ class VacancyRepositoryTest {
     }
 
     /**
-     * A real database constraint violation unrelated to {@code uk_vacancy_canonical_url} (here,
-     * the {@code title} column's {@code NOT NULL} constraint) must still propagate as a {@link
-     * DataIntegrityViolationException} rather than being swallowed as a canonical duplicate.
+     * A real database constraint/data violation unrelated to {@code uk_vacancy_canonical_url}
+     * must still propagate as a {@link DataIntegrityViolationException} rather than being
+     * swallowed as a canonical duplicate. {@code company_id}/{@code title NOT NULL} can no longer
+     * be triggered through the corrected, valid-command API surface (that is the point of this
+     * correction: {@link VacancyCreationCommand} itself requires a non-blank company name and
+     * title, and company resolution/creation always succeeds inside the same transaction) - a
+     * {@code currency} value exceeding its {@code VARCHAR(10)} column width is used instead as a
+     * realistic, still-genuinely-unrelated database-level violation.
      */
     @Test
     void vacancyCreationService_unrelatedIntegrityViolation_isPropagatedNotSwallowed() {
-        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
-        Company company = companyRepository.save(Company.builder().name("Acme").build());
-        Vacancy candidateWithoutTitle = Vacancy.builder()
-                .company(company)
-                .title(null)
-                .url(uniqueUrl())
-                .source("remoteok")
-                .build();
+        VacancyCreationService vacancyCreationService =
+                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        VacancyCreationCommand oversizedCurrency = new VacancyCreationCommand(
+                "Acme-" + UUID.randomUUID(), "Backend Engineer", "Build backend services", uniqueUrl(),
+                null, null, null, null, "THIS-CURRENCY-CODE-IS-WAY-TOO-LONG", null, "remoteok", null);
 
-        assertThatThrownBy(() -> vacancyCreationService.createIfAbsent(candidateWithoutTitle))
+        assertThatThrownBy(() -> vacancyCreationService.createIfAbsent(oversizedCurrency))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -414,5 +430,16 @@ class VacancyRepositoryTest {
 
     private String uniqueUrl() {
         return "https://example.com/job-" + UUID.randomUUID();
+    }
+
+    /** A real (not mocked) {@link CompanyService} backed by the real, Testcontainers-connected {@link #companyRepository}. */
+    private CompanyService companyService() {
+        return new CompanyService(companyRepository, new CompanyMapper());
+    }
+
+    private VacancyCreationCommand command(String companyName, String url) {
+        return new VacancyCreationCommand(
+                companyName, "Backend Engineer", "Build backend services", url,
+                null, null, null, null, null, null, "remoteok", null);
     }
 }

@@ -1,8 +1,7 @@
 package com.darya.jobassistant.vacancies.service;
 
-import com.darya.jobassistant.companies.entity.Company;
-import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -12,17 +11,27 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+/**
+ * Deliberately carries no {@code @Transactional}: every persistence operation - company
+ * resolution/creation included - and its transactional correctness is now fully owned by {@link
+ * VacancyCreationService#createIfAbsent}, which manages its own isolated {@code REQUIRES_NEW}
+ * transaction internally (see that class's javadoc for why). This class only maps a {@link
+ * JobOffer} into a provider-neutral {@link VacancyCreationCommand} and applies {@link
+ * JobOfferMatchPolicy} - neither needs a surrounding transaction, and wrapping the whole {@link
+ * #ingest} batch loop in one ambient transaction (as this class did before) would hold a database
+ * connection open across many independent, already-self-contained creation attempts for no
+ * benefit - and would have been exactly the kind of outer transaction that previously caused a
+ * {@code vacancy_company_id_fkey} failure when company resolution lived here instead of inside
+ * {@link VacancyCreationService}.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@Transactional
 public class VacancyIngestionService {
 
     private final VacancyCreationService vacancyCreationService;
-    private final CompanyService companyService;
     private final JobOfferMatchPolicy jobOfferMatchPolicy;
 
     /**
@@ -31,8 +40,7 @@ public class VacancyIngestionService {
      * upsert-free behavior.
      */
     public Vacancy persist(JobOffer jobOffer) {
-        requireUrl(jobOffer);
-        return vacancyCreationService.createIfAbsent(buildVacancy(jobOffer)).vacancy();
+        return vacancyCreationService.createIfAbsent(buildCreationCommand(jobOffer)).vacancy();
     }
 
     /**
@@ -41,11 +49,11 @@ public class VacancyIngestionService {
      * see that class for how the application-level canonical lookup and the database's partial
      * unique index combine to guarantee that.
      *
-     * <p>Every fetched offer is checked against {@link JobOfferMatchPolicy} before company
-     * resolution or persistence; offers that don't match are skipped without creating a
-     * {@code Company} or {@code Vacancy} record. {@code fetchedCount} still reflects every offer
-     * passed in, so after filtering {@code fetchedCount == newlyPersisted + alreadyKnown} is no
-     * longer guaranteed - offers may have been filtered out or failed during per-offer processing.
+     * <p>Every fetched offer is checked against {@link JobOfferMatchPolicy} before persistence;
+     * offers that don't match are skipped without creating a {@code Company} or {@code Vacancy}
+     * record. {@code fetchedCount} still reflects every offer passed in, so after filtering
+     * {@code fetchedCount == newlyPersisted + alreadyKnown} is no longer guaranteed - offers may
+     * have been filtered out or failed during per-offer processing.
      */
     public VacancyIngestionResult ingest(List<JobOffer> jobOffers) {
         List<Vacancy> persisted = new ArrayList<>();
@@ -57,8 +65,7 @@ public class VacancyIngestionService {
                 continue;
             }
             try {
-                requireUrl(jobOffer);
-                VacancyCreationResult outcome = vacancyCreationService.createIfAbsent(buildVacancy(jobOffer));
+                VacancyCreationResult outcome = vacancyCreationService.createIfAbsent(buildCreationCommand(jobOffer));
                 if (outcome.newlyCreated()) {
                     persisted.add(outcome.vacancy());
                 } else {
@@ -72,20 +79,22 @@ public class VacancyIngestionService {
         return new VacancyIngestionResult(jobOffers.size(), persisted, alreadyKnown);
     }
 
-    private void requireUrl(JobOffer jobOffer) {
+    private VacancyCreationCommand buildCreationCommand(JobOffer jobOffer) {
         if (!StringUtils.hasText(jobOffer.url())) {
             throw new IllegalArgumentException("Job offer has no URL, cannot persist: " + jobOffer.title());
         }
-    }
-
-    private Vacancy buildVacancy(JobOffer jobOffer) {
-        Company company = companyService.findOrCreateByName(jobOffer.company());
-        return Vacancy.builder()
-                .company(company)
-                .title(jobOffer.title())
-                .description(jobOffer.description())
-                .url(jobOffer.url())
-                .source(jobOffer.source())
-                .build();
+        return new VacancyCreationCommand(
+                jobOffer.company(),
+                jobOffer.title(),
+                jobOffer.description(),
+                jobOffer.url(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                jobOffer.source(),
+                null);
     }
 }

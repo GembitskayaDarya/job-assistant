@@ -19,15 +19,33 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
 
     List<Vacancy> findByTitleContainingIgnoreCase(String title);
 
-    Optional<Vacancy> findByUrl(String url);
+    /**
+     * Join-fetches {@code company} - {@code VacancyCreationService} may return whatever this
+     * finds directly to a caller after its own isolated creation transaction has already closed,
+     * so a plain lazy {@code company} reference would risk a {@code LazyInitializationException}
+     * once accessed outside that transaction.
+     */
+    @Query("select v from Vacancy v join fetch v.company where v.url = :url")
+    Optional<Vacancy> findByUrl(@Param("url") String url);
 
     /**
      * Legacy rows (created before Sprint 8 Step 4B1) have {@code canonical_url = null} and are
      * never matched here - only {@link #findByUrl} finds those. See {@code VacancyCreationService}
-     * for the combined lookup production code should use.
+     * for the combined lookup production code should use. Join-fetches {@code company} for the
+     * same reason as {@link #findByUrl}.
+     *
+     * <p>Delegates to a plain {@code String}-parameterized query rather than referencing {@code
+     * canonicalUrl.value()} via a SpEL expression directly in {@code @Query} - that form was
+     * tried first and, against a real PostgreSQL database, did not reliably filter by the given
+     * value (observed returning every row with a non-null {@code canonical_url} instead of just
+     * the matching one). A plain bound parameter has none of that risk.
      */
-    @Query("select v from Vacancy v where v.canonicalUrl = :#{#canonicalUrl.value()}")
-    Optional<Vacancy> findByCanonicalUrl(@Param("canonicalUrl") CanonicalVacancyUrl canonicalUrl);
+    default Optional<Vacancy> findByCanonicalUrl(CanonicalVacancyUrl canonicalUrl) {
+        return findByCanonicalUrlValue(canonicalUrl.value());
+    }
+
+    @Query("select v from Vacancy v join fetch v.company where v.canonicalUrl = :canonicalUrlValue")
+    Optional<Vacancy> findByCanonicalUrlValue(@Param("canonicalUrlValue") String canonicalUrlValue);
 
     @Query("select v from Vacancy v join fetch v.company where v.id = :id")
     Optional<Vacancy> findByIdWithCompany(UUID id);
