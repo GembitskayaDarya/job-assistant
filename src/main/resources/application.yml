@@ -91,6 +91,12 @@ firecrawl:
   connect-timeout: ${FIRECRAWL_CONNECT_TIMEOUT:5s}
   read-timeout: ${FIRECRAWL_READ_TIMEOUT:30s}
 
+job-discovery:
+  query-planning:
+    max-queries: ${JOB_DISCOVERY_MAX_QUERIES:5}
+    results-per-query: ${JOB_DISCOVERY_RESULTS_PER_QUERY:10}
+    max-skills-per-query: ${JOB_DISCOVERY_MAX_SKILLS_PER_QUERY:3}
+
 vacancy-import:
   session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}
   cleanup:
