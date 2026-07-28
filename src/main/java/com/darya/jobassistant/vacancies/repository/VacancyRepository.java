@@ -2,6 +2,8 @@ package com.darya.jobassistant.vacancies.repository;
 
 import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.maintenance.canonicalurl.LegacyVacancyUrlRow;
+import com.darya.jobassistant.vacancies.maintenance.canonicalurl.PopulatedCanonicalUrlRow;
 import com.darya.jobassistant.vacancies.url.CanonicalVacancyUrl;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -9,6 +11,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -123,4 +126,34 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
             @Param("salaryText") String salaryText,
             @Param("source") String source,
             @Param("postedAt") LocalDate postedAt);
+
+    /**
+     * Backs {@code VacancyCanonicalUrlAuditService}'s legacy-row scan: selects only {@code id} and
+     * {@code url} - never {@code company}, description, salary, analysis, or application/
+     * notification data - for rows with no canonical identity yet, ordered by {@code id} so paging
+     * through {@code pageable} is deterministic regardless of concurrent writes elsewhere (the
+     * audit itself runs in one {@code REPEATABLE_READ} transaction, so within a single run this
+     * ordering is also stable against the audit's own snapshot).
+     */
+    @Query("""
+            select new com.darya.jobassistant.vacancies.maintenance.canonicalurl.LegacyVacancyUrlRow(v.id, v.url)
+            from Vacancy v
+            where v.canonicalUrl is null
+            order by v.id asc
+            """)
+    List<LegacyVacancyUrlRow> findLegacyCanonicalUrlRows(Pageable pageable);
+
+    /**
+     * Backs {@code VacancyCanonicalUrlAuditService}'s "currently used canonical identities" lookup:
+     * every already-populated {@code canonical_url} alongside the {@code Vacancy} it belongs to,
+     * without loading any other column. Not paginated - the audit needs the complete set resident
+     * in memory for the whole run regardless (see that class's javadoc for the memory trade-off),
+     * so paging this particular query would only add round-trips, not reduce peak memory.
+     */
+    @Query("""
+            select new com.darya.jobassistant.vacancies.maintenance.canonicalurl.PopulatedCanonicalUrlRow(v.canonicalUrl, v.id)
+            from Vacancy v
+            where v.canonicalUrl is not null
+            """)
+    List<PopulatedCanonicalUrlRow> findPopulatedCanonicalUrlRows();
 }

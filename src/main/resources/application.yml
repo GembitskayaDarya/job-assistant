@@ -108,6 +108,11 @@ vacancy-import:
 job-analysis:
   claim-stale-after: ${JOB_ANALYSIS_CLAIM_STALE_AFTER:2m}
 
+vacancy-canonical-url-audit:
+  enabled: ${VACANCY_CANONICAL_URL_AUDIT_ENABLED:false}
+  batch-size: ${VACANCY_CANONICAL_URL_AUDIT_BATCH_SIZE:500}
+  max-reported-issues: ${VACANCY_CANONICAL_URL_AUDIT_MAX_REPORTED_ISSUES:100}
+
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}
@@ -134,5 +139,6 @@ logging:
     com.darya.jobassistant: ${LOG_LEVEL_APP:INFO}
     com.darya.jobassistant.scheduler: ${LOG_LEVEL_SCHEDULER:INFO}
     com.darya.jobassistant.monitoring: ${LOG_LEVEL_MONITORING:INFO}
+    com.darya.jobassistant.vacancies.maintenance: ${LOG_LEVEL_VACANCY_MAINTENANCE:INFO}
     org.hibernate.SQL: ${LOG_LEVEL_SQL:WARN}
     org.flywaydb: INFO
