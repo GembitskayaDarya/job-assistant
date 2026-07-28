@@ -275,11 +275,16 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
     @Test
     void candidateMapping_containsAllFieldsRequiredByJobNotificationFactory() {
         Company company = companyRepository.save(Company.builder().name("Acme Corp").build());
+        String vacancyUrl = "https://example.com/job-" + UUID.randomUUID();
         Vacancy vacancy = vacancyRepository.save(Vacancy.builder()
                 .company(company)
                 .title("Senior Backend Engineer")
                 .description("Build backend services")
-                .url("https://example.com/job-" + UUID.randomUUID())
+                .url(vacancyUrl)
+                // canonical_url is NOT NULL since Sprint 8 Step 4B2D (V13) - this test isn't about
+                // canonicalization, so the raw url is reused verbatim rather than pulling in
+                // VacancyUrlCanonicalizer; it only needs to be non-null and unique here.
+                .canonicalUrl(vacancyUrl)
                 .salaryMin(BigDecimal.valueOf(100_000))
                 .salaryMax(BigDecimal.valueOf(140_000))
                 .currency("USD")
@@ -339,10 +344,15 @@ class JobNotificationCandidateQueryAdapterIntegrationTest {
 
     private Vacancy newVacancy() {
         Company company = companyRepository.save(Company.builder().name("Acme " + UUID.randomUUID()).build());
+        String url = "https://example.com/job-" + UUID.randomUUID();
         return vacancyRepository.save(Vacancy.builder()
                 .company(company)
                 .title("Backend Engineer")
-                .url("https://example.com/job-" + UUID.randomUUID())
+                .url(url)
+                // canonical_url is NOT NULL since Sprint 8 Step 4B2D (V13) - this test isn't about
+                // canonicalization, so the raw url is reused verbatim rather than pulling in
+                // VacancyUrlCanonicalizer; it only needs to be non-null and unique here.
+                .canonicalUrl(url)
                 .source("remoteok")
                 .build());
     }

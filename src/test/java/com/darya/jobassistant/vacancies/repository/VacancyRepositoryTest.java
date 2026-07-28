@@ -2,6 +2,7 @@ package com.darya.jobassistant.vacancies.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.mapper.CompanyMapper;
@@ -131,6 +132,7 @@ class VacancyRepositoryTest {
                 .title("Backend Engineer")
                 .description("Build backend services")
                 .url(url)
+                .canonicalUrl(canonicalize(url).value())
                 .location("Warszawa/ Centrum")
                 .remoteMode(RemotePolicy.HYBRID)
                 .salaryText("120-175 PLN netto/h +VAT")
@@ -150,7 +152,7 @@ class VacancyRepositoryTest {
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String rawUrl = "HTTPS://EXAMPLE.COM:443/jobs/" + UUID.randomUUID() + "/?utm_source=linkedin#top";
 
-        VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, rawUrl));
+        VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(vacancy(company, rawUrl));
 
         assertThat(result.vacancy().getUrl()).isEqualTo(rawUrl);
         assertThat(result.vacancy().getCanonicalUrl()).isEqualTo(canonicalize(rawUrl).value());
@@ -161,7 +163,7 @@ class VacancyRepositoryTest {
     void findByCanonicalUrl_findsInsertedVacancy() {
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String rawUrl = uniqueUrl();
-        VacancyPersistenceResult inserted = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, rawUrl));
+        VacancyPersistenceResult inserted = vacancyRepository.saveIfAbsent(vacancy(company, rawUrl));
 
         Optional<Vacancy> found = vacancyRepository.findByCanonicalUrl(canonicalize(rawUrl));
 
@@ -169,64 +171,87 @@ class VacancyRepositoryTest {
         assertThat(found.get().getId()).isEqualTo(inserted.vacancy().getId());
     }
 
+    /**
+     * Since Sprint 8 Step 4B2D (migration V13), {@code canonical_url} is {@code NOT NULL} at the
+     * database level - a "legacy null canonical_url row" (the pre-V13 scenario {@code
+     * VacancyCanonicalUrlAuditRepositoryTest}/{@code VacancyCanonicalUrlBackfillRepositoryTest}
+     * still cover, pinned to the V12 schema those tools are meant for) can no longer exist in any
+     * database that has run this migration. This test - and {@code
+     * saveIfAbsent_duplicateCanonicalUrlWithDifferentRawUrl_violatesUniqueIndex} below - replace
+     * the old "legacy null rows are tolerated" tests that used to live here.
+     */
     @Test
-    void findByCanonicalUrl_legacyRowWithNullCanonicalUrl_isNeverMatched() {
+    void saveIfAbsent_nullCanonicalUrl_violatesNotNullConstraint() {
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
-        String rawUrl = uniqueUrl();
-        Vacancy legacyRow = vacancy(company, rawUrl);
-        legacyRow.setCanonicalUrl(null);
-        vacancyRepository.save(legacyRow);
+        Vacancy candidate = Vacancy.builder()
+                .company(company)
+                .title("Backend Engineer")
+                .description("Build backend services")
+                .url(uniqueUrl())
+                .canonicalUrl(null)
+                .source("remoteok")
+                .build();
 
-        Optional<Vacancy> found = vacancyRepository.findByCanonicalUrl(canonicalize(rawUrl));
-
-        assertThat(found).isEmpty();
-    }
-
-    @Test
-    void multipleLegacyNullCanonicalUrls_areAllowed() {
-        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
-
-        Vacancy first = vacancy(company, uniqueUrl());
-        first.setCanonicalUrl(null);
-        Vacancy second = vacancy(company, uniqueUrl());
-        second.setCanonicalUrl(null);
-
-        assertThat(vacancyRepository.save(first).getId()).isNotNull();
-        assertThat(vacancyRepository.save(second).getId()).isNotNull();
+        assertThatThrownBy(() -> vacancyRepository.saveIfAbsent(candidate))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void saveIfAbsent_twoDistinctCanonicalUrls_bothInserted() {
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
 
-        VacancyPersistenceResult first = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, uniqueUrl()));
-        VacancyPersistenceResult second = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, uniqueUrl()));
+        VacancyPersistenceResult first = vacancyRepository.saveIfAbsent(vacancy(company, uniqueUrl()));
+        VacancyPersistenceResult second = vacancyRepository.saveIfAbsent(vacancy(company, uniqueUrl()));
 
         assertThat(first.isInserted()).isTrue();
         assertThat(second.isInserted()).isTrue();
     }
 
     /**
-     * Proves the {@code uk_vacancy_canonical_url} partial unique index itself, independent of any
+     * Proves the {@code uk_vacancy_canonical_url} unique index itself, independent of any
      * application-level pre-check: two genuinely different {@code url} values (so {@code
      * uk_vacancy_url}'s {@code ON CONFLICT} never engages) that share a canonical identity must
      * still be rejected by the database when inserted directly through {@link
      * VacancyRepository#saveIfAbsent}, which does not catch this violation itself (see its
      * javadoc) - {@link VacancyCreationService} is what a real caller uses to get the friendlier,
-     * translated outcome (covered separately below).
+     * translated outcome (covered separately below). Since Sprint 8 Step 4B2D (V13) this index is
+     * a full (non-partial) unique index rather than the original V12 partial one, but the
+     * assertion here - a duplicate is rejected - is unaffected either way.
      */
     @Test
-    void saveIfAbsent_duplicateCanonicalUrlWithDifferentRawUrl_violatesPartialUniqueIndex() {
+    void saveIfAbsent_duplicateCanonicalUrlWithDifferentRawUrl_violatesUniqueIndex() {
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String firstUrl = "https://example.com/jobs/" + suffix;
         String secondUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
         assertThat(canonicalize(firstUrl)).isEqualTo(canonicalize(secondUrl));
 
-        vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, firstUrl));
+        vacancyRepository.saveIfAbsent(vacancy(company, firstUrl));
 
-        assertThatThrownBy(() -> vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, secondUrl)))
+        assertThatThrownBy(() -> vacancyRepository.saveIfAbsent(vacancy(company, secondUrl)))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /**
+     * {@code VacancyCreationService.isCanonicalUrlConflict} classifies a canonical-URL race by
+     * this exact index name (see its javadoc) - this test is the real-Postgres proof that the
+     * name PostgreSQL/Hibernate actually reports for a violation matches what that classification
+     * depends on, independent of any application-level translation.
+     */
+    @Test
+    void saveIfAbsent_duplicateCanonicalUrl_exposesTheExpectedIndexNameInTheRootCause() {
+        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
+        String suffix = UUID.randomUUID().toString();
+        String firstUrl = "https://example.com/jobs/" + suffix;
+        String secondUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
+
+        vacancyRepository.saveIfAbsent(vacancy(company, firstUrl));
+
+        DataIntegrityViolationException exception = catchThrowableOfType(
+                DataIntegrityViolationException.class,
+                () -> vacancyRepository.saveIfAbsent(vacancy(company, secondUrl)));
+
+        assertThat(exception.getMostSpecificCause().getMessage()).contains("uk_vacancy_canonical_url");
     }
 
     @Test
@@ -402,25 +427,24 @@ class VacancyRepositoryTest {
         return vacancyRepository.findAll().stream().filter(v -> url.equals(v.getUrl())).count();
     }
 
+    /**
+     * {@link VacancyRepository#saveIfAbsent} persists {@code canonicalUrl} exactly as given
+     * rather than computing it (that is {@code VacancyCreationService}'s job - see its javadoc),
+     * so this always derives one from {@code url} itself; since Sprint 8 Step 4B2D (V13),
+     * {@code canonical_url} is {@code NOT NULL} at the database level, so no test helper can build
+     * a persistable {@code Vacancy} without one. A test that specifically needs to prove {@code
+     * NOT NULL} rejection builds its own candidate with an explicit {@code canonicalUrl(null)}
+     * instead of using this helper.
+     */
     private Vacancy vacancy(Company company, String url) {
         return Vacancy.builder()
                 .company(company)
                 .title("Backend Engineer")
                 .description("Build backend services")
                 .url(url)
+                .canonicalUrl(canonicalize(url).value())
                 .source("remoteok")
                 .build();
-    }
-
-    /**
-     * {@link VacancyRepository#saveIfAbsent} persists {@code canonicalUrl} exactly as given
-     * rather than computing it (that is {@code VacancyCreationService}'s job - see its javadoc),
-     * so tests exercising {@code saveIfAbsent} directly must set it themselves.
-     */
-    private Vacancy vacancyWithCanonicalUrl(Company company, String url) {
-        Vacancy candidate = vacancy(company, url);
-        candidate.setCanonicalUrl(canonicalize(url).value());
-        return candidate;
     }
 
     private String uniqueUrl() {

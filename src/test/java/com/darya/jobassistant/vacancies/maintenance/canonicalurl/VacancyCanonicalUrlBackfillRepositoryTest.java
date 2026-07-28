@@ -25,6 +25,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,12 +45,20 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * own {@code REQUIRES_NEW} transaction, which would otherwise suspend - and be unable to see -
  * setup data this test saved into a still-uncommitted ambient transaction, exactly the class of bug
  * Sprint 8 Step 4B1 fixed in {@code VacancyCreationService} itself.
+ *
+ * <p>Pinned to Flyway target {@code 12} ({@code spring.flyway.target=12}), not {@code latest}: since
+ * Sprint 8 Step 4B2D (migration V13), {@code canonical_url} is {@code NOT NULL} at the database
+ * level, so a "legacy row with {@code canonical_url IS NULL}" - the entire premise of this backfill
+ * tool and every test in this class - can no longer exist in a database migrated past V12. This
+ * class specifically exercises the tool an operator runs <em>against a V12 database that has not
+ * yet been backfilled</em>, so its own test database must stay at V12 to match that real scenario.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Import(JpaAuditingConfig.class)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
+@TestPropertySource(properties = "spring.flyway.target=12")
 class VacancyCanonicalUrlBackfillRepositoryTest {
 
     @Container

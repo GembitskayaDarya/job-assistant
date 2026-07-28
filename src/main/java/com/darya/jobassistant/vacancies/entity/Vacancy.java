@@ -41,12 +41,15 @@ public class Vacancy extends BaseEntity {
 
     /**
      * The {@code VacancyUrlCanonicalizer}-normalized form of {@link #url}, used for
-     * deduplication (see {@code uk_vacancy_canonical_url}). Null for every row created before
-     * Sprint 8 Step 4B1 and for any row a canonicalizable URL could not be derived for - a null
-     * value here is never backfilled as a side effect of a read (see Step 4B2 for a real
-     * backfill).
+     * deduplication (see {@code uk_vacancy_canonical_url}). Mandatory and globally unique at the
+     * database level since Sprint 8 Step 4B2D (migration V13) - every row, including every row
+     * that predates Sprint 8 Step 4B1, was backfilled (Step 4B2B) before V13 could be applied.
+     * {@code VacancyCreationService} always canonicalizes {@link #url} before building a new
+     * {@code Vacancy}, so no application code path constructs one with a null canonical URL
+     * either; this {@code nullable = false} only makes that existing invariant visible to
+     * Hibernate's own schema validation.
      */
-    @Column(name = "canonical_url")
+    @Column(name = "canonical_url", nullable = false)
     private String canonicalUrl;
 
     @Column(length = 300)

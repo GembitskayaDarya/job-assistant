@@ -19,6 +19,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -29,11 +30,20 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * correctly against this project's actual schema (in particular {@code
  * uk_vacancy_canonical_url}'s partial-unique-index semantics for legacy {@code NULL} rows), and
  * that running the audit truly never writes anything.
+ *
+ * <p>Pinned to Flyway target {@code 12} ({@code spring.flyway.target=12}), not {@code latest}:
+ * since Sprint 8 Step 4B2D (migration V13), {@code canonical_url} is {@code NOT NULL} at the
+ * database level, so a "legacy row with {@code canonical_url IS NULL}" - the entire premise of
+ * this audit tool and every test in this class - can no longer exist in a database migrated past
+ * V12. This class specifically exercises the tool an operator runs <em>against a V12 database
+ * that has not yet been backfilled</em>, so its own test database must stay at V12 to match that
+ * real scenario, regardless of what later migrations this project's "latest" schema has gained.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Import(JpaAuditingConfig.class)
+@TestPropertySource(properties = "spring.flyway.target=12")
 class VacancyCanonicalUrlAuditRepositoryTest {
 
     @Container

@@ -242,10 +242,15 @@ class NotificationDeliveryRepositoryTest {
 
     private Vacancy newVacancy() {
         Company company = companyRepository.save(Company.builder().name("Acme " + UUID.randomUUID()).build());
+        String url = "https://example.com/job-" + UUID.randomUUID();
         return vacancyRepository.save(Vacancy.builder()
                 .company(company)
                 .title("Backend Engineer")
-                .url("https://example.com/job-" + UUID.randomUUID())
+                .url(url)
+                // canonical_url is NOT NULL since Sprint 8 Step 4B2D (V13) - this test isn't about
+                // canonicalization, so the raw url is reused verbatim rather than pulling in
+                // VacancyUrlCanonicalizer; it only needs to be non-null and unique here.
+                .canonicalUrl(url)
                 .source("remoteok")
                 .build());
     }

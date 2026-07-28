@@ -62,7 +62,11 @@ class JobAnalysisMigrationTest {
                     """.formatted(analysisId, vacancyId));
         }
 
-        migrateTo("latest");
+        // Only V10/V11 (job_analysis) matter to this test; migrating no further than V11 also
+        // avoids V12/V13 (vacancy.canonical_url) entirely - relevant since Sprint 8 Step 4B2D's
+        // V13 now refuses to migrate a database with a canonical_url IS NULL row, which this
+        // test's raw-JDBC vacancy insert (deliberately not V12/V13-aware) would otherwise be.
+        migrateTo("11");
 
         try (Connection connection = jdbcConnection();
                 Statement statement = connection.createStatement();
@@ -110,7 +114,11 @@ class JobAnalysisMigrationTest {
                     """.formatted(analysisId, vacancyId));
         }
 
-        migrateTo("latest");
+        // Only V10/V11 (job_analysis) matter to this test; migrating no further than V11 also
+        // avoids V12/V13 (vacancy.canonical_url) entirely - relevant since Sprint 8 Step 4B2D's
+        // V13 now refuses to migrate a database with a canonical_url IS NULL row, which this
+        // test's raw-JDBC vacancy insert (deliberately not V12/V13-aware) would otherwise be.
+        migrateTo("11");
 
         try (Connection connection = jdbcConnection();
                 Statement statement = connection.createStatement();
@@ -122,7 +130,11 @@ class JobAnalysisMigrationTest {
 
     @Test
     void v11Constraints_rejectInvalidOriginAndNonPositiveVersions() throws Exception {
-        migrateTo("latest");
+        // Only V10/V11 (job_analysis) matter to this test; migrating no further than V11 also
+        // avoids V12/V13 (vacancy.canonical_url) entirely - relevant since Sprint 8 Step 4B2D's
+        // V13 now refuses to migrate a database with a canonical_url IS NULL row, which this
+        // test's raw-JDBC vacancy insert (deliberately not V12/V13-aware) would otherwise be.
+        migrateTo("11");
 
         UUID vacancyId = UUID.randomUUID();
         UUID companyId = UUID.randomUUID();
