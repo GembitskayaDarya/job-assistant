@@ -31,6 +31,7 @@ import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import com.darya.jobassistant.vacancies.service.VacancyCreationService;
 import com.darya.jobassistant.vacancies.service.VacancyQueryService;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
@@ -138,14 +139,15 @@ class VacancyImportWorkflowEndToEndTest {
         CompanyService companyService = new CompanyService(companyRepository, new CompanyMapper());
         VacancyJobOfferMapper vacancyJobOfferMapper = new VacancyJobOfferMapper();
         VacancyQueryService vacancyQueryService = new VacancyQueryService(vacancyRepository);
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
         JobAnalysisService jobAnalysisService = new JobAnalysisService(jobAnalysisAiPort);
         AnalyzeVacancyService analyzeVacancyService = new AnalyzeVacancyService(
                 vacancyQueryService, vacancyJobOfferMapper, candidateProfileProvider, jobAnalysisService,
                 jobAnalysisRepository, CLOCK, new JobAnalysisProperties(Duration.ofMinutes(2)), transactionManager);
 
         reviewService = new VacancyImportReviewService(
-                sessionRepository, draftRepository, vacancyRepository, companyService, vacancyJobOfferMapper,
-                analyzeVacancyService, CLOCK, transactionManager);
+                sessionRepository, draftRepository, vacancyRepository, vacancyCreationService, companyService,
+                vacancyJobOfferMapper, analyzeVacancyService, CLOCK, transactionManager);
 
         stubSessionRepository();
         stubDraftRepository();
@@ -317,6 +319,7 @@ class VacancyImportWorkflowEndToEndTest {
             company.setId(UUID.randomUUID());
             return company;
         });
+        lenient().when(vacancyRepository.findByCanonicalUrl(any())).thenReturn(Optional.empty());
         lenient().when(vacancyRepository.saveIfAbsent(any())).thenAnswer(inv -> {
             Vacancy candidate = inv.getArgument(0);
             candidate.setId(UUID.randomUUID());

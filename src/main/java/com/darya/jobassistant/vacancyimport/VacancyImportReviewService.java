@@ -5,10 +5,11 @@ import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
-import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import com.darya.jobassistant.vacancies.service.VacancyCreationService;
 import com.darya.jobassistant.vacancyimport.dto.AnalyzeImportedVacancyResult;
 import com.darya.jobassistant.vacancyimport.dto.ReviewVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.model.ImportState;
@@ -53,6 +54,7 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
     private final VacancyImportSessionRepository sessionRepository;
     private final VacancyImportDraftRepository draftRepository;
     private final VacancyRepository vacancyRepository;
+    private final VacancyCreationService vacancyCreationService;
     private final CompanyService companyService;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
     private final AnalyzeVacancyUseCase analyzeVacancyUseCase;
@@ -63,6 +65,7 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
             VacancyImportSessionRepository sessionRepository,
             VacancyImportDraftRepository draftRepository,
             VacancyRepository vacancyRepository,
+            VacancyCreationService vacancyCreationService,
             CompanyService companyService,
             VacancyJobOfferMapper vacancyJobOfferMapper,
             AnalyzeVacancyUseCase analyzeVacancyUseCase,
@@ -71,6 +74,7 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
         this.sessionRepository = sessionRepository;
         this.draftRepository = draftRepository;
         this.vacancyRepository = vacancyRepository;
+        this.vacancyCreationService = vacancyCreationService;
         this.companyService = companyService;
         this.vacancyJobOfferMapper = vacancyJobOfferMapper;
         this.analyzeVacancyUseCase = analyzeVacancyUseCase;
@@ -278,21 +282,16 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
     }
 
     /**
-     * Reuses {@link VacancyRepository#saveIfAbsent} - the same URL-based, database-enforced
-     * dedup primitive automatic ingestion already relies on - rather than a find-then-insert check
-     * from application code, so a manual import can never race its way into a duplicate Vacancy.
-     * An existing vacancy for the same URL is reused exactly as-is (no field is overwritten):
-     * matches {@code VacancyIngestionService}'s established no-merge convention for duplicates.
+     * Reuses {@link VacancyCreationService} - the same canonical-URL-aware, database-enforced
+     * dedup boundary automatic ingestion already relies on - rather than a find-then-insert check
+     * from application code, so a manual import can never race its way into a duplicate Vacancy,
+     * and shares the exact same canonical identity RemoteOK ingestion uses. An existing vacancy
+     * under the same canonical URL is reused exactly as-is (no field is overwritten): matches
+     * {@code VacancyIngestionService}'s established no-merge convention for duplicates.
      */
     private VacancyOutcome saveOrFindVacancy(Vacancy candidate) {
-        VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(candidate);
-        if (result.isInserted()) {
-            return new VacancyOutcome(result.vacancy(), true);
-        }
-        Vacancy existing = vacancyRepository.findByUrl(candidate.getUrl())
-                .orElseThrow(() -> new IllegalStateException(
-                        "saveIfAbsent reported an existing vacancy for url " + candidate.getUrl() + " but none was found"));
-        return new VacancyOutcome(existing, false);
+        VacancyCreationResult result = vacancyCreationService.createIfAbsent(candidate);
+        return new VacancyOutcome(result.vacancy(), result.newlyCreated());
     }
 
     /**

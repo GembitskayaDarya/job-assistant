@@ -1,15 +1,22 @@
 package com.darya.jobassistant.vacancies.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.service.VacancyCreationService;
+import com.darya.jobassistant.vacancies.url.CanonicalVacancyUrl;
+import com.darya.jobassistant.vacancies.url.VacancyUrlCanonicalizer;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -22,8 +29,12 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -43,6 +54,9 @@ class VacancyRepositoryTest {
 
     @Autowired
     private CompanyRepository companyRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Test
     void saveIfAbsent_newUrl_insertsAndReturnsInsertedWithDurableUuid() {
@@ -127,6 +141,252 @@ class VacancyRepositoryTest {
         assertThat(result.vacancy().getSalaryText()).isEqualTo("120-175 PLN netto/h +VAT");
     }
 
+    @Test
+    void saveIfAbsent_persistsCanonicalUrlAlongsideOriginalUrlUnchanged() {
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String rawUrl = "HTTPS://EXAMPLE.COM:443/jobs/" + UUID.randomUUID() + "/?utm_source=linkedin#top";
+
+        VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, rawUrl));
+
+        assertThat(result.vacancy().getUrl()).isEqualTo(rawUrl);
+        assertThat(result.vacancy().getCanonicalUrl()).isEqualTo(canonicalize(rawUrl).value());
+        assertThat(result.vacancy().getCanonicalUrl()).isNotEqualTo(rawUrl);
+    }
+
+    @Test
+    void findByCanonicalUrl_findsInsertedVacancy() {
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String rawUrl = uniqueUrl();
+        VacancyPersistenceResult inserted = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, rawUrl));
+
+        Optional<Vacancy> found = vacancyRepository.findByCanonicalUrl(canonicalize(rawUrl));
+
+        assertThat(found).isPresent();
+        assertThat(found.get().getId()).isEqualTo(inserted.vacancy().getId());
+    }
+
+    @Test
+    void findByCanonicalUrl_legacyRowWithNullCanonicalUrl_isNeverMatched() {
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String rawUrl = uniqueUrl();
+        Vacancy legacyRow = vacancy(company, rawUrl);
+        legacyRow.setCanonicalUrl(null);
+        vacancyRepository.save(legacyRow);
+
+        Optional<Vacancy> found = vacancyRepository.findByCanonicalUrl(canonicalize(rawUrl));
+
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    void multipleLegacyNullCanonicalUrls_areAllowed() {
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+
+        Vacancy first = vacancy(company, uniqueUrl());
+        first.setCanonicalUrl(null);
+        Vacancy second = vacancy(company, uniqueUrl());
+        second.setCanonicalUrl(null);
+
+        assertThat(vacancyRepository.save(first).getId()).isNotNull();
+        assertThat(vacancyRepository.save(second).getId()).isNotNull();
+    }
+
+    @Test
+    void saveIfAbsent_twoDistinctCanonicalUrls_bothInserted() {
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+
+        VacancyPersistenceResult first = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, uniqueUrl()));
+        VacancyPersistenceResult second = vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, uniqueUrl()));
+
+        assertThat(first.isInserted()).isTrue();
+        assertThat(second.isInserted()).isTrue();
+    }
+
+    /**
+     * Proves the {@code uk_vacancy_canonical_url} partial unique index itself, independent of any
+     * application-level pre-check: two genuinely different {@code url} values (so {@code
+     * uk_vacancy_url}'s {@code ON CONFLICT} never engages) that share a canonical identity must
+     * still be rejected by the database when inserted directly through {@link
+     * VacancyRepository#saveIfAbsent}, which does not catch this violation itself (see its
+     * javadoc) - {@link VacancyCreationService} is what a real caller uses to get the friendlier,
+     * translated outcome (covered separately below).
+     */
+    @Test
+    void saveIfAbsent_duplicateCanonicalUrlWithDifferentRawUrl_violatesPartialUniqueIndex() {
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String suffix = UUID.randomUUID().toString();
+        String firstUrl = "https://example.com/jobs/" + suffix;
+        String secondUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
+        assertThat(canonicalize(firstUrl)).isEqualTo(canonicalize(secondUrl));
+
+        vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, firstUrl));
+
+        assertThatThrownBy(() -> vacancyRepository.saveIfAbsent(vacancyWithCanonicalUrl(company, secondUrl)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void vacancyCreationService_urlVariantsDifferingByCosmeticFormatting_resolveToOneVacancy() {
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String suffix = UUID.randomUUID().toString();
+        String canonicalForm = "https://example.com/jobs/" + suffix;
+        // Tracking parameter, uppercase scheme/host, default port, fragment, non-root trailing slash.
+        String messyVariant = "HTTPS://EXAMPLE.COM:443/jobs/" + suffix + "/?utm_source=linkedin#details";
+
+        VacancyCreationResult first = vacancyCreationService.createIfAbsent(vacancy(company, canonicalForm));
+        VacancyCreationResult second = vacancyCreationService.createIfAbsent(vacancy(company, messyVariant));
+
+        assertThat(first.newlyCreated()).isTrue();
+        assertThat(second.newlyCreated()).isFalse();
+        assertThat(second.vacancy().getId()).isEqualTo(first.vacancy().getId());
+        assertThat(vacancyRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void vacancyCreationService_urlsDifferingByMeaningfulQueryParameter_remainDistinct() {
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String suffix = UUID.randomUUID().toString();
+        String english = "https://example.com/jobs/" + suffix + "?language=en";
+        String polish = "https://example.com/jobs/" + suffix + "?language=pl";
+
+        VacancyCreationResult first = vacancyCreationService.createIfAbsent(vacancy(company, english));
+        VacancyCreationResult second = vacancyCreationService.createIfAbsent(vacancy(company, polish));
+
+        assertThat(first.newlyCreated()).isTrue();
+        assertThat(second.newlyCreated()).isTrue();
+        assertThat(second.vacancy().getId()).isNotEqualTo(first.vacancy().getId());
+    }
+
+    @Test
+    void vacancyCreationService_httpAndHttps_remainDistinct() {
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String suffix = UUID.randomUUID().toString();
+
+        VacancyCreationResult httpResult =
+                vacancyCreationService.createIfAbsent(vacancy(company, "http://example.com/jobs/" + suffix));
+        VacancyCreationResult httpsResult =
+                vacancyCreationService.createIfAbsent(vacancy(company, "https://example.com/jobs/" + suffix));
+
+        assertThat(httpResult.newlyCreated()).isTrue();
+        assertThat(httpsResult.newlyCreated()).isTrue();
+        assertThat(httpsResult.vacancy().getId()).isNotEqualTo(httpResult.vacancy().getId());
+    }
+
+    /**
+     * The real-database counterpart of {@code VacancyCreationServiceTest}'s equivalent unit
+     * tests: proves the {@code uk_vacancy_canonical_url} violation this project's actual
+     * PostgreSQL/Hibernate stack raises for two genuinely concurrent callers is correctly
+     * recognized and both futures complete cleanly - neither with a raw {@code
+     * DataIntegrityViolationException}, {@code SQLException}, {@code
+     * UnexpectedRollbackException}, nor a transaction-aborted error - because the losing
+     * insert's failure is isolated to its own {@code REQUIRES_NEW} transaction and rolled back
+     * before winner resolution ever runs.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void vacancyCreationService_concurrentCallsWithDifferentRawUrlsSameCanonical_exactlyOneRowCreated() throws Exception {
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String suffix = UUID.randomUUID().toString();
+        String firstUrl = "https://example.com/jobs/" + suffix;
+        String secondUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            List<Future<VacancyCreationResult>> futures = new ArrayList<>();
+            futures.add(executor.submit(() -> {
+                barrier.await();
+                return vacancyCreationService.createIfAbsent(vacancy(company, firstUrl));
+            }));
+            futures.add(executor.submit(() -> {
+                barrier.await();
+                return vacancyCreationService.createIfAbsent(vacancy(company, secondUrl));
+            }));
+
+            // Both futures must complete without throwing at all - get() would rethrow (wrapped
+            // in ExecutionException) any DataIntegrityViolationException, SQLException,
+            // UnexpectedRollbackException, or transaction-aborted error that leaked out.
+            List<VacancyCreationResult> results = new ArrayList<>();
+            for (Future<VacancyCreationResult> future : futures) {
+                results.add(future.get(10, TimeUnit.SECONDS));
+            }
+
+            long createdCount = results.stream().filter(VacancyCreationResult::newlyCreated).count();
+            long alreadyExistsCount = results.size() - createdCount;
+            assertThat(createdCount).isEqualTo(1);
+            assertThat(alreadyExistsCount).isEqualTo(1);
+            assertThat(results.get(0).vacancy().getId()).isEqualTo(results.get(1).vacancy().getId());
+            assertThat(vacancyRepository.findAll().stream()
+                    .filter(v -> canonicalize(firstUrl).value().equals(v.getCanonicalUrl()))
+                    .count()).isEqualTo(1);
+
+            // A subsequent lookup in a fresh call succeeds - the winning row is fully committed
+            // and visible, not left in some half-finished state by the loser's rollback.
+            Optional<Vacancy> reloaded = vacancyRepository.findById(results.get(0).vacancy().getId());
+            assertThat(reloaded).isPresent();
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    /**
+     * Directly demonstrates the bug this correction fixes: wraps {@code createIfAbsent} the same
+     * way {@code VacancyImportReviewService} does (an outer {@code REQUIRES_NEW} transaction
+     * around the whole call), forces a canonical conflict inside it, and then performs another
+     * write in that *same* outer transaction afterward - proving the outer transaction was never
+     * poisoned by the isolated insert's rollback, unlike before this correction (where the
+     * conflict and the outer transaction shared one physical transaction, and the outer
+     * transaction would have been left aborted).
+     */
+    @Test
+    void vacancyCreationService_canonicalConflict_doesNotPoisonCallersOuterTransaction() {
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+        outerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        String suffix = UUID.randomUUID().toString();
+        vacancyCreationService.createIfAbsent(vacancy(company, "https://example.com/jobs/" + suffix));
+
+        String conflictingUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
+        VacancyCreationResult resultAfterConflictInsideOuterTransaction = outerTransaction.execute(status -> {
+            VacancyCreationResult conflictResult = vacancyCreationService.createIfAbsent(vacancy(company, conflictingUrl));
+            // If the isolated-insert rollback had poisoned this outer transaction, this second,
+            // unrelated write would fail here with a transaction-aborted error.
+            companyRepository.save(Company.builder().name("Another Co - " + suffix).build());
+            return conflictResult;
+        });
+
+        assertThat(resultAfterConflictInsideOuterTransaction.newlyCreated()).isFalse();
+        assertThat(companyRepository.findAll().stream().anyMatch(c -> c.getName().equals("Another Co - " + suffix))).isTrue();
+    }
+
+    /**
+     * A real database constraint violation unrelated to {@code uk_vacancy_canonical_url} (here,
+     * the {@code title} column's {@code NOT NULL} constraint) must still propagate as a {@link
+     * DataIntegrityViolationException} rather than being swallowed as a canonical duplicate.
+     */
+    @Test
+    void vacancyCreationService_unrelatedIntegrityViolation_isPropagatedNotSwallowed() {
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, transactionManager);
+        Company company = companyRepository.save(Company.builder().name("Acme").build());
+        Vacancy candidateWithoutTitle = Vacancy.builder()
+                .company(company)
+                .title(null)
+                .url(uniqueUrl())
+                .source("remoteok")
+                .build();
+
+        assertThatThrownBy(() -> vacancyCreationService.createIfAbsent(candidateWithoutTitle))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private CanonicalVacancyUrl canonicalize(String rawUrl) {
+        return VacancyUrlCanonicalizer.canonicalize(URI.create(rawUrl));
+    }
+
     private long countByUrl(String url) {
         return vacancyRepository.findAll().stream().filter(v -> url.equals(v.getUrl())).count();
     }
@@ -139,6 +399,17 @@ class VacancyRepositoryTest {
                 .url(url)
                 .source("remoteok")
                 .build();
+    }
+
+    /**
+     * {@link VacancyRepository#saveIfAbsent} persists {@code canonicalUrl} exactly as given
+     * rather than computing it (that is {@code VacancyCreationService}'s job - see its javadoc),
+     * so tests exercising {@code saveIfAbsent} directly must set it themselves.
+     */
+    private Vacancy vacancyWithCanonicalUrl(Company company, String url) {
+        Vacancy candidate = vacancy(company, url);
+        candidate.setCanonicalUrl(canonicalize(url).value());
+        return candidate;
     }
 
     private String uniqueUrl() {

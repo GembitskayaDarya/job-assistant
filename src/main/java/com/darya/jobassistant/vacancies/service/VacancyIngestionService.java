@@ -3,11 +3,10 @@ package com.darya.jobassistant.vacancies.service;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
-import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.policy.JobOfferMatchPolicy;
-import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -22,22 +21,25 @@ import org.springframework.util.StringUtils;
 @Transactional
 public class VacancyIngestionService {
 
-    private final VacancyRepository vacancyRepository;
+    private final VacancyCreationService vacancyCreationService;
     private final CompanyService companyService;
     private final JobOfferMatchPolicy jobOfferMatchPolicy;
 
     /**
-     * Deduplicates by URL: an existing vacancy for the same URL is returned as-is,
-     * never updated - matching the ingestion job's original upsert-free behavior.
+     * Deduplicates by canonical URL (see {@link VacancyCreationService}): an existing vacancy for
+     * an equivalent URL is returned as-is, never updated - matching the ingestion job's original
+     * upsert-free behavior.
      */
     public Vacancy persist(JobOffer jobOffer) {
-        return persistOrGetExisting(jobOffer).vacancy();
+        requireUrl(jobOffer);
+        return vacancyCreationService.createIfAbsent(buildVacancy(jobOffer)).vacancy();
     }
 
     /**
-     * Batch counterpart used by automatic ingestion. Unlike {@link #persist(JobOffer)}, novelty
-     * is decided atomically by the database via {@link VacancyRepository#saveIfAbsent} - there is
-     * no preliminary existence check, so this is safe under concurrent ingestion callers.
+     * Batch counterpart used by automatic ingestion. Novelty is decided by {@link
+     * VacancyCreationService#createIfAbsent}, which is safe under concurrent ingestion callers -
+     * see that class for how the application-level canonical lookup and the database's partial
+     * unique index combine to guarantee that.
      *
      * <p>Every fetched offer is checked against {@link JobOfferMatchPolicy} before company
      * resolution or persistence; offers that don't match are skipped without creating a
@@ -55,8 +57,9 @@ public class VacancyIngestionService {
                 continue;
             }
             try {
-                VacancyPersistenceResult outcome = insertIfAbsent(jobOffer);
-                if (outcome.isInserted()) {
+                requireUrl(jobOffer);
+                VacancyCreationResult outcome = vacancyCreationService.createIfAbsent(buildVacancy(jobOffer));
+                if (outcome.newlyCreated()) {
                     persisted.add(outcome.vacancy());
                 } else {
                     alreadyKnown++;
@@ -69,26 +72,10 @@ public class VacancyIngestionService {
         return new VacancyIngestionResult(jobOffers.size(), persisted, alreadyKnown);
     }
 
-    private PersistOutcome persistOrGetExisting(JobOffer jobOffer) {
-        requireUrl(jobOffer);
-        return vacancyRepository.findByUrl(jobOffer.url())
-                .map(existing -> new PersistOutcome(existing, false))
-                .orElseGet(() -> new PersistOutcome(save(jobOffer), true));
-    }
-
-    private VacancyPersistenceResult insertIfAbsent(JobOffer jobOffer) {
-        requireUrl(jobOffer);
-        return vacancyRepository.saveIfAbsent(buildVacancy(jobOffer));
-    }
-
     private void requireUrl(JobOffer jobOffer) {
         if (!StringUtils.hasText(jobOffer.url())) {
             throw new IllegalArgumentException("Job offer has no URL, cannot persist: " + jobOffer.title());
         }
-    }
-
-    private Vacancy save(JobOffer jobOffer) {
-        return vacancyRepository.save(buildVacancy(jobOffer));
     }
 
     private Vacancy buildVacancy(JobOffer jobOffer) {
@@ -100,8 +87,5 @@ public class VacancyIngestionService {
                 .url(jobOffer.url())
                 .source(jobOffer.source())
                 .build();
-    }
-
-    private record PersistOutcome(Vacancy vacancy, boolean newlyPersisted) {
     }
 }

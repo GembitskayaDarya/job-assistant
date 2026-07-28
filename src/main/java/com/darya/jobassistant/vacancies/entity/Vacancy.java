@@ -39,6 +39,16 @@ public class Vacancy extends BaseEntity {
     @Column
     private String url;
 
+    /**
+     * The {@code VacancyUrlCanonicalizer}-normalized form of {@link #url}, used for
+     * deduplication (see {@code uk_vacancy_canonical_url}). Null for every row created before
+     * Sprint 8 Step 4B1 and for any row a canonicalizable URL could not be derived for - a null
+     * value here is never backfilled as a side effect of a read (see Step 4B2 for a real
+     * backfill).
+     */
+    @Column(name = "canonical_url")
+    private String canonicalUrl;
+
     @Column(length = 300)
     private String location;
 

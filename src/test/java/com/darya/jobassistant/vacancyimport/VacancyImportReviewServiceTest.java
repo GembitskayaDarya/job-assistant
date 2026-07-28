@@ -14,10 +14,11 @@ import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.service.CompanyService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
-import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
+import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import com.darya.jobassistant.vacancies.service.VacancyCreationService;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
 import com.darya.jobassistant.vacancyimport.dto.AnalyzeImportedVacancyResult;
@@ -65,6 +66,9 @@ class VacancyImportReviewServiceTest {
     private VacancyRepository vacancyRepository;
 
     @Mock
+    private VacancyCreationService vacancyCreationService;
+
+    @Mock
     private CompanyService companyService;
 
     @Mock
@@ -84,8 +88,8 @@ class VacancyImportReviewServiceTest {
     @BeforeEach
     void setUp() {
         service = new VacancyImportReviewService(
-                sessionRepository, draftRepository, vacancyRepository, companyService, vacancyJobOfferMapper,
-                analyzeVacancyUseCase, CLOCK, transactionManager);
+                sessionRepository, draftRepository, vacancyRepository, vacancyCreationService, companyService,
+                vacancyJobOfferMapper, analyzeVacancyUseCase, CLOCK, transactionManager);
     }
 
     // ---- Save ----
@@ -100,7 +104,7 @@ class VacancyImportReviewServiceTest {
         when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
         when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyRepository.saveIfAbsent(any(Vacancy.class))).thenReturn(VacancyPersistenceResult.inserted(inserted));
+        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(inserted, true));
         when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), inserted.getId(), NOW)).thenReturn(true);
         when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
 
@@ -112,7 +116,7 @@ class VacancyImportReviewServiceTest {
         verify(draftRepository).findDraftBySessionId(session.getId());
 
         ArgumentCaptor<Vacancy> candidateCaptor = ArgumentCaptor.forClass(Vacancy.class);
-        verify(vacancyRepository).saveIfAbsent(candidateCaptor.capture());
+        verify(vacancyCreationService).createIfAbsent(candidateCaptor.capture());
         Vacancy candidate = candidateCaptor.getValue();
         assertThat(candidate.getTitle()).isEqualTo("Senior Java Backend Developer");
         assertThat(candidate.getCompany()).isEqualTo(company);
@@ -146,14 +150,14 @@ class VacancyImportReviewServiceTest {
         when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
         when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyRepository.saveIfAbsent(any(Vacancy.class))).thenReturn(VacancyPersistenceResult.inserted(inserted));
+        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(inserted, true));
         when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), inserted.getId(), NOW)).thenReturn(true);
         when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
 
         service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
 
         ArgumentCaptor<Vacancy> candidateCaptor = ArgumentCaptor.forClass(Vacancy.class);
-        verify(vacancyRepository).saveIfAbsent(candidateCaptor.capture());
+        verify(vacancyCreationService).createIfAbsent(candidateCaptor.capture());
         Vacancy candidate = candidateCaptor.getValue();
         assertThat(candidate.getLocation()).isEqualTo("Warszawa/ Centrum");
         assertThat(candidate.getRemoteMode()).isEqualTo(RemotePolicy.HYBRID);
@@ -170,8 +174,7 @@ class VacancyImportReviewServiceTest {
         when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
         when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyRepository.saveIfAbsent(any(Vacancy.class))).thenReturn(VacancyPersistenceResult.alreadyExists());
-        when(vacancyRepository.findByUrl(URL)).thenReturn(Optional.of(existing));
+        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(existing, false));
         when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), existing.getId(), NOW)).thenReturn(true);
         when(vacancyJobOfferMapper.toJobOffer(existing)).thenReturn(jobOffer());
 
@@ -193,7 +196,7 @@ class VacancyImportReviewServiceTest {
         ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.Saved(session.getId(), jobOffer(), false));
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
         verify(draftRepository, never()).findDraftBySessionId(any());
         verify(transactionManager, never()).getTransaction(any(TransactionDefinition.class));
     }
@@ -206,7 +209,7 @@ class VacancyImportReviewServiceTest {
         ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, 999L, VacancyImportAction.SAVE);
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.NotAvailable());
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
         verify(draftRepository, never()).findDraftBySessionId(any());
     }
 
@@ -218,7 +221,7 @@ class VacancyImportReviewServiceTest {
         ReviewVacancyImportResult result = service.review(session.getId(), 999L, USER_ID, VacancyImportAction.SAVE);
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.NotAvailable());
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
     }
 
     @Test
@@ -232,7 +235,7 @@ class VacancyImportReviewServiceTest {
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.Expired(session.getId()));
         assertThat(session.getState()).isEqualTo(ImportState.EXPIRED);
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
         verify(draftRepository, never()).findDraftBySessionId(any());
     }
 
@@ -245,7 +248,7 @@ class VacancyImportReviewServiceTest {
         ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.DraftMissing(session.getId()));
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
     }
 
     @Test
@@ -256,7 +259,7 @@ class VacancyImportReviewServiceTest {
         ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.InvalidState(session.getId(), ImportState.WAITING_FOR_DESCRIPTION));
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
     }
 
     @Test
@@ -272,7 +275,7 @@ class VacancyImportReviewServiceTest {
                 .thenReturn(Optional.of(winnerSession(session.getId(), winningVacancy.getId())));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
         when(companyService.findOrCreateByName("Example Company")).thenReturn(company);
-        when(vacancyRepository.saveIfAbsent(any(Vacancy.class))).thenReturn(VacancyPersistenceResult.inserted(inserted));
+        when(vacancyCreationService.createIfAbsent(any(Vacancy.class))).thenReturn(new VacancyCreationResult(inserted, true));
         when(sessionRepository.completeIfWaitingForConfirmation(eq(session.getId()), eq(inserted.getId()), any())).thenReturn(false);
         when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
         when(vacancyRepository.findByIdWithCompany(winningVacancy.getId())).thenReturn(Optional.of(winningVacancy));
@@ -318,7 +321,7 @@ class VacancyImportReviewServiceTest {
         assertThat(session.getSourceUrl()).isEqualTo(URL);
         assertThat(session.getRawDescription()).isNull();
         verify(draftRepository).deleteBySessionId(session.getId());
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
     }
 
     @Test
@@ -373,7 +376,7 @@ class VacancyImportReviewServiceTest {
 
         assertThat(result).isEqualTo(
                 new ReviewVacancyImportResult.InvalidState(sessionAfterRetry.getId(), ImportState.WAITING_FOR_DESCRIPTION));
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
     }
 
     // ---- Cancel ----
@@ -400,7 +403,7 @@ class VacancyImportReviewServiceTest {
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.Cancelled(session.getId()));
         assertThat(session.getState()).isEqualTo(ImportState.CANCELLED);
-        verify(vacancyRepository, never()).saveIfAbsent(any());
+        verify(vacancyCreationService, never()).createIfAbsent(any());
     }
 
     @Test
