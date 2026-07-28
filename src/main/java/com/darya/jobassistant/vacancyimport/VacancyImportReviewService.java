@@ -8,6 +8,7 @@ import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import com.darya.jobassistant.vacancies.service.CanonicalVacancyCreationConflictException;
 import com.darya.jobassistant.vacancies.service.VacancyCreationService;
 import com.darya.jobassistant.vacancyimport.dto.AnalyzeImportedVacancyResult;
 import com.darya.jobassistant.vacancyimport.dto.ReviewVacancyImportResult;
@@ -41,15 +42,32 @@ import org.springframework.transaction.support.TransactionTemplate;
  * each one commits (or rolls back) independently rather than sharing one transaction that could
  * hold locks across unrelated operations.
  *
- * <p>Unlike before {@code VacancyCreationService}'s own isolated-transaction correction, Save's
- * {@code newTransaction} here no longer has "creating the Vacancy" as part of its own atomic unit
- * of work: {@link #saveOrFindVacancy} delegates to {@link VacancyCreationService#createIfAbsent},
- * which always commits (or rolls back) the {@code Vacancy} - and any {@code Company} it needed to
- * create - in its own separate, already-isolated transaction, before this method's {@code
- * newTransaction} even proceeds to {@code session.complete(...)}. A losing conditional session
- * completion (see {@code status.setRollbackOnly()} below) therefore rolls back only the session
- * update, never an already-committed Vacancy/Company pair; {@link #resolveLostRace} exists
- * precisely to report whichever concurrent operation actually won the session race in that case.
+ * <h2>Save is one atomic unit of work, owned entirely by this class</h2>
+ *
+ * {@link VacancyCreationService#createIfAbsent} is {@code Propagation.MANDATORY}: it never starts
+ * or commits a transaction of its own, it only joins whichever one is already active. For Save,
+ * that active transaction is {@link #attemptSave}'s single {@code newTransaction.execute(...)}
+ * call, which covers reloading and revalidating the session, creating the {@code Vacancy} (and
+ * any {@code Company} it needed), linking it to the session, and conditionally completing the
+ * session - all as one physical commit or rollback. This replaced an earlier design where {@code
+ * VacancyCreationService} owned its own separate {@code REQUIRES_NEW} transaction: a {@code
+ * Vacancy} could commit there before this class's own session-completion transaction ran, so if
+ * completion later failed for any reason, the already-committed {@code Vacancy} was orphaned -
+ * created, but never linked to any session. Under the current design a failure anywhere in {@link
+ * #attemptSave} - including a losing conditional session completion, see {@code
+ * status.setRollbackOnly()} below - rolls back the {@code Vacancy}/{@code Company} right along
+ * with the session update, so no orphan can be left behind.
+ *
+ * <p>A canonical-URL race ({@link CanonicalVacancyCreationConflictException}) is caught only in
+ * {@link #performSave}, strictly outside the failed {@code newTransaction.execute(...)} call - by
+ * the time it's caught, that transaction has already rolled back completely. {@link #performSave}
+ * then retries the whole use case once, in a brand-new transaction via a second {@link
+ * #attemptSave} call: by then the competing insert has committed, so the retry's {@code
+ * createIfAbsent} simply finds the winning row and reports {@code newlyCreated() == false}. A
+ * second conflict on the retry is not retried again. {@link #resolveLostRace} still exists for the
+ * distinct case of losing the session-completion race itself (a concurrent Retry/Cancel/expiry, or
+ * another concurrent Save, won first) - it reports whichever operation actually won, rather than a
+ * generic failure.
  */
 @Slf4j
 @Service
@@ -150,7 +168,7 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
 
     private ReviewVacancyImportResult handleSave(VacancyImportSession session) {
         return switch (session.getState()) {
-            case WAITING_FOR_CONFIRMATION -> performSave(session);
+            case WAITING_FOR_CONFIRMATION -> performSave(session.getId());
             case COMPLETED -> loadCompletedResult(session);
             default -> new ReviewVacancyImportResult.InvalidState(session.getId(), session.getState());
         };
@@ -172,36 +190,78 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
         };
     }
 
-    private ReviewVacancyImportResult performSave(VacancyImportSession session) {
-        UUID sessionId = session.getId();
-        Optional<VacancyImportDraft> maybeDraft = draftRepository.findDraftBySessionId(sessionId);
-        if (maybeDraft.isEmpty()) {
-            return new ReviewVacancyImportResult.DraftMissing(sessionId);
-        }
-        VacancyImportDraft draft = maybeDraft.get();
-
+    /**
+     * Runs {@link #attemptSave} once; if it loses a canonical-URL race, retries the whole use case
+     * exactly once more in a fresh transaction (see class javadoc). Both attempts, and any other
+     * failure, are caught here - strictly outside {@link #attemptSave}'s own transaction boundary -
+     * so a caught exception never masks whether that transaction actually rolled back.
+     */
+    private ReviewVacancyImportResult performSave(UUID sessionId) {
+        SaveAttempt attempt;
         try {
-            SaveOutcome outcome = newTransaction.execute(status -> {
-                VacancyOutcome vacancyOutcome = saveOrFindVacancy(buildCreationCommand(session, draft));
-                Vacancy vacancy = vacancyOutcome.vacancy();
-                session.complete(vacancy.getId(), clock);
-                boolean transitioned = sessionRepository.completeIfWaitingForConfirmation(sessionId, vacancy.getId(), session.getUpdatedAt());
-                if (!transitioned) {
-                    status.setRollbackOnly();
-                }
-                // Mapped while the transaction (and its persistence context) is still open, so the
-                // vacancy's lazily-fetched company resolves here rather than after commit.
-                JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
-                return new SaveOutcome(jobOffer, transitioned, vacancyOutcome.newlyCreated());
-            });
-            if (outcome.transitioned()) {
-                return new ReviewVacancyImportResult.Saved(sessionId, outcome.vacancy(), outcome.newlyCreated());
+            attempt = attemptSave(sessionId);
+        } catch (CanonicalVacancyCreationConflictException firstConflict) {
+            log.debug("Lost a canonical URL race while saving session {}; retrying once", sessionId, firstConflict);
+            try {
+                attempt = attemptSave(sessionId);
+            } catch (RuntimeException retryFailure) {
+                log.warn("Vacancy save failed for session {} on retry", sessionId, retryFailure);
+                return new ReviewVacancyImportResult.Failed();
             }
-            return resolveLostRace(sessionId);
         } catch (RuntimeException e) {
             log.warn("Vacancy save failed for session {}", sessionId, e);
             return new ReviewVacancyImportResult.Failed();
         }
+
+        return switch (attempt) {
+            case SaveAttempt.Saved(var jobOffer, var newlyCreated) ->
+                    new ReviewVacancyImportResult.Saved(sessionId, jobOffer, newlyCreated);
+            case SaveAttempt.DraftMissing ignored -> new ReviewVacancyImportResult.DraftMissing(sessionId);
+            case SaveAttempt.NotWaitingForConfirmation ignored -> resolveLostRace(sessionId);
+            case SaveAttempt.LostRace ignored -> resolveLostRace(sessionId);
+        };
+    }
+
+    /**
+     * The complete Save use case as one atomic unit: reload the session by id (not the possibly
+     * stale in-memory instance {@link #review} first loaded - a concurrent operation may have
+     * changed it since), confirm it is still {@code WAITING_FOR_CONFIRMATION}, reload the draft,
+     * create/find the {@code Vacancy} via {@link VacancyCreationService#createIfAbsent} (which
+     * joins this transaction), link it to the session, and conditionally complete the session. A
+     * {@link CanonicalVacancyCreationConflictException} thrown by {@code createIfAbsent} is
+     * deliberately left to propagate out of {@code newTransaction.execute(...)} uncaught, so the
+     * whole transaction - including the {@code Company}/{@code Vacancy} insert attempt - rolls
+     * back; see {@link #performSave} for where it's caught and retried.
+     */
+    private SaveAttempt attemptSave(UUID sessionId) {
+        return newTransaction.execute(status -> {
+            Optional<VacancyImportSession> maybeSession = sessionRepository.findSessionById(sessionId);
+            if (maybeSession.isEmpty() || maybeSession.get().getState() != ImportState.WAITING_FOR_CONFIRMATION) {
+                status.setRollbackOnly();
+                return new SaveAttempt.NotWaitingForConfirmation();
+            }
+            VacancyImportSession session = maybeSession.get();
+
+            Optional<VacancyImportDraft> maybeDraft = draftRepository.findDraftBySessionId(sessionId);
+            if (maybeDraft.isEmpty()) {
+                status.setRollbackOnly();
+                return new SaveAttempt.DraftMissing();
+            }
+            VacancyImportDraft draft = maybeDraft.get();
+
+            VacancyCreationResult creationResult = vacancyCreationService.createIfAbsent(buildCreationCommand(session, draft));
+            Vacancy vacancy = creationResult.vacancy();
+            session.complete(vacancy.getId(), clock);
+            boolean transitioned = sessionRepository.completeIfWaitingForConfirmation(sessionId, vacancy.getId(), session.getUpdatedAt());
+            if (!transitioned) {
+                status.setRollbackOnly();
+                return new SaveAttempt.LostRace();
+            }
+            // Mapped while the transaction (and its persistence context) is still open, so the
+            // vacancy's lazily-fetched company resolves here rather than after commit.
+            JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
+            return new SaveAttempt.Saved(jobOffer, creationResult.newlyCreated());
+        });
     }
 
     private ReviewVacancyImportResult performRetry(VacancyImportSession session) {
@@ -285,22 +345,6 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
     }
 
     /**
-     * Reuses {@link VacancyCreationService} - the same canonical-URL-aware, database-enforced
-     * dedup boundary automatic ingestion already relies on - rather than a find-then-insert check
-     * from application code, so a manual import can never race its way into a duplicate Vacancy,
-     * and shares the exact same canonical identity RemoteOK ingestion uses. Company
-     * resolution/creation happens entirely inside {@link VacancyCreationService#createIfAbsent} -
-     * this class never resolves a {@code Company} itself (see the corrected {@link
-     * #buildCreationCommand}). An existing vacancy under the same canonical URL is reused exactly
-     * as-is (no field is overwritten): matches {@code VacancyIngestionService}'s established
-     * no-merge convention for duplicates.
-     */
-    private VacancyOutcome saveOrFindVacancy(VacancyCreationCommand command) {
-        VacancyCreationResult result = vacancyCreationService.createIfAbsent(command);
-        return new VacancyOutcome(result.vacancy(), result.newlyCreated());
-    }
-
-    /**
      * Builds the creation command from the session's own preserved inputs, not the preview text:
      * {@code description} is the untouched raw description the user sent (never the AI
      * extraction, never a summary), and {@code url} is the normalized source URL captured back in
@@ -351,9 +395,22 @@ public class VacancyImportReviewService implements ReviewVacancyImportUseCase, A
         }
     }
 
-    private record VacancyOutcome(Vacancy vacancy, boolean newlyCreated) {
-    }
+    /**
+     * The result of one {@link #attemptSave} transaction attempt. Kept private and sealed so
+     * {@link #performSave} is forced to handle every outcome explicitly, including ones that can
+     * only arise from a race lost to a concurrent operation.
+     */
+    private sealed interface SaveAttempt {
+        record Saved(JobOffer jobOffer, boolean newlyCreated) implements SaveAttempt {
+        }
 
-    private record SaveOutcome(JobOffer vacancy, boolean transitioned, boolean newlyCreated) {
+        record DraftMissing() implements SaveAttempt {
+        }
+
+        record NotWaitingForConfirmation() implements SaveAttempt {
+        }
+
+        record LostRace() implements SaveAttempt {
+        }
     }
 }

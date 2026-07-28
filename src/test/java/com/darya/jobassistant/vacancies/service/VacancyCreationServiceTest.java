@@ -3,7 +3,6 @@ package com.darya.jobassistant.vacancies.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,8 +14,8 @@ import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
-import com.darya.jobassistant.vacancies.url.CanonicalVacancyUrl;
 import com.darya.jobassistant.vacancies.url.InvalidVacancyUrlException;
+import java.lang.reflect.Method;
 import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,16 +29,17 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Pure unit tests for {@link VacancyCreationService} - {@link VacancyRepository}, {@link
- * CompanyService}, and {@link PlatformTransactionManager} are mocked, so none of this requires a
- * database, Docker, Firecrawl, AI, or Telegram. {@code transactionManager} is stubbed just enough
- * for {@code TransactionTemplate} to actually invoke its callback (returning a mock {@link
- * TransactionStatus} and no-op commit/rollback) - real physical transaction isolation and
- * atomicity are proven separately by {@code VacancyRepositoryTest}'s Testcontainers-backed tests.
+ * Pure unit tests for {@link VacancyCreationService} - {@link VacancyRepository} and {@link
+ * CompanyService} are mocked, so none of this requires a database, Docker, Firecrawl, AI, or
+ * Telegram. This class no longer touches a {@code PlatformTransactionManager} at all: {@link
+ * VacancyCreationService} does not own a transaction anymore, it only joins whichever one its
+ * caller already started (see {@link #createIfAbsent_isDeclaredMandatoryPropagation_soItCanOnlyRunInsideAnExistingTransaction}).
+ * Real physical transaction atomicity, rollback, and constraint behavior are proven separately by
+ * {@code VacancyRepositoryTest}'s Testcontainers-backed tests.
  */
 @ExtendWith(MockitoExtension.class)
 class VacancyCreationServiceTest {
@@ -50,22 +50,25 @@ class VacancyCreationServiceTest {
     @Mock
     private CompanyService companyService;
 
-    @Mock
-    private PlatformTransactionManager transactionManager;
-
-    @Mock
-    private TransactionStatus transactionStatus;
-
     private VacancyCreationService vacancyCreationService;
 
     @BeforeEach
     void setUp() {
-        lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
-        vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService, transactionManager);
+        vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService);
     }
 
     @Test
-    void createIfAbsent_existingCanonicalVacancy_returnsAlreadyExists_withoutOpeningInsertTransactionOrTouchingCompany() {
+    void createIfAbsent_isDeclaredMandatoryPropagation_soItCanOnlyRunInsideAnExistingTransaction() throws NoSuchMethodException {
+        Method createIfAbsent = VacancyCreationService.class.getMethod("createIfAbsent", VacancyCreationCommand.class);
+
+        Transactional annotation = createIfAbsent.getAnnotation(Transactional.class);
+
+        assertThat(annotation).isNotNull();
+        assertThat(annotation.propagation()).isEqualTo(Propagation.MANDATORY);
+    }
+
+    @Test
+    void createIfAbsent_existingCanonicalVacancy_returnsAlreadyExists_withoutTouchingCompanyOrRepository() {
         Vacancy existing = existingVacancy("https://example.com/jobs/123");
         when(vacancyRepository.findByCanonicalUrl(any())).thenReturn(Optional.of(existing));
 
@@ -75,11 +78,10 @@ class VacancyCreationServiceTest {
         assertThat(result.vacancy()).isSameAs(existing);
         verify(companyService, never()).findOrCreateByName(any());
         verify(vacancyRepository, never()).saveIfAbsent(any());
-        verify(transactionManager, never()).getTransaction(any());
     }
 
     @Test
-    void createIfAbsent_existingCommittedCompany_isReusedInsideIsolatedTransaction() {
+    void createIfAbsent_existingCommittedCompany_isReusedForTheNewVacancy() {
         Company existingCompany = Company.builder().id(UUID.randomUUID()).name("Acme").build();
         when(vacancyRepository.findByCanonicalUrl(any())).thenReturn(Optional.empty());
         when(companyService.findOrCreateByName("Acme")).thenReturn(existingCompany);
@@ -95,12 +97,12 @@ class VacancyCreationServiceTest {
         verify(vacancyRepository).saveIfAbsent(candidateCaptor.capture());
         assertThat(candidateCaptor.getValue().getCompany()).isSameAs(existingCompany);
         // The returned Vacancy must carry the real, already-loaded Company - not a lazy proxy
-        // that would only be safe to read inside the now-closed isolated transaction.
+        // that would only be safe to read inside the caller's transaction while it's still open.
         assertThat(result.vacancy().getCompany()).isSameAs(existingCompany);
     }
 
     @Test
-    void createIfAbsent_newCompany_isCreatedInsideTheSameIsolatedTransactionAsVacancy_bothCommit() {
+    void createIfAbsent_newCompany_isResolvedBeforeTheVacancyInsert() {
         Company newCompany = Company.builder().id(UUID.randomUUID()).name("Acme").build();
         when(vacancyRepository.findByCanonicalUrl(any())).thenReturn(Optional.empty());
         when(companyService.findOrCreateByName("Acme")).thenReturn(newCompany);
@@ -110,25 +112,16 @@ class VacancyCreationServiceTest {
         VacancyCreationResult result = vacancyCreationService.createIfAbsent(command("https://example.com/jobs/123"));
 
         assertThat(result.newlyCreated()).isTrue();
-        // Company resolution and the Vacancy insert both happened after getTransaction() and
-        // before commit() - i.e. within the one isolated transaction - and that transaction
-        // committed (never rolled back).
-        InOrder inOrder = Mockito.inOrder(transactionManager, companyService, vacancyRepository);
-        inOrder.verify(transactionManager).getTransaction(any());
+        InOrder inOrder = Mockito.inOrder(companyService, vacancyRepository);
         inOrder.verify(companyService).findOrCreateByName("Acme");
         inOrder.verify(vacancyRepository).saveIfAbsent(any());
-        inOrder.verify(transactionManager).commit(transactionStatus);
-        verify(transactionManager, never()).rollback(any());
     }
 
     @Test
     void createIfAbsent_cosmeticUrlVariants_produceOneVacancy_secondIsAlreadyExists() {
         Vacancy created = Vacancy.builder().id(UUID.randomUUID()).build();
         when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().id(UUID.randomUUID()).name("Acme").build());
-        // First createIfAbsent call: fast pre-check (empty), isolated-transaction recheck (empty,
-        // proceeds to insert). Second call: fast pre-check finds the first call's committed row.
         when(vacancyRepository.findByCanonicalUrl(any()))
-                .thenReturn(Optional.empty())
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(created));
         when(vacancyRepository.saveIfAbsent(any())).thenReturn(VacancyPersistenceResult.inserted(created));
@@ -140,7 +133,7 @@ class VacancyCreationServiceTest {
         assertThat(first.newlyCreated()).isTrue();
         assertThat(second.newlyCreated()).isFalse();
         assertThat(second.vacancy().getId()).isEqualTo(first.vacancy().getId());
-        verify(companyService, org.mockito.Mockito.times(1)).findOrCreateByName(any());
+        verify(companyService, Mockito.times(1)).findOrCreateByName(any());
     }
 
     @Test
@@ -200,14 +193,8 @@ class VacancyCreationServiceTest {
     }
 
     @Test
-    void createIfAbsent_canonicalIndexViolation_isClassifiedUsingHibernateConstraintName_rollsBackAndDoesNotCommit() {
-        Vacancy winner = existingVacancy("https://example.com/jobs/123-alt");
-        // fast pre-check (empty) -> isolated-tx recheck (empty, proceeds to insert) -> insert
-        // throws -> post-rollback resolution (present).
-        when(vacancyRepository.findByCanonicalUrl(any()))
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(winner));
+    void createIfAbsent_canonicalIndexViolation_throwsDedicatedConflictException_withNoWinnerLookup() {
+        when(vacancyRepository.findByCanonicalUrl(any())).thenReturn(Optional.empty());
         when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().id(UUID.randomUUID()).name("Acme").build());
         ConstraintViolationException hibernateException = new ConstraintViolationException(
                 "could not execute statement",
@@ -215,17 +202,35 @@ class VacancyCreationServiceTest {
                 "uk_vacancy_canonical_url");
         when(vacancyRepository.saveIfAbsent(any()))
                 .thenThrow(new DataIntegrityViolationException("insert failed", hibernateException));
+        VacancyCreationCommand createCommand = command("https://example.com/jobs/123?utm_source=linkedin");
 
-        VacancyCreationResult result = vacancyCreationService.createIfAbsent(command("https://example.com/jobs/123?utm_source=linkedin"));
+        assertThatThrownBy(() -> vacancyCreationService.createIfAbsent(createCommand))
+                .isInstanceOf(CanonicalVacancyCreationConflictException.class);
 
-        assertThat(result.newlyCreated()).isFalse();
-        assertThat(result.vacancy()).isSameAs(winner);
-        verify(transactionManager).rollback(transactionStatus);
-        verify(transactionManager, never()).commit(any());
+        // Exactly one findByCanonicalUrl call (the pre-check) - no lookup is attempted after the
+        // insert failed, since the caller's transaction is already dead at that point.
+        verify(vacancyRepository, Mockito.times(1)).findByCanonicalUrl(any());
     }
 
     @Test
-    void createIfAbsent_differentlyNamedConstraintViolation_isRethrown() {
+    void createIfAbsent_canonicalConflict_fallbackMessageMatch_whenNoStructuredConstraintNameAvailable() {
+        when(vacancyRepository.findByCanonicalUrl(any())).thenReturn(Optional.empty());
+        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().id(UUID.randomUUID()).name("Acme").build());
+        // No ConstraintViolationException in the cause chain at all - only the raw
+        // DataIntegrityViolationException with a message that happens to contain the constraint
+        // name, exercising the deepest-message-matching fallback in isCanonicalUrlConflict().
+        DataIntegrityViolationException noStructuredCause = new DataIntegrityViolationException(
+                "insert failed", new SQLException(
+                        "ERROR: duplicate key value violates unique constraint \"uk_vacancy_canonical_url\""));
+        when(vacancyRepository.saveIfAbsent(any())).thenThrow(noStructuredCause);
+        VacancyCreationCommand createCommand = command("https://example.com/jobs/123");
+
+        assertThatThrownBy(() -> vacancyCreationService.createIfAbsent(createCommand))
+                .isInstanceOf(CanonicalVacancyCreationConflictException.class);
+    }
+
+    @Test
+    void createIfAbsent_differentlyNamedConstraintViolation_isRethrownUnchanged() {
         when(vacancyRepository.findByCanonicalUrl(any())).thenReturn(Optional.empty());
         when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().id(UUID.randomUUID()).name("Acme").build());
         ConstraintViolationException hibernateException = new ConstraintViolationException(
@@ -252,45 +257,6 @@ class VacancyCreationServiceTest {
 
         assertThatThrownBy(() -> vacancyCreationService.createIfAbsent(createCommand))
                 .isSameAs(unrelated);
-    }
-
-    @Test
-    void createIfAbsent_canonicalConflict_postConflictLookupHappensOnlyAfterInsertFailed() {
-        Vacancy winner = existingVacancy("https://example.com/jobs/123-alt");
-        when(vacancyRepository.findByCanonicalUrl(any()))
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(winner));
-        when(companyService.findOrCreateByName(any())).thenReturn(Company.builder().id(UUID.randomUUID()).name("Acme").build());
-        when(vacancyRepository.saveIfAbsent(any())).thenThrow(new DataIntegrityViolationException(
-                "insert failed", new SQLException(
-                        "ERROR: duplicate key value violates unique constraint \"uk_vacancy_canonical_url\"")));
-
-        vacancyCreationService.createIfAbsent(command("https://example.com/jobs/123?utm_source=linkedin"));
-
-        // Mockito's InOrder cannot reliably split three identical any()-matched invocations into
-        // three separate times(1) checkpoints, so the first two (fast pre-check + isolated-tx
-        // recheck, both before the failing insert) are verified together as one group.
-        InOrder inOrder = Mockito.inOrder(vacancyRepository);
-        inOrder.verify(vacancyRepository, Mockito.times(2)).findByCanonicalUrl(any()); // pre-check + isolated recheck
-        inOrder.verify(vacancyRepository).saveIfAbsent(any()); // fails
-        inOrder.verify(vacancyRepository).findByCanonicalUrl(any()); // post-conflict resolution
-    }
-
-    @Test
-    void createIfAbsent_canonicalDuplicateFoundDuringIsolatedRecheck_doesNotCreateUnnecessaryCompany() {
-        Vacancy winner = existingVacancy("https://example.com/jobs/123-alt");
-        // Fast pre-check misses it (race), but the recheck inside the isolated transaction finds it.
-        when(vacancyRepository.findByCanonicalUrl(any()))
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(winner));
-
-        VacancyCreationResult result = vacancyCreationService.createIfAbsent(command("https://example.com/jobs/123?utm_source=linkedin"));
-
-        assertThat(result.newlyCreated()).isFalse();
-        assertThat(result.vacancy()).isSameAs(winner);
-        verify(companyService, never()).findOrCreateByName(any());
-        verify(vacancyRepository, never()).saveIfAbsent(any());
     }
 
     @Test

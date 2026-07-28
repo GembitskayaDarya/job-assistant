@@ -11,13 +11,13 @@ import com.darya.jobassistant.vacancies.url.CanonicalVacancyUrl;
 import com.darya.jobassistant.vacancies.url.VacancyUrlCanonicalizer;
 import java.net.URI;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * The single production entry point for creating a new {@link Vacancy}. Every current and future
@@ -30,37 +30,48 @@ import org.springframework.transaction.support.TransactionTemplate;
  * {@link VacancyUrlCanonicalizer}, {@link CompanyService}, and the {@link Vacancy} persistence
  * model.
  *
- * <h2>Why the creation attempt takes a command, not a pre-built entity</h2>
+ * <h2>Transaction ownership: this class participates, it never owns</h2>
  *
- * An earlier version of this method accepted an already-built {@code Vacancy} (with its {@code
- * Company} already resolved by the caller). That caused a real production failure: a caller
- * (e.g. {@code VacancyIngestionService}, {@code VacancyImportReviewService}) would resolve/create
- * the {@code Company} in its own ambient or {@code newTransaction} scope, hand the resulting
- * (uncommitted) entity to this method, which would then suspend that transaction to run the
- * insert in its own {@code REQUIRES_NEW} transaction - a transaction that cannot see a row that
- * only exists in the now-suspended, uncommitted caller transaction, so the insert failed with a
- * {@code vacancy_company_id_fkey} violation. {@link VacancyCreationCommand} instead carries only
- * plain data (including the company's name, never a persisted entity), so company resolution can
- * happen here, inside the very same isolated transaction as the {@code Vacancy} insert - the two
- * always commit or roll back together.
+ * {@link #createIfAbsent} is {@code @Transactional(propagation = Propagation.MANDATORY)} - it
+ * requires an already-active transaction and joins it; if called without one, Spring fails fast
+ * with {@code IllegalTransactionStateException} rather than silently doing nothing transactional.
+ * This is deliberate, and is the result of two prior, incomplete designs:
  *
- * <h2>Why the insert attempt runs in its own transaction</h2>
+ * <ul>
+ *   <li>Originally, a caller resolved/created {@code Company} in its own scope and handed this
+ *       method an already-built {@code Vacancy}; the insert ran in an internally-owned {@code
+ *       REQUIRES_NEW} transaction that could not see the caller's still-uncommitted {@code
+ *       Company} row, producing a real {@code vacancy_company_id_fkey} failure.
+ *   <li>The next fix moved {@code Company} resolution in here and gave this class its own {@code
+ *       REQUIRES_NEW} {@code TransactionTemplate}, so {@code Company} and {@code Vacancy} always
+ *       committed together - but that transaction was independent of whatever the caller was
+ *       doing, so for manual import specifically, the {@code Vacancy} could commit *before* the
+ *       import session was validated and linked to it. A later, unrelated failure while
+ *       completing the session then left a committed, orphaned {@code Vacancy} with no session
+ *       ever pointing to it.
+ * </ul>
  *
- * PostgreSQL aborts the entire physical transaction a statement error occurred in - catching the
- * resulting {@link DataIntegrityViolationException} in Java does not undo that at the database
- * level. Every other statement attempted on that same connection/transaction (including the
- * winner-resolution lookup below) would fail too, and - worse - so would anything else sharing
- * that transaction with this call. The whole creation attempt (company resolution, the recheck,
- * and the {@code Vacancy} insert) therefore runs in its own {@code PROPAGATION_REQUIRES_NEW}
- * transaction (via {@link #isolatedCreationTransaction}, matching the {@code
- * TransactionTemplate}-based isolation pattern already established in {@code
- * VacancyImportService}/{@code VacancyImportReviewService}): only that inner transaction is
- * aborted and rolled back on a conflict - including any {@code Company} it created - and the
- * caller's own transaction (if any) - suspended, never touched - resumes afterward exactly as
- * valid as before.
+ * <p>The real fix is that transaction ownership belongs to the complete use case, not to this
+ * class: {@code VacancyImportReviewService} now owns one transaction that includes session
+ * validation, this method's work, and session completion, all as one atomic unit (see its
+ * javadoc); {@code VacancyIngestionService} owns one transaction per {@code JobOffer}. This class
+ * simply joins whichever transaction its caller is already running.
+ *
+ * <h2>Canonical conflicts are not resolved here</h2>
+ *
+ * Because this method no longer owns its transaction, it cannot safely look up the winning row
+ * itself when it loses a race on {@code uk_vacancy_canonical_url}: PostgreSQL has already aborted
+ * the physical transaction at that point, and any further statement on it - including a lookup -
+ * would fail too, and so would every other statement the caller's transaction contains. Instead,
+ * {@link CanonicalVacancyCreationConflictException} is thrown and left to propagate all the way
+ * out of the caller's transaction boundary, rolling back everything that transaction did
+ * (including any {@code Company} this method created). The caller is responsible for retrying the
+ * whole use case, once, in a fresh transaction - see {@code VacancyImportReviewService} and {@code
+ * VacancyIngestionService} for how each does that.
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class VacancyCreationService {
 
     /** Must match the index name in {@code V12__vacancy_canonical_url.sql}. */
@@ -68,29 +79,18 @@ public class VacancyCreationService {
 
     private final VacancyRepository vacancyRepository;
     private final CompanyService companyService;
-    private final TransactionTemplate isolatedCreationTransaction;
-
-    public VacancyCreationService(VacancyRepository vacancyRepository, CompanyService companyService,
-                                   PlatformTransactionManager transactionManager) {
-        this.vacancyRepository = vacancyRepository;
-        this.companyService = companyService;
-        this.isolatedCreationTransaction = new TransactionTemplate(transactionManager);
-        this.isolatedCreationTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    }
 
     /**
-     * Sequence: canonicalize -&gt; fast canonical lookup (a cheap, non-isolated read - short-
-     * circuits the common already-exists case without ever touching {@link CompanyService} or
-     * opening the isolated transaction) -&gt; attempt creation in an isolated transaction, which
-     * rechecks novelty (another transaction may have committed since the fast lookup above)
-     * before resolving/creating the {@link Company} and inserting the {@link Vacancy}. There is
-     * still a race between the fast lookup and the isolated attempt; the database's {@code
-     * uk_vacancy_canonical_url} partial unique index is the actual source of truth for novelty,
-     * and a violation of it is translated into the same duplicate outcome the non-racing path
-     * returns - never a raw {@link DataIntegrityViolationException} escaping to the caller. Any
-     * other integrity violation is deliberately rethrown rather than misclassified as a canonical
-     * duplicate.
+     * Requires an already-active transaction (see class javadoc) and does everything within it:
+     * look up an existing vacancy by canonical URL; if absent, resolve/create the {@link Company}
+     * and insert. Never commits or rolls back anything itself, never suspends the caller's
+     * transaction, and never calls AI, Telegram, or scheduler code.
+     *
+     * @throws CanonicalVacancyCreationConflictException if the insert lost a race on {@code
+     *     uk_vacancy_canonical_url}; the caller's whole transaction must be allowed to roll back
+     *     and the use case retried in a fresh one
      */
+    @Transactional(propagation = Propagation.MANDATORY)
     public VacancyCreationResult createIfAbsent(VacancyCreationCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("Vacancy creation command must not be null");
@@ -102,54 +102,34 @@ public class VacancyCreationService {
             return new VacancyCreationResult(existing.get(), false);
         }
 
-        return attemptCreation(command, canonical);
-    }
+        Company company = companyService.findOrCreateByName(command.companyName());
+        Vacancy candidate = buildVacancy(command, company, canonical);
 
-    private VacancyCreationResult attemptCreation(VacancyCreationCommand command, CanonicalVacancyUrl canonical) {
+        VacancyPersistenceResult result;
         try {
-            return isolatedCreationTransaction.execute(status -> createInIsolatedTransaction(command, canonical));
+            result = vacancyRepository.saveIfAbsent(candidate);
         } catch (DataIntegrityViolationException e) {
             if (!isCanonicalUrlConflict(e)) {
                 throw e;
             }
-            log.debug("Lost a concurrent race for canonical URL {}; returning the winning row", canonical.value());
-            return resolveExisting(command, canonical);
-        }
-    }
-
-    /**
-     * Everything here runs inside the single isolated {@code REQUIRES_NEW} transaction: the
-     * recheck, resolving/creating the {@link Company} (via {@link CompanyService}, whose own
-     * {@code @Transactional(REQUIRED)} simply joins this already-active transaction rather than
-     * starting a separate one), building the {@link Vacancy} candidate around that company, and
-     * the insert itself. If the insert fails, this entire method's work - including any newly
-     * created {@code Company} - rolls back together as one unit; if it commits, both commit
-     * together. A {@code Company} is only ever resolved/created after confirming (again) that no
-     * vacancy already exists under this canonical URL.
-     */
-    private VacancyCreationResult createInIsolatedTransaction(VacancyCreationCommand command, CanonicalVacancyUrl canonical) {
-        Optional<Vacancy> existing = vacancyRepository.findByCanonicalUrl(canonical);
-        if (existing.isPresent()) {
-            return new VacancyCreationResult(existing.get(), false);
+            throw new CanonicalVacancyCreationConflictException(
+                    "Lost a concurrent race for canonical URL " + canonical.value(), e);
         }
 
-        Company company = companyService.findOrCreateByName(command.companyName());
-        Vacancy candidate = buildVacancy(command, company, canonical);
-
-        VacancyPersistenceResult result = vacancyRepository.saveIfAbsent(candidate);
         if (result.isInserted()) {
             // insertVacancyIfAbsent's native RETURNING * maps a fresh entity whose own `company`
             // is an uninitialized lazy proxy - safe only while this transaction's session is
             // still open. Since `company` above is already a fully loaded, real object (not a
             // proxy), assigning it directly here is a plain in-memory field write, not a
-            // Hibernate-lazy-load - so the returned Vacancy stays safe to read from after this
-            // isolated transaction (and its session) has closed.
+            // Hibernate-lazy-load - so the returned Vacancy stays safe to read from even after
+            // this transaction eventually closes.
             Vacancy inserted = result.vacancy();
             inserted.setCompany(company);
             return new VacancyCreationResult(inserted, true);
         }
         // saveIfAbsent's own ON CONFLICT(url) DO NOTHING silently absorbed a raw-url duplicate -
-        // no exception was thrown, so this still commits normally; resolve and report the winner.
+        // no exception was thrown, so the transaction is still healthy; resolve and report the
+        // winner by canonical URL first, then by raw URL for legacy (pre-canonicalization) rows.
         return resolveExisting(command, canonical);
     }
 
@@ -171,13 +151,6 @@ public class VacancyCreationService {
                 .build();
     }
 
-    /**
-     * Called either from inside the still-open isolated transaction (the raw-{@code url} "already
-     * exists" case, which never threw) or after it has fully rolled back (the canonical-conflict
-     * case) - either way this always runs in a valid transaction, since a rollback only ever
-     * affects the isolated transaction itself, never the caller's own (suspended, untouched)
-     * transaction.
-     */
     private VacancyCreationResult resolveExisting(VacancyCreationCommand command, CanonicalVacancyUrl canonical) {
         return vacancyRepository.findByCanonicalUrl(canonical)
                 .or(() -> vacancyRepository.findByUrl(command.url()))

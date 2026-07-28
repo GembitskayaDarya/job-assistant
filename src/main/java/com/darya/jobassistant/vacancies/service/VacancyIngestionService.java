@@ -8,31 +8,48 @@ import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.policy.JobOfferMatchPolicy;
 import java.util.ArrayList;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 /**
- * Deliberately carries no {@code @Transactional}: every persistence operation - company
- * resolution/creation included - and its transactional correctness is now fully owned by {@link
- * VacancyCreationService#createIfAbsent}, which manages its own isolated {@code REQUIRES_NEW}
- * transaction internally (see that class's javadoc for why). This class only maps a {@link
- * JobOffer} into a provider-neutral {@link VacancyCreationCommand} and applies {@link
- * JobOfferMatchPolicy} - neither needs a surrounding transaction, and wrapping the whole {@link
- * #ingest} batch loop in one ambient transaction (as this class did before) would hold a database
- * connection open across many independent, already-self-contained creation attempts for no
- * benefit - and would have been exactly the kind of outer transaction that previously caused a
- * {@code vacancy_company_id_fkey} failure when company resolution lived here instead of inside
- * {@link VacancyCreationService}.
+ * Owns one physical transaction per {@link JobOffer}, not one for a whole {@link #ingest} batch.
+ * {@link VacancyCreationService#createIfAbsent} only ever joins an already-active transaction
+ * ({@code Propagation.MANDATORY}) - it does not start one itself - so this class is what starts a
+ * fresh {@code REQUIRES_NEW} transaction for each item and commits it before moving to the next.
+ *
+ * <p>That per-item boundary is deliberate: a single bad or duplicate offer must never roll back
+ * vacancies already committed for earlier offers in the same batch, and a batch-wide transaction
+ * would also hold one database connection open for the entire ingestion run for no benefit, since
+ * each offer's creation is already fully self-contained.
+ *
+ * <p>A canonical-URL race (see {@link CanonicalVacancyCreationConflictException}) is retried at
+ * most once per item, in a brand-new {@code REQUIRES_NEW} transaction - by that point the
+ * competing insert has committed, so the retry's {@link VacancyCreationService#createIfAbsent}
+ * simply finds it and reports {@code newlyCreated() == false}. A second conflict on the retry is
+ * not retried again; it is left to propagate to the caller, matching this class's existing
+ * per-item failure handling ({@link #ingest} skips it and logs a warning; {@link #persist}
+ * propagates it).
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class VacancyIngestionService {
 
     private final VacancyCreationService vacancyCreationService;
     private final JobOfferMatchPolicy jobOfferMatchPolicy;
+    private final TransactionTemplate perItemTransaction;
+
+    public VacancyIngestionService(
+            VacancyCreationService vacancyCreationService,
+            JobOfferMatchPolicy jobOfferMatchPolicy,
+            PlatformTransactionManager transactionManager) {
+        this.vacancyCreationService = vacancyCreationService;
+        this.jobOfferMatchPolicy = jobOfferMatchPolicy;
+        this.perItemTransaction = new TransactionTemplate(transactionManager);
+        this.perItemTransaction.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);
+    }
 
     /**
      * Deduplicates by canonical URL (see {@link VacancyCreationService}): an existing vacancy for
@@ -40,7 +57,7 @@ public class VacancyIngestionService {
      * upsert-free behavior.
      */
     public Vacancy persist(JobOffer jobOffer) {
-        return vacancyCreationService.createIfAbsent(buildCreationCommand(jobOffer)).vacancy();
+        return createWithRetry(buildCreationCommand(jobOffer)).vacancy();
     }
 
     /**
@@ -53,7 +70,9 @@ public class VacancyIngestionService {
      * offers that don't match are skipped without creating a {@code Company} or {@code Vacancy}
      * record. {@code fetchedCount} still reflects every offer passed in, so after filtering
      * {@code fetchedCount == newlyPersisted + alreadyKnown} is no longer guaranteed - offers may
-     * have been filtered out or failed during per-offer processing.
+     * have been filtered out or failed during per-offer processing. {@code persisted} only ever
+     * contains vacancies from committed, per-item transactions - never a row from an item whose
+     * transaction was rolled back.
      */
     public VacancyIngestionResult ingest(List<JobOffer> jobOffers) {
         List<Vacancy> persisted = new ArrayList<>();
@@ -65,7 +84,7 @@ public class VacancyIngestionService {
                 continue;
             }
             try {
-                VacancyCreationResult outcome = vacancyCreationService.createIfAbsent(buildCreationCommand(jobOffer));
+                VacancyCreationResult outcome = createWithRetry(buildCreationCommand(jobOffer));
                 if (outcome.newlyCreated()) {
                     persisted.add(outcome.vacancy());
                 } else {
@@ -77,6 +96,16 @@ public class VacancyIngestionService {
             }
         }
         return new VacancyIngestionResult(jobOffers.size(), persisted, alreadyKnown);
+    }
+
+    private VacancyCreationResult createWithRetry(VacancyCreationCommand command) {
+        try {
+            return perItemTransaction.execute(status -> vacancyCreationService.createIfAbsent(command));
+        } catch (CanonicalVacancyCreationConflictException e) {
+            log.debug("Lost a canonical URL race for \"{}\"; retrying once in a fresh transaction",
+                    command.title());
+            return perItemTransaction.execute(status -> vacancyCreationService.createIfAbsent(command));
+        }
     }
 
     private VacancyCreationCommand buildCreationCommand(JobOffer jobOffer) {

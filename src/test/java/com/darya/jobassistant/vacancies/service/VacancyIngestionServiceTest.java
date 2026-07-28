@@ -3,6 +3,7 @@ package com.darya.jobassistant.vacancies.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -22,15 +23,21 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 
 /**
  * All persistence - including company resolution/creation - now goes through {@link
- * VacancyCreationService} (see that class's own test for canonicalization/duplicate/concurrency/
- * company-atomicity coverage) - this class only tests {@link VacancyIngestionService}'s own
- * responsibilities: mapping a {@link JobOffer} into a provider-neutral {@link
- * VacancyCreationCommand}, match-policy filtering, and result aggregation. {@link
- * VacancyIngestionService} itself never resolves a {@code Company} or touches {@link
- * com.darya.jobassistant.companies.service.CompanyService}.
+ * VacancyCreationService} (see that class's own test for canonicalization/duplicate/company-
+ * atomicity coverage) - this class tests {@link VacancyIngestionService}'s own responsibilities:
+ * mapping a {@link JobOffer} into a provider-neutral {@link VacancyCreationCommand}, match-policy
+ * filtering, result aggregation, and - since the transaction-ownership redesign - owning one
+ * physical transaction per item with a single retry on a canonical-URL race. {@code
+ * transactionManager} is stubbed just enough for {@code TransactionTemplate} to actually invoke
+ * its callback (returning a mock {@link TransactionStatus} and no-op commit/rollback) - real
+ * physical transaction behavior is proven separately by {@code VacancyRepositoryTest}'s
+ * Testcontainers-backed tests. {@link VacancyIngestionService} itself never resolves a {@code
+ * Company} or touches {@link com.darya.jobassistant.companies.service.CompanyService}.
  */
 @ExtendWith(MockitoExtension.class)
 class VacancyIngestionServiceTest {
@@ -41,11 +48,18 @@ class VacancyIngestionServiceTest {
     @Mock
     private JobOfferMatchPolicy jobOfferMatchPolicy;
 
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
+    @Mock
+    private TransactionStatus transactionStatus;
+
     private VacancyIngestionService vacancyIngestionService;
 
     @BeforeEach
     void setUp() {
-        vacancyIngestionService = new VacancyIngestionService(vacancyCreationService, jobOfferMatchPolicy);
+        lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+        vacancyIngestionService = new VacancyIngestionService(vacancyCreationService, jobOfferMatchPolicy, transactionManager);
     }
 
     @Test
@@ -298,6 +312,108 @@ class VacancyIngestionServiceTest {
         VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(rejected, accepted));
 
         assertThat(result.persistedVacancies()).containsExactly(saved);
+    }
+
+    @Test
+    void persist_opensAndCommitsExactlyOneTransaction() {
+        JobOffer job = jobOffer("https://example.com/job-1");
+        Vacancy createdVacancy = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenReturn(new VacancyCreationResult(createdVacancy, true));
+
+        vacancyIngestionService.persist(job);
+
+        verify(transactionManager, times(1)).getTransaction(any());
+        verify(transactionManager, times(1)).commit(transactionStatus);
+        verify(transactionManager, never()).rollback(any());
+    }
+
+    @Test
+    void ingest_opensASeparateTransactionPerItem() {
+        JobOffer offerOne = jobOffer("https://example.com/job-1");
+        JobOffer offerTwo = jobOffer("https://example.com/job-2");
+        when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class))).thenReturn(
+                new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), true),
+                new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), true));
+
+        vacancyIngestionService.ingest(List.of(offerOne, offerTwo));
+
+        verify(transactionManager, times(2)).getTransaction(any());
+        verify(transactionManager, times(2)).commit(transactionStatus);
+    }
+
+    @Test
+    void persist_canonicalConflict_retriesOnceInAFreshTransaction_andReturnsTheWinner() {
+        JobOffer job = jobOffer("https://example.com/job-1");
+        Vacancy winner = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"))
+                .thenReturn(new VacancyCreationResult(winner, false));
+
+        Vacancy result = vacancyIngestionService.persist(job);
+
+        assertThat(result).isSameAs(winner);
+        verify(vacancyCreationService, times(2)).createIfAbsent(any());
+        // First (failed) transaction rolled back, second (retry) transaction committed.
+        verify(transactionManager, times(2)).getTransaction(any());
+        verify(transactionManager, times(1)).rollback(transactionStatus);
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @Test
+    void ingest_canonicalConflict_retriesOnceThenSucceeds_andCountsAsAlreadyKnown() {
+        JobOffer offer = jobOffer("https://example.com/job-1");
+        when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
+        Vacancy winner = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"))
+                .thenReturn(new VacancyCreationResult(winner, false));
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(offer));
+
+        assertThat(result.persistedVacancies()).isEmpty();
+        assertThat(result.alreadyKnownCount()).isEqualTo(1);
+        verify(vacancyCreationService, times(2)).createIfAbsent(any());
+    }
+
+    @Test
+    void ingest_canonicalConflictRepeatsOnRetry_isSkippedWithoutAThirdAttempt() {
+        JobOffer failing = jobOffer("https://example.com/job-1");
+        JobOffer succeeding = jobOffer("https://example.com/job-2");
+        when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
+        Vacancy saved = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race again"))
+                .thenReturn(new VacancyCreationResult(saved, true));
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(failing, succeeding));
+
+        assertThat(result.fetchedCount()).isEqualTo(2);
+        assertThat(result.persistedVacancies()).containsExactly(saved);
+        // Exactly 2 attempts for the failing offer (no unbounded retry loop), then 1 for the next.
+        verify(vacancyCreationService, times(3)).createIfAbsent(any());
+    }
+
+    @Test
+    void ingest_oneItemFailure_doesNotRollBackOrRepeatAlreadyCommittedEarlierItems() {
+        JobOffer succeeding = jobOffer("https://example.com/job-1");
+        JobOffer failingTwice = jobOffer("https://example.com/job-2");
+        when(jobOfferMatchPolicy.matches(any())).thenReturn(true);
+        Vacancy saved = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenReturn(new VacancyCreationResult(saved, true))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race again"));
+
+        VacancyIngestionResult result = vacancyIngestionService.ingest(List.of(succeeding, failingTwice));
+
+        assertThat(result.persistedVacancies()).containsExactly(saved);
+        // The first item's own transaction only ever committed once - never retried or rolled
+        // back on account of the second item's failure.
+        verify(transactionManager, times(1)).commit(transactionStatus);
+        verify(vacancyCreationService, times(3)).createIfAbsent(any());
     }
 
     private JobOffer jobOffer(String url) {

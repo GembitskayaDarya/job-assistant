@@ -140,7 +140,7 @@ class VacancyImportWorkflowEndToEndTest {
         VacancyJobOfferMapper vacancyJobOfferMapper = new VacancyJobOfferMapper();
         VacancyQueryService vacancyQueryService = new VacancyQueryService(vacancyRepository);
         VacancyCreationService vacancyCreationService =
-                new VacancyCreationService(vacancyRepository, companyService, transactionManager);
+                new VacancyCreationService(vacancyRepository, companyService);
         JobAnalysisService jobAnalysisService = new JobAnalysisService(jobAnalysisAiPort);
         AnalyzeVacancyService analyzeVacancyService = new AnalyzeVacancyService(
                 vacancyQueryService, vacancyJobOfferMapper, candidateProfileProvider, jobAnalysisService,

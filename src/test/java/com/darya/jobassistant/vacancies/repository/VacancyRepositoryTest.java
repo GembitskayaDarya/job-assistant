@@ -12,6 +12,7 @@ import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyPersistenceResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.service.CanonicalVacancyCreationConflictException;
 import com.darya.jobassistant.vacancies.service.VacancyCreationService;
 import com.darya.jobassistant.vacancies.url.CanonicalVacancyUrl;
 import com.darya.jobassistant.vacancies.url.VacancyUrlCanonicalizer;
@@ -230,24 +231,25 @@ class VacancyRepositoryTest {
 
     @Test
     void vacancyCreationService_urlVariantsDifferingByCosmeticFormatting_resolveToOneVacancy() {
-        VacancyCreationService vacancyCreationService =
-                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService());
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String canonicalForm = "https://example.com/jobs/" + suffix;
         // Tracking parameter, uppercase scheme/host, default port, fragment, non-root trailing slash.
         String messyVariant = "HTTPS://EXAMPLE.COM:443/jobs/" + suffix + "/?utm_source=linkedin#details";
 
-        VacancyCreationResult first = vacancyCreationService.createIfAbsent(command(company.getName(), canonicalForm));
-        VacancyCreationResult second = vacancyCreationService.createIfAbsent(command(company.getName(), messyVariant));
+        // Each call owns and commits its own transaction, exactly like a real caller
+        // (VacancyIngestionService/VacancyImportReviewService) would - VacancyCreationService
+        // itself no longer opens one (see its javadoc).
+        VacancyCreationResult first = createInOwnTransaction(vacancyCreationService, command(company.getName(), canonicalForm));
+        VacancyCreationResult second = createInOwnTransaction(vacancyCreationService, command(company.getName(), messyVariant));
 
         assertThat(first.newlyCreated()).isTrue();
         assertThat(second.newlyCreated()).isFalse();
         assertThat(second.vacancy().getId()).isEqualTo(first.vacancy().getId());
-        // Scoped to this test's own canonical value, not the whole table: VacancyCreationService
-        // commits each creation attempt in its own isolated transaction (by design - see its
-        // javadoc), so @DataJpaTest's per-method rollback does not undo rows earlier test methods
-        // in this class already committed.
+        // Scoped to this test's own canonical value, not the whole table: each call above
+        // committed independently and durably, so @DataJpaTest's per-method rollback does not
+        // undo rows earlier test methods in this class already committed.
         assertThat(vacancyRepository.findAll().stream()
                 .filter(v -> canonicalize(canonicalForm).value().equals(v.getCanonicalUrl()))
                 .count()).isEqualTo(1);
@@ -255,15 +257,14 @@ class VacancyRepositoryTest {
 
     @Test
     void vacancyCreationService_urlsDifferingByMeaningfulQueryParameter_remainDistinct() {
-        VacancyCreationService vacancyCreationService =
-                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService());
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String english = "https://example.com/jobs/" + suffix + "?language=en";
         String polish = "https://example.com/jobs/" + suffix + "?language=pl";
 
-        VacancyCreationResult first = vacancyCreationService.createIfAbsent(command(company.getName(), english));
-        VacancyCreationResult second = vacancyCreationService.createIfAbsent(command(company.getName(), polish));
+        VacancyCreationResult first = createInOwnTransaction(vacancyCreationService, command(company.getName(), english));
+        VacancyCreationResult second = createInOwnTransaction(vacancyCreationService, command(company.getName(), polish));
 
         assertThat(first.newlyCreated()).isTrue();
         assertThat(second.newlyCreated()).isTrue();
@@ -272,15 +273,14 @@ class VacancyRepositoryTest {
 
     @Test
     void vacancyCreationService_httpAndHttps_remainDistinct() {
-        VacancyCreationService vacancyCreationService =
-                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService());
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
 
         VacancyCreationResult httpResult =
-                vacancyCreationService.createIfAbsent(command(company.getName(), "http://example.com/jobs/" + suffix));
+                createInOwnTransaction(vacancyCreationService, command(company.getName(), "http://example.com/jobs/" + suffix));
         VacancyCreationResult httpsResult =
-                vacancyCreationService.createIfAbsent(command(company.getName(), "https://example.com/jobs/" + suffix));
+                createInOwnTransaction(vacancyCreationService, command(company.getName(), "https://example.com/jobs/" + suffix));
 
         assertThat(httpResult.newlyCreated()).isTrue();
         assertThat(httpsResult.newlyCreated()).isTrue();
@@ -293,15 +293,16 @@ class VacancyRepositoryTest {
      * PostgreSQL/Hibernate stack raises for two genuinely concurrent callers is correctly
      * recognized and both futures complete cleanly - neither with a raw {@code
      * DataIntegrityViolationException}, {@code SQLException}, {@code
-     * UnexpectedRollbackException}, nor a transaction-aborted error - because the losing
-     * insert's failure is isolated to its own {@code REQUIRES_NEW} transaction and rolled back
-     * before winner resolution ever runs.
+     * UnexpectedRollbackException}, nor a transaction-aborted error. Each thread owns its own
+     * {@code REQUIRES_NEW} transaction per attempt and retries exactly once on a {@link
+     * CanonicalVacancyCreationConflictException} - the same pattern {@code
+     * VacancyIngestionService} and {@code VacancyImportReviewService} use in production, now that
+     * {@code VacancyCreationService} itself never resolves the winner inside a failed transaction.
      */
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void vacancyCreationService_concurrentCallsWithDifferentRawUrlsSameCanonical_exactlyOneRowCreated() throws Exception {
-        VacancyCreationService vacancyCreationService =
-                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService());
         Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
         String suffix = UUID.randomUUID().toString();
         String firstUrl = "https://example.com/jobs/" + suffix;
@@ -312,16 +313,17 @@ class VacancyRepositoryTest {
             List<Future<VacancyCreationResult>> futures = new ArrayList<>();
             futures.add(executor.submit(() -> {
                 barrier.await();
-                return vacancyCreationService.createIfAbsent(command(company.getName(), firstUrl));
+                return createWithRetry(vacancyCreationService, command(company.getName(), firstUrl));
             }));
             futures.add(executor.submit(() -> {
                 barrier.await();
-                return vacancyCreationService.createIfAbsent(command(company.getName(), secondUrl));
+                return createWithRetry(vacancyCreationService, command(company.getName(), secondUrl));
             }));
 
             // Both futures must complete without throwing at all - get() would rethrow (wrapped
             // in ExecutionException) any DataIntegrityViolationException, SQLException,
-            // UnexpectedRollbackException, or transaction-aborted error that leaked out.
+            // UnexpectedRollbackException, or transaction-aborted error that leaked out of the
+            // retry helper.
             List<VacancyCreationResult> results = new ArrayList<>();
             for (Future<VacancyCreationResult> future : futures) {
                 results.add(future.get(10, TimeUnit.SECONDS));
@@ -346,35 +348,29 @@ class VacancyRepositoryTest {
     }
 
     /**
-     * Directly demonstrates the bug this correction fixes: wraps {@code createIfAbsent} the same
-     * way {@code VacancyImportReviewService} does (an outer {@code REQUIRES_NEW} transaction
-     * around the whole call), forces a canonical conflict inside it, and then performs another
-     * write in that *same* outer transaction afterward - proving the outer transaction was never
-     * poisoned by the isolated insert's rollback, unlike before this correction (where the
-     * conflict and the outer transaction shared one physical transaction, and the outer
-     * transaction would have been left aborted).
+     * The core proof this whole correction exists for: if a caller's transaction creates a
+     * {@code Vacancy}/{@code Company} and then something *else* in that same transaction fails
+     * (here simulated with a direct {@code setRollbackOnly()}, standing in for e.g. a losing
+     * conditional session-completion update in {@code VacancyImportReviewService}), no orphan
+     * {@code Vacancy} or {@code Company} survives - both roll back together, atomically, because
+     * {@link VacancyCreationService} no longer commits independently of its caller.
      */
     @Test
-    void vacancyCreationService_canonicalConflict_doesNotPoisonCallersOuterTransaction() {
-        VacancyCreationService vacancyCreationService =
-                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
-        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
-        outerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        Company company = companyRepository.save(Company.builder().name("Acme-" + UUID.randomUUID()).build());
-        String suffix = UUID.randomUUID().toString();
-        vacancyCreationService.createIfAbsent(command(company.getName(), "https://example.com/jobs/" + suffix));
+    void vacancyCreationService_outerTransactionRolledBackAfterCreation_leavesNoOrphanVacancyOrCompany() {
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService());
+        String companyName = "Acme-" + UUID.randomUUID();
+        String url = uniqueUrl();
+        TransactionTemplate outerTransaction = requiresNewTransaction();
 
-        String conflictingUrl = "https://example.com/jobs/" + suffix + "?utm_source=linkedin";
-        VacancyCreationResult resultAfterConflictInsideOuterTransaction = outerTransaction.execute(status -> {
-            VacancyCreationResult conflictResult = vacancyCreationService.createIfAbsent(command(company.getName(), conflictingUrl));
-            // If the isolated-insert rollback had poisoned this outer transaction, this second,
-            // unrelated write would fail here with a transaction-aborted error.
-            companyRepository.save(Company.builder().name("Another Co - " + suffix).build());
-            return conflictResult;
+        VacancyCreationResult result = outerTransaction.execute(status -> {
+            VacancyCreationResult created = vacancyCreationService.createIfAbsent(command(companyName, url));
+            status.setRollbackOnly();
+            return created;
         });
 
-        assertThat(resultAfterConflictInsideOuterTransaction.newlyCreated()).isFalse();
-        assertThat(companyRepository.findAll().stream().anyMatch(c -> c.getName().equals("Another Co - " + suffix))).isTrue();
+        assertThat(result.newlyCreated()).isTrue();
+        assertThat(vacancyRepository.findByCanonicalUrl(canonicalize(url))).isEmpty();
+        assertThat(companyRepository.findByNameIgnoreCase(companyName)).isEmpty();
     }
 
     /**
@@ -389,13 +385,12 @@ class VacancyRepositoryTest {
      */
     @Test
     void vacancyCreationService_unrelatedIntegrityViolation_isPropagatedNotSwallowed() {
-        VacancyCreationService vacancyCreationService =
-                new VacancyCreationService(vacancyRepository, companyService(), transactionManager);
+        VacancyCreationService vacancyCreationService = new VacancyCreationService(vacancyRepository, companyService());
         VacancyCreationCommand oversizedCurrency = new VacancyCreationCommand(
                 "Acme-" + UUID.randomUUID(), "Backend Engineer", "Build backend services", uniqueUrl(),
                 null, null, null, null, "THIS-CURRENCY-CODE-IS-WAY-TOO-LONG", null, "remoteok", null);
 
-        assertThatThrownBy(() -> vacancyCreationService.createIfAbsent(oversizedCurrency))
+        assertThatThrownBy(() -> createInOwnTransaction(vacancyCreationService, oversizedCurrency))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -441,5 +436,34 @@ class VacancyRepositoryTest {
         return new VacancyCreationCommand(
                 companyName, "Backend Engineer", "Build backend services", url,
                 null, null, null, null, null, null, "remoteok", null);
+    }
+
+    /**
+     * Mirrors how every real production caller uses {@link VacancyCreationService}: it never
+     * opens its own transaction (see its javadoc), so a single production-equivalent call always
+     * owns and commits one {@code REQUIRES_NEW} transaction of its own.
+     */
+    private VacancyCreationResult createInOwnTransaction(VacancyCreationService vacancyCreationService, VacancyCreationCommand command) {
+        return requiresNewTransaction().execute(status -> vacancyCreationService.createIfAbsent(command));
+    }
+
+    /**
+     * Mirrors {@code VacancyIngestionService#createWithRetry}: one {@code REQUIRES_NEW}
+     * transaction per attempt, retried exactly once - in a fresh transaction - if the first
+     * attempt loses a canonical-URL race.
+     */
+    private VacancyCreationResult createWithRetry(VacancyCreationService vacancyCreationService, VacancyCreationCommand command) {
+        TransactionTemplate perAttemptTransaction = requiresNewTransaction();
+        try {
+            return perAttemptTransaction.execute(status -> vacancyCreationService.createIfAbsent(command));
+        } catch (CanonicalVacancyCreationConflictException firstConflict) {
+            return perAttemptTransaction.execute(status -> vacancyCreationService.createIfAbsent(command));
+        }
+    }
+
+    private TransactionTemplate requiresNewTransaction() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return template;
     }
 }

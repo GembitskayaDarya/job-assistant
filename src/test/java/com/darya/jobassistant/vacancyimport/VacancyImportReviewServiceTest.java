@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +19,7 @@ import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import com.darya.jobassistant.vacancies.service.CanonicalVacancyCreationConflictException;
 import com.darya.jobassistant.vacancies.service.VacancyCreationService;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
@@ -240,7 +242,8 @@ class VacancyImportReviewServiceTest {
     }
 
     @Test
-    void save_missingDraft_isReportedSafely() {
+    void save_missingDraft_isReportedSafelyAndRollsBackTheAttempt() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         VacancyImportSession session = sessionAtWaitingForConfirmation();
         when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.empty());
@@ -249,6 +252,7 @@ class VacancyImportReviewServiceTest {
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.DraftMissing(session.getId()));
         verify(vacancyCreationService, never()).createIfAbsent(any());
+        verify(transactionStatus).setRollbackOnly();
     }
 
     @Test
@@ -270,20 +274,26 @@ class VacancyImportReviewServiceTest {
         Company company = company("Example Company");
         Vacancy inserted = vacancy(company);
         Vacancy winningVacancy = vacancy(company);
+        // Reload #1: review()'s own initial load. Reload #2: attemptSave's own reload-and-
+        // revalidate at the top of its transaction - session is still WAITING_FOR_CONFIRMATION at
+        // that point, since nothing has changed it yet; only the *conditional completion update*
+        // below is what actually loses the race. Reload #3+: resolveLostRace's reload after that
+        // loss, finding the concurrent winner.
         when(sessionRepository.findSessionById(session.getId()))
+                .thenReturn(Optional.of(session))
                 .thenReturn(Optional.of(session))
                 .thenReturn(Optional.of(winnerSession(session.getId(), winningVacancy.getId())));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
         when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(inserted, true));
         when(sessionRepository.completeIfWaitingForConfirmation(eq(session.getId()), eq(inserted.getId()), any())).thenReturn(false);
-        when(vacancyJobOfferMapper.toJobOffer(inserted)).thenReturn(jobOffer());
         when(vacancyRepository.findByIdWithCompany(winningVacancy.getId())).thenReturn(Optional.of(winningVacancy));
         when(vacancyJobOfferMapper.toJobOffer(winningVacancy)).thenReturn(jobOffer());
 
         ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
 
         verify(transactionStatus).setRollbackOnly();
+        verify(vacancyCreationService, times(1)).createIfAbsent(any());
         assertThat(result).isInstanceOf(ReviewVacancyImportResult.Saved.class);
         assertThat(((ReviewVacancyImportResult.Saved) result).newlyCreated()).isFalse();
     }
@@ -303,6 +313,78 @@ class VacancyImportReviewServiceTest {
 
         assertThat(result).isEqualTo(new ReviewVacancyImportResult.Failed());
         verify(vacancyRepository, never()).findByIdWithCompany(any());
+    }
+
+    @Test
+    void save_canonicalConflict_retriesOnceInAFreshTransaction_thenSucceedsWithTheWinner() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        VacancyImportDraft draft = draft(session.getId(), validExtractedData());
+        Vacancy winner = vacancy(company("Example Company"));
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+        when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"))
+                .thenReturn(new VacancyCreationResult(winner, false));
+        when(sessionRepository.completeIfWaitingForConfirmation(session.getId(), winner.getId(), NOW)).thenReturn(true);
+        when(vacancyJobOfferMapper.toJobOffer(winner)).thenReturn(jobOffer());
+
+        ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
+
+        assertThat(result).isEqualTo(new ReviewVacancyImportResult.Saved(session.getId(), jobOffer(), false));
+        verify(vacancyCreationService, times(2)).createIfAbsent(any());
+        // The first (failed) attempt's whole transaction rolled back; the retry's fresh
+        // transaction committed - never a partial commit of the first attempt's work.
+        verify(transactionManager, times(1)).rollback(transactionStatus);
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @Test
+    void save_canonicalConflictOnBothAttempts_isReportedFailedAfterExactlyTwoAttempts() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        VacancyImportDraft draft = draft(session.getId(), validExtractedData());
+        when(sessionRepository.findSessionById(session.getId())).thenReturn(Optional.of(session));
+        when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race again"));
+
+        ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
+
+        assertThat(result).isEqualTo(new ReviewVacancyImportResult.Failed());
+        // No unbounded retry loop: exactly two attempts, both rolled back, never a commit.
+        verify(vacancyCreationService, times(2)).createIfAbsent(any());
+        verify(transactionManager, times(2)).rollback(transactionStatus);
+        verify(transactionManager, never()).commit(any());
+    }
+
+    @Test
+    void save_canonicalConflictThenSessionAlreadyCompletedByConcurrentSave_reportsExistingCompletedResultWithoutASecondVacancy() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        VacancyImportSession session = sessionAtWaitingForConfirmation();
+        VacancyImportDraft draft = draft(session.getId(), validExtractedData());
+        Vacancy winner = vacancy(company("Example Company"));
+        // Reload #1: review(). Reload #2: the first (failing) attemptSave's own reload - session
+        // is still WAITING_FOR_CONFIRMATION at that point. Reload #3+: the retry's attemptSave
+        // reload, by which point a *different*, concurrent Save has already completed the session
+        // with its own winning vacancy.
+        when(sessionRepository.findSessionById(session.getId()))
+                .thenReturn(Optional.of(session))
+                .thenReturn(Optional.of(session))
+                .thenReturn(Optional.of(winnerSession(session.getId(), winner.getId())));
+        when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.of(draft));
+        when(vacancyCreationService.createIfAbsent(any(VacancyCreationCommand.class)))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"));
+        when(vacancyRepository.findByIdWithCompany(winner.getId())).thenReturn(Optional.of(winner));
+        when(vacancyJobOfferMapper.toJobOffer(winner)).thenReturn(jobOffer());
+
+        ReviewVacancyImportResult result = service.review(session.getId(), CHAT_ID, USER_ID, VacancyImportAction.SAVE);
+
+        assertThat(result).isEqualTo(new ReviewVacancyImportResult.Saved(session.getId(), jobOffer(), false));
+        // The retry's own attemptSave found the session already COMPLETED and stopped before ever
+        // calling createIfAbsent a second time - no second Vacancy was ever attempted.
+        verify(vacancyCreationService, times(1)).createIfAbsent(any());
     }
 
     // ---- Retry ----
