@@ -15,6 +15,7 @@ import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
+import com.darya.jobassistant.vacancyextraction.model.VacancyExtractionRequest;
 import com.darya.jobassistant.vacancyextraction.port.VacancyExtractionPort;
 import com.darya.jobassistant.vacancyimport.dto.AnalyzeImportedVacancyResult;
 import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
@@ -85,7 +86,7 @@ class VacancyImportWorkflowIntegrationTest extends AbstractIntegrationTest {
         ExtractedVacancyData extracted = new ExtractedVacancyData(
                 "Senior Java Backend Engineer", "Integration Test Co", "Remote", RemotePolicy.REMOTE,
                 List.of("B2B"), List.of("Java", "Kafka"), null);
-        when(vacancyExtractionPort.extract(DESCRIPTION)).thenReturn(extracted);
+        when(vacancyExtractionPort.extract(any(VacancyExtractionRequest.class))).thenReturn(extracted);
         JobAnalysis analysis = new JobAnalysis(
                 90, List.of("Strong match"), List.of(), List.of(), List.of(),
                 "6 years vs. no stated requirement.", "Remote preference matches.", "Great fit");

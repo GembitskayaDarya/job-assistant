@@ -97,10 +97,17 @@ firecrawl:
   max-markdown-chars: ${FIRECRAWL_MAX_MARKDOWN_CHARS:100000}
 
 job-discovery:
+  enabled: ${JOB_DISCOVERY_ENABLED:false}
   query-planning:
     max-queries: ${JOB_DISCOVERY_MAX_QUERIES:5}
     results-per-query: ${JOB_DISCOVERY_RESULTS_PER_QUERY:10}
     max-skills-per-query: ${JOB_DISCOVERY_MAX_SKILLS_PER_QUERY:3}
+  execution:
+    max-queries-per-run: ${JOB_DISCOVERY_MAX_QUERIES_PER_RUN:3}
+    max-scrapes-per-run: ${JOB_DISCOVERY_MAX_SCRAPES_PER_RUN:5}
+    max-extractions-per-run: ${JOB_DISCOVERY_MAX_EXTRACTIONS_PER_RUN:5}
+    max-unique-references-per-run: ${JOB_DISCOVERY_MAX_UNIQUE_REFERENCES_PER_RUN:30}
+    max-reported-issues: ${JOB_DISCOVERY_MAX_REPORTED_ISSUES:50}
 
 vacancy-import:
   session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}
@@ -112,6 +119,10 @@ vacancy-import:
 
 job-analysis:
   claim-stale-after: ${JOB_ANALYSIS_CLAIM_STALE_AFTER:2m}
+
+vacancy-extraction:
+  max-input-chars: ${VACANCY_EXTRACTION_MAX_INPUT_CHARS:40000}
+  tail-input-chars: ${VACANCY_EXTRACTION_TAIL_INPUT_CHARS:10000}
 
 vacancy-canonical-url-audit:
   enabled: ${VACANCY_CANONICAL_URL_AUDIT_ENABLED:false}

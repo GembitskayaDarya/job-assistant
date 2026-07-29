@@ -61,6 +61,21 @@ public class VacancyIngestionService {
     }
 
     /**
+     * Provider-neutral persistence entry point for any caller that already has a fully-built
+     * {@link VacancyCreationCommand} - e.g. {@code JobDiscoveryService}, whose extracted vacancy
+     * data (location, remote mode, salary, posted date) {@link #persist(JobOffer)} has no way to
+     * carry. Reuses the exact same per-item {@code REQUIRES_NEW} transaction and
+     * canonical-conflict retry-once behavior as {@link #persist(JobOffer)}/{@link #ingest} - {@code
+     * createWithRetry} is the one implementation of that transaction boundary in the whole project;
+     * this overload does not duplicate it. Unlike {@link #persist(JobOffer)}, the full {@link
+     * VacancyCreationResult} is returned (not just the {@code Vacancy}) so a caller can distinguish
+     * a newly created vacancy from one that already existed.
+     */
+    public VacancyCreationResult persist(VacancyCreationCommand command) {
+        return createWithRetry(command);
+    }
+
+    /**
      * Batch counterpart used by automatic ingestion. Novelty is decided by {@link
      * VacancyCreationService#createIfAbsent}, which is safe under concurrent ingestion callers -
      * see that class for how the application-level canonical lookup and the database's partial

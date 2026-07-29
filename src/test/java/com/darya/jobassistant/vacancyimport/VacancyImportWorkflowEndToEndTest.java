@@ -33,8 +33,12 @@ import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import com.darya.jobassistant.vacancies.service.VacancyCreationService;
 import com.darya.jobassistant.vacancies.service.VacancyQueryService;
+import com.darya.jobassistant.vacancyextraction.VacancyExtractionContentPreparer;
+import com.darya.jobassistant.vacancyextraction.VacancyExtractionService;
+import com.darya.jobassistant.vacancyextraction.config.VacancyExtractionProperties;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
+import com.darya.jobassistant.vacancyextraction.model.VacancyExtractionRequest;
 import com.darya.jobassistant.vacancyextraction.port.VacancyExtractionPort;
 import com.darya.jobassistant.vacancyimport.config.VacancyImportProperties;
 import com.darya.jobassistant.vacancyimport.dto.AnalyzeImportedVacancyResult;
@@ -133,8 +137,10 @@ class VacancyImportWorkflowEndToEndTest {
     void setUp() {
         lenient().when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
 
+        VacancyExtractionService extractionService = new VacancyExtractionService(
+                vacancyExtractionPort, new VacancyExtractionContentPreparer(new VacancyExtractionProperties(40_000, 10_000)));
         importService = new VacancyImportService(
-                sessionRepository, draftRepository, vacancyExtractionPort, CLOCK, new VacancyImportProperties(TTL), transactionManager);
+                sessionRepository, draftRepository, extractionService, CLOCK, new VacancyImportProperties(TTL), transactionManager);
 
         CompanyService companyService = new CompanyService(companyRepository, new CompanyMapper());
         VacancyJobOfferMapper vacancyJobOfferMapper = new VacancyJobOfferMapper();
@@ -187,7 +193,7 @@ class VacancyImportWorkflowEndToEndTest {
         ExtractedVacancyData extracted = new ExtractedVacancyData(
                 "Senior Java Backend Engineer", "Acme Corp", "Remote / Europe", RemotePolicy.REMOTE,
                 List.of("B2B"), List.of("Java", "Kafka", "AWS"), "20000-25000 PLN");
-        when(vacancyExtractionPort.extract(DESCRIPTION)).thenReturn(extracted);
+        when(vacancyExtractionPort.extract(any(VacancyExtractionRequest.class))).thenReturn(extracted);
 
         ContinueVacancyImportResult result = importService.handleText(CHAT_ID, USER_ID, DESCRIPTION);
 
@@ -201,7 +207,7 @@ class VacancyImportWorkflowEndToEndTest {
 
         // Extraction is a separate AI operation from analysis: only the extraction port has been
         // touched so far.
-        verify(vacancyExtractionPort, times(1)).extract(DESCRIPTION);
+        verify(vacancyExtractionPort, times(1)).extract(any(VacancyExtractionRequest.class));
         verifyNoInteractions(jobAnalysisAiPort);
         return draft;
     }

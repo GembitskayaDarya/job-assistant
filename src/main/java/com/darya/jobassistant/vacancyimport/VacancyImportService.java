@@ -1,9 +1,9 @@
 package com.darya.jobassistant.vacancyimport;
 
+import com.darya.jobassistant.vacancyextraction.VacancyExtractionService;
 import com.darya.jobassistant.vacancyextraction.exception.VacancyExtractionException;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
-import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyDataValidator;
-import com.darya.jobassistant.vacancyextraction.port.VacancyExtractionPort;
+import com.darya.jobassistant.vacancyextraction.model.VacancyExtractionRequest;
 import com.darya.jobassistant.vacancyimport.config.VacancyImportProperties;
 import com.darya.jobassistant.vacancyimport.dto.CancelVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
@@ -50,13 +50,15 @@ import org.springframework.transaction.support.TransactionTemplate;
  * type to translate between.
  *
  * <p>{@link #extract} follows the same no-ambient-transaction discipline for the AI extraction
- * call: {@link VacancyExtractionPort#extract} runs between two independent {@link
- * TransactionTemplate} calls (persist-the-EXTRACTING-state was already committed by {@link
- * #acceptDescription}; the draft insert and {@code EXTRACTING -> WAITING_FOR_CONFIRMATION}
- * transition happen together afterwards), never inside one. Because this class has no
- * class-level {@code @Transactional} to begin with, {@link #acceptDescription} calling {@link
- * #extract} through a plain {@code this} reference is safe - there is no Spring transaction proxy
- * behavior being bypassed, unlike the self-invocation hazard {@code @Transactional} methods have.
+ * call: {@link VacancyExtractionService#extract} - the shared extraction capability also usable by
+ * a future automatic-discovery caller, see {@code vacancyextraction} package - runs between two
+ * independent {@link TransactionTemplate} calls (persist-the-EXTRACTING-state was already
+ * committed by {@link #acceptDescription}; the draft insert and {@code EXTRACTING ->
+ * WAITING_FOR_CONFIRMATION} transition happen together afterwards), never inside one. Because this
+ * class has no class-level {@code @Transactional} to begin with, {@link #acceptDescription}
+ * calling {@link #extract} through a plain {@code this} reference is safe - there is no Spring
+ * transaction proxy behavior being bypassed, unlike the self-invocation hazard {@code
+ * @Transactional} methods have.
  */
 @Slf4j
 @Service
@@ -69,7 +71,7 @@ public class VacancyImportService
 
     private final VacancyImportSessionRepository repository;
     private final VacancyImportDraftRepository draftRepository;
-    private final VacancyExtractionPort extractionPort;
+    private final VacancyExtractionService extractionService;
     private final Clock clock;
     private final VacancyImportProperties properties;
     private final TransactionTemplate newTransaction;
@@ -77,13 +79,13 @@ public class VacancyImportService
     public VacancyImportService(
             VacancyImportSessionRepository repository,
             VacancyImportDraftRepository draftRepository,
-            VacancyExtractionPort extractionPort,
+            VacancyExtractionService extractionService,
             Clock clock,
             VacancyImportProperties properties,
             PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.draftRepository = draftRepository;
-        this.extractionPort = extractionPort;
+        this.extractionService = extractionService;
         this.clock = clock;
         this.properties = properties;
         this.newTransaction = new TransactionTemplate(transactionManager);
@@ -283,8 +285,7 @@ public class VacancyImportService
 
         ExtractedVacancyData validated;
         try {
-            ExtractedVacancyData raw = extractionPort.extract(session.getRawDescription());
-            validated = ExtractedVacancyDataValidator.validate(raw);
+            validated = extractionService.extract(VacancyExtractionRequest.ofPastedDescription(session.getRawDescription()));
         } catch (VacancyExtractionException failure) {
             log.warn("Vacancy extraction failed for session {}", sessionId, failure);
             session.fail(clock);

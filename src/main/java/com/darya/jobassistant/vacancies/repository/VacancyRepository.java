@@ -51,6 +51,24 @@ public interface VacancyRepository extends JpaRepository<Vacancy, UUID> {
     @Query("select v from Vacancy v join fetch v.company where v.canonicalUrl = :canonicalUrlValue")
     Optional<Vacancy> findByCanonicalUrlValue(@Param("canonicalUrlValue") String canonicalUrlValue);
 
+    /**
+     * Lightweight existence-only pre-check by canonical URL - used by {@code JobDiscoveryService}
+     * as a cost optimization before any paid Scrape/AI Extraction call, so a page already known to
+     * be persisted is never re-fetched or re-extracted. Loads no columns beyond the existence
+     * check itself - never {@code company}, {@code description}, or any other data, unlike {@link
+     * #findByCanonicalUrl}. Not a substitute for {@link
+     * com.darya.jobassistant.vacancies.service.VacancyCreationService}'s own transactional
+     * lookup-then-insert: a concurrent transaction may still insert the same canonical URL between
+     * this check and the caller's next action, which is why persistence still goes through the
+     * canonical-conflict retry path regardless of what this method returned.
+     */
+    default boolean existsByCanonicalUrl(CanonicalVacancyUrl canonicalUrl) {
+        return existsByCanonicalUrlValue(canonicalUrl.value());
+    }
+
+    @Query("select case when count(v) > 0 then true else false end from Vacancy v where v.canonicalUrl = :canonicalUrlValue")
+    boolean existsByCanonicalUrlValue(@Param("canonicalUrlValue") String canonicalUrlValue);
+
     @Query("select v from Vacancy v join fetch v.company where v.id = :id")
     Optional<Vacancy> findByIdWithCompany(UUID id);
 

@@ -72,7 +72,7 @@ class JobSearchServiceTest {
         List<SearchResult> results = jobSearchService.search("backend");
 
         assertThat(results).isEmpty();
-        verify(vacancyIngestionService, never()).persist(any());
+        verify(vacancyIngestionService, never()).persist(any(JobOffer.class));
     }
 
     @Test
@@ -98,7 +98,7 @@ class JobSearchServiceTest {
         List<SearchResult> results = jobSearchService.search("backend");
 
         assertThat(results).isEmpty();
-        verify(vacancyIngestionService, never()).persist(any());
+        verify(vacancyIngestionService, never()).persist(any(JobOffer.class));
     }
 
     private JobOffer jobOffer(String title, String company, String description, String url) {

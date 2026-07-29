@@ -1,7 +1,9 @@
 package com.darya.jobassistant.vacancyextraction.model;
 
 import com.darya.jobassistant.vacancyextraction.exception.VacancyExtractionException;
+import java.math.BigDecimal;
 import java.util.List;
+import org.springframework.util.StringUtils;
 
 /**
  * Application-owned validation of AI-extracted vacancy data. Successful JSON deserialization only
@@ -16,6 +18,7 @@ public final class ExtractedVacancyDataValidator {
     private static final int MAX_COMPANY_LENGTH = 300;
     private static final int MAX_LOCATION_LENGTH = 300;
     private static final int MAX_SALARY_TEXT_LENGTH = 200;
+    private static final int MAX_CURRENCY_LENGTH = 10;
     private static final int MAX_LIST_SIZE = 30;
     private static final int MAX_LIST_ENTRY_LENGTH = 100;
 
@@ -32,9 +35,40 @@ public final class ExtractedVacancyDataValidator {
         requireMaxLength(data.company(), "company", MAX_COMPANY_LENGTH);
         requireMaxLength(data.location(), "location", MAX_LOCATION_LENGTH);
         requireMaxLength(data.salaryText(), "salary text", MAX_SALARY_TEXT_LENGTH);
+        requireMaxLength(data.currency(), "currency", MAX_CURRENCY_LENGTH);
         requireBoundedList(data.contractTypes(), "contract types");
         requireBoundedList(data.requiredSkills(), "required skills");
+        requirePositiveSalary(data.salaryMin(), "salary minimum");
+        requirePositiveSalary(data.salaryMax(), "salary maximum");
+        requireSalaryRangeOrdered(data);
+        requireCurrencyOnlyWithSalaryInformation(data);
         return data;
+    }
+
+    private static void requirePositiveSalary(BigDecimal value, String field) {
+        if (value != null && value.signum() <= 0) {
+            throw new VacancyExtractionException("AI provider returned a non-positive " + field);
+        }
+    }
+
+    private static void requireSalaryRangeOrdered(ExtractedVacancyData data) {
+        if (data.salaryMin() != null && data.salaryMax() != null && data.salaryMin().compareTo(data.salaryMax()) > 0) {
+            throw new VacancyExtractionException("AI provider returned a salary minimum greater than the salary maximum");
+        }
+    }
+
+    /**
+     * A currency is only meaningful alongside some other salary signal - a bare currency with no
+     * amount and no salary phrase would otherwise let the AI assert "this role pays in USD"
+     * without ever saying what it pays, which is exactly the kind of unstated-fact invention the
+     * extraction prompt is told never to do.
+     */
+    private static void requireCurrencyOnlyWithSalaryInformation(ExtractedVacancyData data) {
+        boolean hasSalaryInformation = data.salaryMin() != null || data.salaryMax() != null
+                || StringUtils.hasText(data.salaryText());
+        if (!hasSalaryInformation && data.currency() != null) {
+            throw new VacancyExtractionException("AI provider returned a currency without any salary information");
+        }
     }
 
     private static void requireNonBlank(String value, String field) {

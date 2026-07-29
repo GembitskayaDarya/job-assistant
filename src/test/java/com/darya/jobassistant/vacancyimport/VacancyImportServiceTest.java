@@ -10,10 +10,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.darya.jobassistant.vacancyextraction.VacancyExtractionService;
 import com.darya.jobassistant.vacancyextraction.exception.VacancyExtractionException;
 import com.darya.jobassistant.vacancyextraction.model.ExtractedVacancyData;
 import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
-import com.darya.jobassistant.vacancyextraction.port.VacancyExtractionPort;
+import com.darya.jobassistant.vacancyextraction.model.VacancyExtractionRequest;
 import com.darya.jobassistant.vacancyimport.config.VacancyImportProperties;
 import com.darya.jobassistant.vacancyimport.dto.CancelVacancyImportResult;
 import com.darya.jobassistant.vacancyimport.dto.ContinueVacancyImportResult;
@@ -61,7 +62,7 @@ class VacancyImportServiceTest {
     private VacancyImportDraftRepository draftRepository;
 
     @Mock
-    private VacancyExtractionPort extractionPort;
+    private VacancyExtractionService extractionService;
 
     @Mock
     private PlatformTransactionManager transactionManager;
@@ -75,7 +76,7 @@ class VacancyImportServiceTest {
     @BeforeEach
     void setUp() {
         properties = new VacancyImportProperties(TTL);
-        service = new VacancyImportService(repository, draftRepository, extractionPort, CLOCK, properties, transactionManager);
+        service = new VacancyImportService(repository, draftRepository, extractionService, CLOCK, properties, transactionManager);
     }
 
     @Test
@@ -285,7 +286,7 @@ class VacancyImportServiceTest {
         when(repository.findSessionById(active.getId())).thenReturn(Optional.of(active));
         when(draftRepository.findDraftBySessionId(active.getId())).thenReturn(Optional.empty());
         ExtractedVacancyData extracted = validExtractedData();
-        when(extractionPort.extract(any())).thenReturn(extracted);
+        when(extractionService.extract(any())).thenReturn(extracted);
         VacancyImportDraft draft = draft(active.getId(), extracted);
         when(draftRepository.saveDraft(eq(active.getId()), eq(extracted), eq(NOW))).thenReturn(draft);
         when(repository.moveToWaitingForConfirmationIfExtracting(active.getId(), NOW)).thenReturn(true);
@@ -299,7 +300,7 @@ class VacancyImportServiceTest {
         assertThat(active.getState()).isEqualTo(ImportState.WAITING_FOR_CONFIRMATION);
         assertThat(active.getRawDescription()).isEqualTo(description.trim());
         verify(repository).acceptDescriptionIfWaiting(active.getId(), description.trim(), NOW);
-        verify(extractionPort).extract(description.trim());
+        verify(extractionService).extract(VacancyExtractionRequest.ofPastedDescription(description.trim()));
         verify(repository).moveToWaitingForConfirmationIfExtracting(active.getId(), NOW);
     }
 
@@ -311,7 +312,7 @@ class VacancyImportServiceTest {
         when(repository.acceptDescriptionIfWaiting(any(), any(), any())).thenReturn(true);
         when(repository.findSessionById(active.getId())).thenReturn(Optional.of(active));
         when(draftRepository.findDraftBySessionId(active.getId())).thenReturn(Optional.empty());
-        when(extractionPort.extract(any())).thenThrow(new VacancyExtractionException("provider failure: HTTP 429 insufficient_quota"));
+        when(extractionService.extract(any())).thenThrow(new VacancyExtractionException("provider failure: HTTP 429 insufficient_quota"));
         when(repository.moveToFailedIfExtracting(active.getId(), NOW)).thenReturn(true);
         String description = "A perfectly valid description that is long enough to pass validation.";
 
@@ -438,7 +439,7 @@ class VacancyImportServiceTest {
         ExtractVacancyImportResult result = service.extract(session.getId());
 
         assertThat(result).isEqualTo(new ExtractVacancyImportResult.AlreadyRecognized(session.getId(), draft));
-        verify(extractionPort, never()).extract(any());
+        verify(extractionService, never()).extract(any());
     }
 
     @Test
@@ -448,7 +449,7 @@ class VacancyImportServiceTest {
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.extract(session.getId())).isInstanceOf(IllegalStateException.class);
-        verify(extractionPort, never()).extract(any());
+        verify(extractionService, never()).extract(any());
     }
 
     @Test
@@ -459,7 +460,7 @@ class VacancyImportServiceTest {
         ExtractVacancyImportResult result = service.extract(session.getId());
 
         assertThat(result).isEqualTo(new ExtractVacancyImportResult.InvalidState(session.getId(), ImportState.WAITING_FOR_URL));
-        verify(extractionPort, never()).extract(any());
+        verify(extractionService, never()).extract(any());
     }
 
     @Test
@@ -470,7 +471,7 @@ class VacancyImportServiceTest {
         ExtractVacancyImportResult result = service.extract(sessionId);
 
         assertThat(result).isEqualTo(new ExtractVacancyImportResult.SessionNotFound(sessionId));
-        verify(extractionPort, never()).extract(any());
+        verify(extractionService, never()).extract(any());
     }
 
     @Test
@@ -479,9 +480,9 @@ class VacancyImportServiceTest {
         VacancyImportSession session = sessionAtExtracting();
         when(repository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.empty());
-        ExtractedVacancyData blankTitle =
-                new ExtractedVacancyData(null, "Acme Corp", null, RemotePolicy.UNSPECIFIED, List.of(), List.of(), null);
-        when(extractionPort.extract(any())).thenReturn(blankTitle);
+        // VacancyExtractionService itself validates before returning - a blank-title response
+        // never reaches this call site as a return value, only as a VacancyExtractionException.
+        when(extractionService.extract(any())).thenThrow(new VacancyExtractionException("AI provider returned a blank title"));
         when(repository.moveToFailedIfExtracting(session.getId(), NOW)).thenReturn(true);
 
         ExtractVacancyImportResult result = service.extract(session.getId());
@@ -499,7 +500,7 @@ class VacancyImportServiceTest {
         when(draftRepository.findDraftBySessionId(session.getId()))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(draft(session.getId(), validExtractedData())));
-        when(extractionPort.extract(any())).thenReturn(validExtractedData());
+        when(extractionService.extract(any())).thenReturn(validExtractedData());
         when(draftRepository.saveDraft(any(), any(), any())).thenThrow(new DataIntegrityViolationException("uk_vacancy_import_draft_session"));
 
         ExtractVacancyImportResult result = service.extract(session.getId());
@@ -518,7 +519,7 @@ class VacancyImportServiceTest {
         when(draftRepository.findDraftBySessionId(session.getId()))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(winningDraft));
-        when(extractionPort.extract(any())).thenThrow(new VacancyExtractionException("provider failure"));
+        when(extractionService.extract(any())).thenThrow(new VacancyExtractionException("provider failure"));
         // Another operation already moved the session past EXTRACTING, so this conditional
         // update must apply to zero rows.
         when(repository.moveToFailedIfExtracting(session.getId(), NOW)).thenReturn(false);
@@ -535,16 +536,16 @@ class VacancyImportServiceTest {
         when(repository.findSessionById(session.getId())).thenReturn(Optional.of(session));
         when(draftRepository.findDraftBySessionId(session.getId())).thenReturn(Optional.empty());
         ExtractedVacancyData extracted = validExtractedData();
-        when(extractionPort.extract(any())).thenReturn(extracted);
+        when(extractionService.extract(any())).thenReturn(extracted);
         when(draftRepository.saveDraft(any(), any(), any())).thenReturn(draft(session.getId(), extracted));
         when(repository.moveToWaitingForConfirmationIfExtracting(any(), any())).thenReturn(true);
 
         service.extract(session.getId());
 
         // The AI call happens strictly before any transaction is opened for the persist step:
-        // no TransactionTemplate/transactionManager interaction wraps extractionPort.extract().
-        InOrder order = inOrder(extractionPort, transactionManager);
-        order.verify(extractionPort).extract(any());
+        // no TransactionTemplate/transactionManager interaction wraps extractionService.extract().
+        InOrder order = inOrder(extractionService, transactionManager);
+        order.verify(extractionService).extract(any());
         order.verify(transactionManager).getTransaction(any(TransactionDefinition.class));
     }
 

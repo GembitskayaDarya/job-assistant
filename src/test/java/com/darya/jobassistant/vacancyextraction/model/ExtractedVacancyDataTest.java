@@ -3,11 +3,45 @@ package com.darya.jobassistant.vacancyextraction.model;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ExtractedVacancyDataTest {
+
+    @Test
+    void legacySevenArgConstructor_defaultsSalaryAmountsCurrencyAndPostedDateToNull() {
+        ExtractedVacancyData data = new ExtractedVacancyData(
+                "Title", "Company", "Europe", RemotePolicy.REMOTE, List.of("B2B"), List.of("Java"), "10-15k PLN");
+
+        assertThat(data.salaryMin()).isNull();
+        assertThat(data.salaryMax()).isNull();
+        assertThat(data.currency()).isNull();
+        assertThat(data.salaryText()).isEqualTo("10-15k PLN");
+        assertThat(data.postedDate()).isNull();
+    }
+
+    @Test
+    void canonicalConstructor_populatesSalaryAmountsCurrencyAndPostedDate() {
+        ExtractedVacancyData data = new ExtractedVacancyData(
+                "Title", "Company", "Europe", RemotePolicy.REMOTE, List.of("B2B"), List.of("Java"),
+                new BigDecimal("10000"), new BigDecimal("15000"), "  PLN  ", "10-15k PLN", LocalDate.of(2026, 1, 15));
+
+        assertThat(data.salaryMin()).isEqualByComparingTo("10000");
+        assertThat(data.salaryMax()).isEqualByComparingTo("15000");
+        assertThat(data.currency()).isEqualTo("PLN");
+        assertThat(data.postedDate()).isEqualTo(LocalDate.of(2026, 1, 15));
+    }
+
+    @Test
+    void constructor_blankCurrency_normalizesToNull() {
+        ExtractedVacancyData data = new ExtractedVacancyData(
+                "Title", "Company", null, RemotePolicy.UNSPECIFIED, List.of(), List.of(), null, null, "   ", null, null);
+
+        assertThat(data.currency()).isNull();
+    }
 
     @Test
     void constructor_validRequiredFields_areAcceptedAndTrimmed() {
