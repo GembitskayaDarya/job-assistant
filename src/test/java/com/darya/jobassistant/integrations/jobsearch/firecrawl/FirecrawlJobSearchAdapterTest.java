@@ -283,7 +283,8 @@ class FirecrawlJobSearchAdapterTest {
                         {"success": true, "data": {"web": []}}
                         """)
                 .setBodyDelay(2, TimeUnit.SECONDS));
-        FirecrawlJobSearchAdapter adapter = newAdapter(10, Duration.ofMillis(200), Duration.ofMillis(200));
+        FirecrawlJobSearchAdapter adapter = newAdapter(10, Duration.ofMillis(500), Duration.ofMillis(1500),
+                Duration.ofSeconds(1), 100_000);
 
         assertThatThrownBy(() -> adapter.search(new JobSearchRequest("java backend", 10)))
                 .isInstanceOf(JobDiscoveryException.class)
@@ -326,8 +327,15 @@ class FirecrawlJobSearchAdapterTest {
     }
 
     private FirecrawlJobSearchAdapter newAdapter(int searchLimit, Duration connectTimeout, Duration readTimeout) {
-        FirecrawlProperties properties = new FirecrawlProperties(
-                true, "test-api-key", server.url("").toString(), searchLimit, connectTimeout, readTimeout);
+        // scrapeTimeout defaults to the minimum valid value (1s), well below the 5s read-timeout
+        // most of these search-only tests use - these tests never exercise the scrape code path.
+        return newAdapter(searchLimit, connectTimeout, readTimeout, Duration.ofSeconds(1), 100_000);
+    }
+
+    private FirecrawlJobSearchAdapter newAdapter(int searchLimit, Duration connectTimeout, Duration readTimeout,
+                                                  Duration scrapeTimeout, int maxMarkdownChars) {
+        FirecrawlProperties properties = new FirecrawlProperties(true, "test-api-key", server.url("").toString(),
+                searchLimit, connectTimeout, readTimeout, scrapeTimeout, maxMarkdownChars);
         WebClient webClient = new FirecrawlWebClientConfig(properties).firecrawlWebClient(OBJECT_MAPPER);
         return new FirecrawlJobSearchAdapter(webClient, properties);
     }

@@ -46,6 +46,18 @@ class JobPageContentTest {
     }
 
     @Test
+    void rejectsUserInfoInSourceUrl() {
+        assertThatThrownBy(() -> new JobPageContent(URI.create("https://user:pass@boards.example.com/jobs/123"), "Description...", null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsHostlessSourceUrl() {
+        assertThatThrownBy(() -> new JobPageContent(URI.create("https:opaque-no-host"), "Description...", null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void rejectsBlankContent() {
         assertThatThrownBy(() -> new JobPageContent(VALID_URL, "   ", null))
                 .isInstanceOf(IllegalArgumentException.class);

@@ -9,88 +9,173 @@ import org.junit.jupiter.api.Test;
 class FirecrawlPropertiesTest {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(65);
+    private static final Duration SCRAPE_TIMEOUT = Duration.ofSeconds(60);
+    private static final int MAX_MARKDOWN_CHARS = 100_000;
 
     @Test
     void validEnabledConfiguration_isAccepted() {
-        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void disabled_doesNotRequireOtherFieldsToBeValid() {
-        assertThatCode(() -> properties(false, null, null, 0, null, null)).doesNotThrowAnyException();
+        assertThatCode(() -> properties(false, null, null, 0, null, null, null, 0)).doesNotThrowAnyException();
     }
 
     @Test
     void enabled_rejectsBlankApiKey() {
-        assertThatThrownBy(() -> properties(true, "  ", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatThrownBy(() -> properties(true, "  ", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_rejectsNullApiKey() {
-        assertThatThrownBy(() -> properties(true, null, "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatThrownBy(() -> properties(true, null, "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_rejectsBlankBaseUrl() {
-        assertThatThrownBy(() -> properties(true, "test-key", " ", 10, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatThrownBy(() -> properties(true, "test-key", " ", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_rejectsNonPositiveSearchLimit() {
-        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 0, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 0, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_rejectsSearchLimitAbove100() {
-        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 101, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 101, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_acceptsSearchLimitOfOne() {
-        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 1, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 1, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void enabled_acceptsSearchLimitOf100() {
-        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 100, CONNECT_TIMEOUT, READ_TIMEOUT))
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 100, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void enabled_rejectsNullConnectTimeout() {
-        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, null, READ_TIMEOUT))
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, null,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_rejectsNonPositiveConnectTimeout() {
-        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, Duration.ZERO, READ_TIMEOUT))
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, Duration.ZERO,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_rejectsNullReadTimeout() {
-        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT, null))
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                null, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void enabled_rejectsNonPositiveReadTimeout() {
-        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT, Duration.ZERO))
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                Duration.ZERO, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsNullScrapeTimeout() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, null, MAX_MARKDOWN_CHARS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsScrapeTimeoutBelowOneSecond() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, Duration.ofMillis(999), MAX_MARKDOWN_CHARS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsScrapeTimeoutAbove300Seconds() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                Duration.ofSeconds(400), Duration.ofSeconds(301), MAX_MARKDOWN_CHARS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_acceptsScrapeTimeoutOfOneSecond() {
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                Duration.ofSeconds(2), Duration.ofSeconds(1), MAX_MARKDOWN_CHARS))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void enabled_acceptsScrapeTimeoutOf300Seconds() {
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                Duration.ofSeconds(301), Duration.ofSeconds(300), MAX_MARKDOWN_CHARS))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void enabled_rejectsNonPositiveMaxMarkdownChars() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsExcessiveMaxMarkdownChars() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, 1_000_001))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_acceptsMaxMarkdownCharsUpperBound() {
+        assertThatCode(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                READ_TIMEOUT, SCRAPE_TIMEOUT, 1_000_000))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void enabled_rejectsReadTimeoutEqualToScrapeTimeout() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                Duration.ofSeconds(60), Duration.ofSeconds(60), MAX_MARKDOWN_CHARS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsReadTimeoutBelowScrapeTimeout() {
+        assertThatThrownBy(() -> properties(true, "test-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT,
+                Duration.ofSeconds(30), Duration.ofSeconds(60), MAX_MARKDOWN_CHARS))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void toString_masksApiKey() {
-        FirecrawlProperties properties = properties(true, "super-secret-key", "https://api.firecrawl.dev", 10, CONNECT_TIMEOUT, READ_TIMEOUT);
+        FirecrawlProperties properties = properties(true, "super-secret-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS);
 
         assertThatCode(() -> {
             String rendered = properties.toString();
@@ -101,7 +186,9 @@ class FirecrawlPropertiesTest {
     }
 
     private FirecrawlProperties properties(boolean enabled, String apiKey, String baseUrl, int searchLimit,
-                                            Duration connectTimeout, Duration readTimeout) {
-        return new FirecrawlProperties(enabled, apiKey, baseUrl, searchLimit, connectTimeout, readTimeout);
+                                            Duration connectTimeout, Duration readTimeout, Duration scrapeTimeout,
+                                            int maxMarkdownChars) {
+        return new FirecrawlProperties(enabled, apiKey, baseUrl, searchLimit, connectTimeout, readTimeout,
+                scrapeTimeout, maxMarkdownChars);
     }
 }

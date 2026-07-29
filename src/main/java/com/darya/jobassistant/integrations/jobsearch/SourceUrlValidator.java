@@ -3,18 +3,22 @@ package com.darya.jobassistant.integrations.jobsearch;
 import java.net.URI;
 
 /**
- * Shared absolute-URL invariant for {@link DiscoveredJobReference} and {@link JobPageContent}.
- * Deliberately minimal (no SSRF/host checks, unlike {@code VacancyUrlValidator}) - at this stage
- * these URLs only ever come from a search result or feed straight back into a fetch call that
- * isn't implemented yet, so hardening belongs with the adapter that will actually open the
- * connection.
+ * Shared absolute-URL invariant for {@link DiscoveredJobReference}, {@link JobPageContent}, and
+ * the {@code JobPageFetchPort} adapter(s) that populate it before making any HTTP call. Public so
+ * it can be reused from the {@code integrations.jobsearch.firecrawl} subpackage instead of being
+ * duplicated there.
+ *
+ * <p>Deliberately minimal (no SSRF/private-IP checks, unlike {@code VacancyUrlValidator}) beyond
+ * requiring a host and rejecting embedded user-info - full SSRF hardening (rejecting loopback/
+ * private/link-local literals) belongs with the adapter that will actually open the connection,
+ * not this shared, provider-neutral shape check.
  */
-final class SourceUrlValidator {
+public final class SourceUrlValidator {
 
     private SourceUrlValidator() {
     }
 
-    static void requireValid(URI sourceUrl) {
+    public static void requireValid(URI sourceUrl) {
         if (sourceUrl == null) {
             throw new IllegalArgumentException("sourceUrl must not be null");
         }
@@ -24,6 +28,13 @@ final class SourceUrlValidator {
         String scheme = sourceUrl.getScheme();
         if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
             throw new IllegalArgumentException("sourceUrl must use http or https");
+        }
+        if (sourceUrl.getUserInfo() != null) {
+            throw new IllegalArgumentException("sourceUrl must not contain user information");
+        }
+        String host = sourceUrl.getHost();
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("sourceUrl must contain a host");
         }
     }
 }

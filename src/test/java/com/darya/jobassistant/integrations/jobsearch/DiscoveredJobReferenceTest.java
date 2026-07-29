@@ -53,6 +53,18 @@ class DiscoveredJobReferenceTest {
     }
 
     @Test
+    void rejectsUserInfoInSourceUrl() {
+        assertThatThrownBy(() -> new DiscoveredJobReference(URI.create("https://user:pass@boards.example.com/jobs/123"), "Senior Java Backend Engineer", null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsHostlessSourceUrl() {
+        assertThatThrownBy(() -> new DiscoveredJobReference(URI.create("https:opaque-no-host"), "Senior Java Backend Engineer", null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void rejectsBlankTitle() {
         assertThatThrownBy(() -> new DiscoveredJobReference(VALID_URL, "   ", null))
                 .isInstanceOf(IllegalArgumentException.class);

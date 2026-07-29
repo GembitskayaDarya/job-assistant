@@ -89,7 +89,12 @@ firecrawl:
   base-url: ${FIRECRAWL_BASE_URL:https://api.firecrawl.dev}
   search-limit: ${FIRECRAWL_SEARCH_LIMIT:10}
   connect-timeout: ${FIRECRAWL_CONNECT_TIMEOUT:5s}
-  read-timeout: ${FIRECRAWL_READ_TIMEOUT:30s}
+  # Must stay greater than scrape-timeout below - it bounds the shared WebClient's transport-level
+  # timeout for every Firecrawl call (search and scrape), not just the fast /v2/search endpoint.
+  read-timeout: ${FIRECRAWL_READ_TIMEOUT:65s}
+  # Per-request server-side budget sent to Firecrawl's POST /v2/scrape as "timeout" (milliseconds).
+  scrape-timeout: ${FIRECRAWL_SCRAPE_TIMEOUT:60s}
+  max-markdown-chars: ${FIRECRAWL_MAX_MARKDOWN_CHARS:100000}
 
 job-discovery:
   query-planning:
