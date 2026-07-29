@@ -1,5 +1,6 @@
 package com.darya.jobassistant.jobdiscovery;
 
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetDecision;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -23,6 +24,9 @@ import java.util.UUID;
  *       #extractionSuccesses} is always followed by exactly one persistence attempt.
  *   <li>{@link #createdVacancies} + {@link #alreadyExistingAfterRace} + {@link
  *       #persistenceFailures} == {@link #persistenceAttempts}.
+ *   <li>{@link #budgetDecision} explains why a run stopped before any Search: when its status is
+ *       not {@code ALLOWED}, every counter above is zero and {@link #createdVacancyIds}/{@link
+ *       #issues} are empty - a budget denial is never reported as a {@link JobDiscoveryIssue}.
  * </ul>
  */
 public record JobDiscoveryRunResult(
@@ -53,7 +57,8 @@ public record JobDiscoveryRunResult(
         boolean uniqueReferenceLimitReached,
         List<UUID> createdVacancyIds,
         List<JobDiscoveryIssue> issues,
-        int omittedIssueCount
+        int omittedIssueCount,
+        JobDiscoveryBudgetDecision budgetDecision
 ) {
     public JobDiscoveryRunResult {
         if (startedAt == null) {
@@ -64,6 +69,9 @@ public record JobDiscoveryRunResult(
         }
         if (duration == null) {
             throw new IllegalArgumentException("duration must not be null");
+        }
+        if (budgetDecision == null) {
+            throw new IllegalArgumentException("budgetDecision must not be null");
         }
         createdVacancyIds = createdVacancyIds == null ? List.of() : List.copyOf(createdVacancyIds);
         issues = issues == null ? List.of() : List.copyOf(issues);

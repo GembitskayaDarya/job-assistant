@@ -19,6 +19,10 @@ import com.darya.jobassistant.integrations.jobsearch.JobPageContent;
 import com.darya.jobassistant.integrations.jobsearch.JobPageFetchPort;
 import com.darya.jobassistant.integrations.jobsearch.JobSearchPort;
 import com.darya.jobassistant.integrations.jobsearch.JobSearchRequest;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetDecision;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetPort;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetRequest;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetStatus;
 import com.darya.jobassistant.jobdiscovery.config.JobDiscoveryProperties;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
@@ -72,6 +76,9 @@ class JobDiscoveryServiceTest {
     @Mock
     private VacancyRepository vacancyRepository;
 
+    @Mock
+    private JobDiscoveryBudgetPort budgetPort;
+
     private FakeJobSearchPort jobSearchPort;
     private FakeJobPageFetchPort jobPageFetchPort;
     private CandidateProfile profile;
@@ -84,6 +91,9 @@ class JobDiscoveryServiceTest {
         lenient().when(candidateProfileProvider.getProfile()).thenReturn(profile);
         // Default: no existing vacancy for any canonical URL unless a test overrides it.
         lenient().when(vacancyRepository.existsByCanonicalUrl(any())).thenReturn(false);
+        // Default: the budget gate is wide open unless a test stubs it otherwise, so every
+        // existing (pre-budget) test keeps exercising the full search/scrape/extraction flow.
+        lenient().when(budgetPort.assessBudget(any())).thenReturn(allowedDecision());
     }
 
     // --- Query planning and search --------------------------------------------------------
@@ -690,17 +700,186 @@ class JobDiscoveryServiceTest {
         verify(vacancyIngestionService, times(1)).persist(any(VacancyCreationCommand.class));
     }
 
+    // --- Budget gate -------------------------------------------------------------------------
+
+    @Test
+    void run_callsBudgetPortExactlyOnceBeforeFirstSearch() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of());
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        service.runDiscovery();
+
+        verify(budgetPort, times(1)).assessBudget(any());
+    }
+
+    @Test
+    void run_budgetPortReceivesExactBoundedQueryList() {
+        stubPlan(List.of(request("q1"), request("q2"), request("q3"), request("q4")));
+        for (String q : List.of("q1", "q2", "q3")) {
+            jobSearchPort.respondWith(q, List.of());
+        }
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        service.runDiscovery();
+
+        ArgumentCaptor<JobDiscoveryBudgetRequest> captor = ArgumentCaptor.forClass(JobDiscoveryBudgetRequest.class);
+        verify(budgetPort).assessBudget(captor.capture());
+        assertThat(captor.getValue().searchRequests()).extracting(JobSearchRequest::query)
+                .containsExactly("q1", "q2", "q3");
+        assertThat(captor.getValue().maxScrapesPerRun()).isEqualTo(5);
+    }
+
+    @Test
+    void run_allowedDecision_executesExistingFlow() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        stubScrapeAndExtractSuccess("https://example.com/jobs/1");
+        stubPersistCreated();
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.createdVacancies()).isEqualTo(1);
+        assertThat(result.budgetDecision().status()).isEqualTo(JobDiscoveryBudgetStatus.ALLOWED);
+    }
+
+    @Test
+    void run_deniedPerRunLimit_executesZeroProcessing() {
+        stubPlan(List.of(request("q1")));
+        when(budgetPort.assessBudget(any())).thenReturn(deniedDecision(JobDiscoveryBudgetStatus.DENIED_PER_RUN_LIMIT));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertZeroProcessing(result, JobDiscoveryBudgetStatus.DENIED_PER_RUN_LIMIT);
+        assertThat(jobSearchPort.queriesReceived).isEmpty();
+    }
+
+    @Test
+    void run_deniedMonthlyLimit_executesZeroProcessing() {
+        stubPlan(List.of(request("q1")));
+        when(budgetPort.assessBudget(any())).thenReturn(deniedDecision(JobDiscoveryBudgetStatus.DENIED_MONTHLY_LIMIT));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertZeroProcessing(result, JobDiscoveryBudgetStatus.DENIED_MONTHLY_LIMIT);
+        assertThat(jobSearchPort.queriesReceived).isEmpty();
+    }
+
+    @Test
+    void run_deniedReserveLimit_executesZeroProcessing() {
+        stubPlan(List.of(request("q1")));
+        when(budgetPort.assessBudget(any())).thenReturn(deniedDecision(JobDiscoveryBudgetStatus.DENIED_RESERVE_LIMIT));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertZeroProcessing(result, JobDiscoveryBudgetStatus.DENIED_RESERVE_LIMIT);
+        assertThat(jobSearchPort.queriesReceived).isEmpty();
+    }
+
+    @Test
+    void run_unavailableBudget_executesZeroProcessing() {
+        stubPlan(List.of(request("q1")));
+        JobDiscoveryBudgetDecision unavailable = JobDiscoveryBudgetDecision.unavailable(
+                6, 5, 800, 200, 15, "HTTP_500");
+        when(budgetPort.assessBudget(any())).thenReturn(unavailable);
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertZeroProcessing(result, JobDiscoveryBudgetStatus.UNAVAILABLE);
+        assertThat(jobSearchPort.queriesReceived).isEmpty();
+    }
+
+    @Test
+    void run_deniedBudget_performsZeroRepositoryPreChecksAndZeroPersistence() {
+        stubPlan(List.of(request("q1")));
+        when(budgetPort.assessBudget(any())).thenReturn(deniedDecision(JobDiscoveryBudgetStatus.DENIED_PER_RUN_LIMIT));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        service.runDiscovery();
+
+        verify(vacancyRepository, never()).existsByCanonicalUrl(any());
+        verify(vacancyIngestionService, never()).persist(any(VacancyCreationCommand.class));
+    }
+
+    @Test
+    void run_budgetDenial_isNotCountedAsSearchFailure() {
+        stubPlan(List.of(request("q1")));
+        when(budgetPort.assessBudget(any())).thenReturn(deniedDecision(JobDiscoveryBudgetStatus.DENIED_PER_RUN_LIMIT));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.failedQueries()).isZero();
+        assertThat(result.issues()).isEmpty();
+    }
+
+    @Test
+    void run_emptyPlannedQueries_skipsBudgetEndpoint_statusNotRequired() {
+        stubPlan(List.of());
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        verify(budgetPort, never()).assessBudget(any());
+        assertThat(result.budgetDecision().status()).isEqualTo(JobDiscoveryBudgetStatus.NOT_REQUIRED);
+        assertThat(result.plannedQueries()).isZero();
+        assertThat(result.executedQueries()).isZero();
+    }
+
+    @Test
+    void run_budgetDecisionIsEmbeddedImmutablyInResult() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of());
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.budgetDecision()).isNotNull();
+        assertThat(result.budgetDecision().status()).isEqualTo(JobDiscoveryBudgetStatus.ALLOWED);
+    }
+
+    private JobDiscoveryBudgetDecision deniedDecision(JobDiscoveryBudgetStatus status) {
+        return new JobDiscoveryBudgetDecision(status, false,
+                20, 5, 25, 800, 200, 15,
+                1000L, 1000L, 0L, Instant.parse("2026-07-01T00:00:00Z"), Instant.parse("2026-07-31T23:59:59Z"), null);
+    }
+
+    private void assertZeroProcessing(JobDiscoveryRunResult result, JobDiscoveryBudgetStatus expectedStatus) {
+        assertThat(result.budgetDecision().status()).isEqualTo(expectedStatus);
+        assertThat(result.executedQueries()).isZero();
+        assertThat(result.scrapeAttempts()).isZero();
+        assertThat(result.extractionAttempts()).isZero();
+        assertThat(result.persistenceAttempts()).isZero();
+        assertThat(result.createdVacancyIds()).isEmpty();
+        assertThat(result.issues()).isEmpty();
+    }
+
     // --- Fixtures and fakes ------------------------------------------------------------------
 
     private JobDiscoveryService service(JobDiscoveryProperties.Execution execution) {
-        JobDiscoveryProperties properties = new JobDiscoveryProperties(true, execution);
+        JobDiscoveryProperties properties = new JobDiscoveryProperties(true, execution, budget());
         return new JobDiscoveryService(candidateProfileProvider, queryPlanner, jobSearchPort, jobPageFetchPort,
-                vacancyExtractionService, vacancyIngestionService, vacancyRepository, properties, CLOCK);
+                vacancyExtractionService, vacancyIngestionService, vacancyRepository, budgetPort, properties, CLOCK);
     }
 
     private JobDiscoveryProperties.Execution execution(int maxQueries, int maxScrapes, int maxExtractions,
                                                          int maxUniqueReferences, int maxReportedIssues) {
         return new JobDiscoveryProperties.Execution(maxQueries, maxScrapes, maxExtractions, maxUniqueReferences, maxReportedIssues);
+    }
+
+    private JobDiscoveryProperties.Budget budget() {
+        return new JobDiscoveryProperties.Budget(800, 200, 15);
+    }
+
+    private JobDiscoveryBudgetDecision allowedDecision() {
+        return new JobDiscoveryBudgetDecision(JobDiscoveryBudgetStatus.ALLOWED, true,
+                6, 5, 11, 800, 200, 15,
+                1000L, 1000L, 0L, Instant.parse("2026-07-01T00:00:00Z"), Instant.parse("2026-07-31T23:59:59Z"), null);
     }
 
     private void stubPlan(List<JobSearchRequest> requests) {

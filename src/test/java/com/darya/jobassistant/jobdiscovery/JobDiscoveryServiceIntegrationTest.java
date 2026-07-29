@@ -14,6 +14,9 @@ import com.darya.jobassistant.integrations.jobsearch.JobPageContent;
 import com.darya.jobassistant.integrations.jobsearch.JobPageFetchPort;
 import com.darya.jobassistant.integrations.jobsearch.JobSearchPort;
 import com.darya.jobassistant.integrations.jobsearch.JobSearchRequest;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetDecision;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetPort;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetStatus;
 import com.darya.jobassistant.jobdiscovery.config.JobDiscoveryProperties;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import com.darya.jobassistant.vacancies.service.VacancyIngestionService;
@@ -23,8 +26,10 @@ import com.darya.jobassistant.vacancyextraction.model.RemotePolicy;
 import com.darya.jobassistant.vacancyextraction.port.VacancyExtractionPort;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.TestPropertySource;
@@ -88,6 +93,20 @@ class JobDiscoveryServiceIntegrationTest extends AbstractIntegrationTest {
     @MockitoBean
     private VacancyExtractionPort vacancyExtractionPort;
 
+    @MockitoBean
+    private JobDiscoveryBudgetPort budgetPort;
+
+    @BeforeEach
+    void stubBudgetAllowed() {
+        when(budgetPort.assessBudget(any())).thenReturn(allowedDecision());
+    }
+
+    private JobDiscoveryBudgetDecision allowedDecision() {
+        return new JobDiscoveryBudgetDecision(JobDiscoveryBudgetStatus.ALLOWED, true,
+                6, 5, 11, 800, 200, 15,
+                1000L, 1000L, 0L, Instant.parse("2026-07-01T00:00:00Z"), Instant.parse("2026-07-31T23:59:59Z"), null);
+    }
+
     @Test
     void run_persistsANewVacancyThroughTheRealTransactionBoundary() {
         String url = uniqueUrl();
@@ -133,7 +152,8 @@ class JobDiscoveryServiceIntegrationTest extends AbstractIntegrationTest {
         when(staleAlwaysFalsePreCheck.existsByCanonicalUrl(any())).thenReturn(false);
         JobDiscoveryService serviceWithStalePreCheck = new JobDiscoveryService(
                 candidateProfileProvider, queryPlanner, jobSearchPort, jobPageFetchPort,
-                vacancyExtractionService, vacancyIngestionService, staleAlwaysFalsePreCheck, properties, clock);
+                vacancyExtractionService, vacancyIngestionService, staleAlwaysFalsePreCheck, budgetPort,
+                properties, clock);
 
         // The winning run: commits a real row for this canonical URL first.
         JobDiscoveryRunResult winnerRun = jobDiscoveryService.runDiscovery();

@@ -335,7 +335,8 @@ class FirecrawlJobSearchAdapterTest {
     private FirecrawlJobSearchAdapter newAdapter(int searchLimit, Duration connectTimeout, Duration readTimeout,
                                                   Duration scrapeTimeout, int maxMarkdownChars) {
         FirecrawlProperties properties = new FirecrawlProperties(true, "test-api-key", server.url("").toString(),
-                searchLimit, connectTimeout, readTimeout, scrapeTimeout, maxMarkdownChars);
+                searchLimit, connectTimeout, readTimeout, scrapeTimeout, maxMarkdownChars,
+                Duration.ofSeconds(10), new FirecrawlProperties.Cost(10, 2, 1));
         WebClient webClient = new FirecrawlWebClientConfig(properties).firecrawlWebClient(OBJECT_MAPPER);
         return new FirecrawlJobSearchAdapter(webClient, properties);
     }

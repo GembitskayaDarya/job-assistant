@@ -12,6 +12,8 @@ class FirecrawlPropertiesTest {
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(65);
     private static final Duration SCRAPE_TIMEOUT = Duration.ofSeconds(60);
     private static final int MAX_MARKDOWN_CHARS = 100_000;
+    private static final Duration CREDIT_USAGE_TIMEOUT = Duration.ofSeconds(10);
+    private static final FirecrawlProperties.Cost COST = new FirecrawlProperties.Cost(10, 2, 1);
 
     @Test
     void validEnabledConfiguration_isAccepted() {
@@ -23,6 +25,8 @@ class FirecrawlPropertiesTest {
     @Test
     void disabled_doesNotRequireOtherFieldsToBeValid() {
         assertThatCode(() -> properties(false, null, null, 0, null, null, null, 0)).doesNotThrowAnyException();
+        assertThatCode(() -> new FirecrawlProperties(false, null, null, 0, null, null, null, 0, null, null))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -185,10 +189,112 @@ class FirecrawlPropertiesTest {
         }).doesNotThrowAnyException();
     }
 
+    // --- credit-usage-timeout ---------------------------------------------------------------
+
+    @Test
+    void enabled_rejectsNullCreditUsageTimeout() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, null, COST))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsCreditUsageTimeoutBelowOneSecond() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, Duration.ofMillis(999), COST))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsCreditUsageTimeoutAbove30Seconds() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, Duration.ofSeconds(31), COST))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_acceptsCreditUsageTimeoutBoundaries() {
+        assertThatCode(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, Duration.ofSeconds(1), COST))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, Duration.ofSeconds(30), COST))
+                .doesNotThrowAnyException();
+    }
+
+    // --- cost ----------------------------------------------------------------------------------
+
+    @Test
+    void enabled_rejectsNullCost() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsNonPositiveSearchResultsPerCreditBlock() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(0, 2, 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsSearchResultsPerCreditBlockAbove1000() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(1001, 2, 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsNonPositiveSearchCreditsPerBlock() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(10, 0, 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsSearchCreditsPerBlockAbove1000() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(10, 1001, 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsNonPositiveBasicScrapeCredits() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(10, 2, 0)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsBasicScrapeCreditsAbove1000() {
+        assertThatThrownBy(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(10, 2, 1001)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_acceptsCostBoundaries() {
+        assertThatCode(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(1, 1, 1)))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new FirecrawlProperties(true, "test-key", "https://api.firecrawl.dev", 10,
+                CONNECT_TIMEOUT, READ_TIMEOUT, SCRAPE_TIMEOUT, MAX_MARKDOWN_CHARS, CREDIT_USAGE_TIMEOUT,
+                new FirecrawlProperties.Cost(1000, 1000, 1000)))
+                .doesNotThrowAnyException();
+    }
+
     private FirecrawlProperties properties(boolean enabled, String apiKey, String baseUrl, int searchLimit,
                                             Duration connectTimeout, Duration readTimeout, Duration scrapeTimeout,
                                             int maxMarkdownChars) {
         return new FirecrawlProperties(enabled, apiKey, baseUrl, searchLimit, connectTimeout, readTimeout,
-                scrapeTimeout, maxMarkdownChars);
+                scrapeTimeout, maxMarkdownChars, CREDIT_USAGE_TIMEOUT, COST);
     }
 }

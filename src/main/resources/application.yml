@@ -95,6 +95,14 @@ firecrawl:
   # Per-request server-side budget sent to Firecrawl's POST /v2/scrape as "timeout" (milliseconds).
   scrape-timeout: ${FIRECRAWL_SCRAPE_TIMEOUT:60s}
   max-markdown-chars: ${FIRECRAWL_MAX_MARKDOWN_CHARS:100000}
+  # Dedicated, bounded per-operation timeout for FirecrawlJobDiscoveryBudgetAdapter's single
+  # GET /v2/team/credit-usage request - deliberately shorter than read-timeout above, which bounds
+  # every other Firecrawl call.
+  credit-usage-timeout: ${FIRECRAWL_CREDIT_USAGE_TIMEOUT:10s}
+  cost:
+    search-results-per-credit-block: ${FIRECRAWL_SEARCH_RESULTS_PER_CREDIT_BLOCK:10}
+    search-credits-per-block: ${FIRECRAWL_SEARCH_CREDITS_PER_BLOCK:2}
+    basic-scrape-credits: ${FIRECRAWL_BASIC_SCRAPE_CREDITS:1}
 
 job-discovery:
   enabled: ${JOB_DISCOVERY_ENABLED:false}
@@ -108,6 +116,14 @@ job-discovery:
     max-extractions-per-run: ${JOB_DISCOVERY_MAX_EXTRACTIONS_PER_RUN:5}
     max-unique-references-per-run: ${JOB_DISCOVERY_MAX_UNIQUE_REFERENCES_PER_RUN:30}
     max-reported-issues: ${JOB_DISCOVERY_MAX_REPORTED_ISSUES:50}
+  # Provider-neutral spend-policy limits enforced by JobDiscoveryBudgetPolicy against a verified
+  # Firecrawl credit snapshot before every non-empty discovery run - see firecrawl.cost above for
+  # the separate, provider-specific pricing assumptions used to produce the estimate these limits
+  # are checked against.
+  budget:
+    monthly-credit-limit: ${JOB_DISCOVERY_MONTHLY_CREDIT_LIMIT:800}
+    reserve-credits: ${JOB_DISCOVERY_RESERVE_CREDITS:200}
+    max-estimated-credits-per-run: ${JOB_DISCOVERY_MAX_ESTIMATED_CREDITS_PER_RUN:15}
 
 vacancy-import:
   session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}

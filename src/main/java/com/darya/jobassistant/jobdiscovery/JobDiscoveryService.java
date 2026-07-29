@@ -7,6 +7,10 @@ import com.darya.jobassistant.integrations.jobsearch.JobPageContent;
 import com.darya.jobassistant.integrations.jobsearch.JobPageFetchPort;
 import com.darya.jobassistant.integrations.jobsearch.JobSearchPort;
 import com.darya.jobassistant.integrations.jobsearch.JobSearchRequest;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetDecision;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetPort;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetRequest;
+import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetStatus;
 import com.darya.jobassistant.jobdiscovery.config.JobDiscoveryProperties;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
@@ -52,9 +56,9 @@ import org.springframework.stereotype.Service;
  * activation convention ({@code JobMonitoringService}/{@code telegram.enabled}, {@code
  * FirecrawlJobSearchAdapter}/{@code firecrawl.enabled}): a required collaborator with no bean
  * present when the flag is off would otherwise fail to wire. If discovery is enabled but no real
- * {@link JobSearchPort}/{@link JobPageFetchPort} bean exists (e.g. {@code firecrawl.enabled=false}),
- * Spring fails application startup with its own clear "no qualifying bean" message - deliberately
- * not swallowed or special-cased here.
+ * {@link JobSearchPort}/{@link JobPageFetchPort}/{@link JobDiscoveryBudgetPort} bean exists (e.g.
+ * {@code firecrawl.enabled=false}), Spring fails application startup with its own clear "no
+ * qualifying bean" message - deliberately not swallowed or special-cased here.
  *
  * <p>Description policy: {@link ExtractedVacancyData} has no description field (see its javadoc) -
  * this service reuses the fetched {@link JobPageContent#content()} verbatim as {@link
@@ -69,6 +73,16 @@ import org.springframework.stereotype.Service;
  * ({@code "remoteok"}, {@code "manual_telegram"} - see {@code VacancyIngestionService}/{@code
  * VacancyImportReviewService}); {@code source} has no enum type or database CHECK constraint
  * anywhere in this project, so no migration is needed to introduce this value.
+ *
+ * <p>Budget gate: before any Search, this service plans queries once, bounds them to {@code
+ * maxQueriesPerRun}, and - only when that bounded list is non-empty - calls {@link
+ * JobDiscoveryBudgetPort#assessBudget} exactly once with that exact list. A non-{@code ALLOWED}
+ * decision (including {@code NOT_REQUIRED} for an empty bounded list) short-circuits the run with
+ * zero Search/Scrape/Extraction/persistence calls; see {@link JobDiscoveryBudgetStatus}. {@link
+ * JobDiscoveryBudgetPort} is a required collaborator, matching {@link JobSearchPort}/{@link
+ * JobPageFetchPort}: if discovery is enabled without a real budget adapter bean (today, only when
+ * {@code firecrawl.enabled=false}), Spring fails application startup rather than this service
+ * silently skipping the budget gate.
  */
 @Slf4j
 @Service
@@ -85,6 +99,7 @@ public class JobDiscoveryService {
     private final VacancyExtractionService vacancyExtractionService;
     private final VacancyIngestionService vacancyIngestionService;
     private final VacancyRepository vacancyRepository;
+    private final JobDiscoveryBudgetPort budgetPort;
     private final JobDiscoveryProperties properties;
     private final Clock clock;
 
@@ -96,6 +111,7 @@ public class JobDiscoveryService {
             VacancyExtractionService vacancyExtractionService,
             VacancyIngestionService vacancyIngestionService,
             VacancyRepository vacancyRepository,
+            JobDiscoveryBudgetPort budgetPort,
             JobDiscoveryProperties properties,
             Clock clock) {
         this.candidateProfileProvider = candidateProfileProvider;
@@ -105,6 +121,7 @@ public class JobDiscoveryService {
         this.vacancyExtractionService = vacancyExtractionService;
         this.vacancyIngestionService = vacancyIngestionService;
         this.vacancyRepository = vacancyRepository;
+        this.budgetPort = budgetPort;
         this.properties = properties;
         this.clock = clock;
     }
@@ -112,6 +129,7 @@ public class JobDiscoveryService {
     public JobDiscoveryRunResult runDiscovery() {
         Instant startedAt = clock.instant();
         JobDiscoveryProperties.Execution limits = properties.execution();
+        JobDiscoveryProperties.Budget budget = properties.budget();
         RunAccumulator acc = new RunAccumulator(limits.maxReportedIssues());
 
         CandidateProfile profile = loadProfile();
@@ -119,7 +137,20 @@ public class JobDiscoveryService {
         acc.plannedQueries = plannedQueries.size();
 
         int queriesToAttempt = Math.min(plannedQueries.size(), limits.maxQueriesPerRun());
-        for (int queryIndex = 0; queryIndex < queriesToAttempt; queryIndex++) {
+        List<JobSearchRequest> boundedQueries = plannedQueries.subList(0, queriesToAttempt);
+
+        JobDiscoveryBudgetDecision budgetDecision = assessBudget(boundedQueries, limits, budget);
+        logBudgetDecision(budgetDecision);
+
+        if (budgetDecision.status() != JobDiscoveryBudgetStatus.ALLOWED) {
+            Instant completedAt = clock.instant();
+            JobDiscoveryRunResult result =
+                    acc.toResult(startedAt, completedAt, Duration.between(startedAt, completedAt), budgetDecision);
+            logSummary(result);
+            return result;
+        }
+
+        for (int queryIndex = 0; queryIndex < boundedQueries.size(); queryIndex++) {
             if (acc.uniqueReferencesAccepted >= limits.maxUniqueReferencesPerRun()) {
                 acc.uniqueReferenceLimitReached = true;
                 break;
@@ -127,15 +158,26 @@ public class JobDiscoveryService {
             if (noRemainingPaidCapacity(acc, limits)) {
                 break;
             }
-            executeQuery(plannedQueries.get(queryIndex), queryIndex, acc, limits);
+            executeQuery(boundedQueries.get(queryIndex), queryIndex, acc, limits);
         }
         acc.queryLimitReached = acc.executedQueries == limits.maxQueriesPerRun()
                 && plannedQueries.size() > limits.maxQueriesPerRun();
 
         Instant completedAt = clock.instant();
-        JobDiscoveryRunResult result = acc.toResult(startedAt, completedAt, Duration.between(startedAt, completedAt));
+        JobDiscoveryRunResult result =
+                acc.toResult(startedAt, completedAt, Duration.between(startedAt, completedAt), budgetDecision);
         logSummary(result);
         return result;
+    }
+
+    private JobDiscoveryBudgetDecision assessBudget(List<JobSearchRequest> boundedQueries,
+                                                      JobDiscoveryProperties.Execution limits,
+                                                      JobDiscoveryProperties.Budget budget) {
+        if (boundedQueries.isEmpty()) {
+            return JobDiscoveryBudgetDecision.notRequired(
+                    budget.monthlyCreditLimit(), budget.reserveCredits(), budget.maxEstimatedCreditsPerRun());
+        }
+        return budgetPort.assessBudget(new JobDiscoveryBudgetRequest(boundedQueries, limits.maxScrapesPerRun()));
     }
 
     private CandidateProfile loadProfile() {
@@ -290,6 +332,24 @@ public class JobDiscoveryService {
         return uri == null ? null : uri.getHost();
     }
 
+    private void logBudgetDecision(JobDiscoveryBudgetDecision decision) {
+        boolean healthy = decision.status() == JobDiscoveryBudgetStatus.ALLOWED
+                || decision.status() == JobDiscoveryBudgetStatus.NOT_REQUIRED;
+        if (healthy) {
+            log.info("Job discovery budget decision - status: {}, estimatedTotalCredits: {}, remainingCredits: {}, "
+                            + "reserveCredits: {}, monthlyLimit: {}, billingPeriod: {}..{}",
+                    decision.status(), decision.estimatedTotalCredits(), decision.remainingCredits(),
+                    decision.configuredReserveCredits(), decision.configuredMonthlyLimit(),
+                    decision.billingPeriodStart(), decision.billingPeriodEnd());
+        } else {
+            log.warn("Job discovery budget decision - status: {}, estimatedTotalCredits: {}, remainingCredits: {}, "
+                            + "reserveCredits: {}, monthlyLimit: {}, billingPeriod: {}..{}, reason: {}",
+                    decision.status(), decision.estimatedTotalCredits(), decision.remainingCredits(),
+                    decision.configuredReserveCredits(), decision.configuredMonthlyLimit(),
+                    decision.billingPeriodStart(), decision.billingPeriodEnd(), decision.reasonCategory());
+        }
+    }
+
     private void logSummary(JobDiscoveryRunResult result) {
         log.info("Job discovery run summary - duration: {}, plannedQueries: {}, executedQueries: {}, failedQueries: {}, "
                         + "discoveredReferences: {}, invalidReferences: {}, duplicateReferencesInRun: {}, "
@@ -356,7 +416,8 @@ public class JobDiscoveryService {
             }
         }
 
-        private JobDiscoveryRunResult toResult(Instant startedAt, Instant completedAt, Duration duration) {
+        private JobDiscoveryRunResult toResult(Instant startedAt, Instant completedAt, Duration duration,
+                                                JobDiscoveryBudgetDecision budgetDecision) {
             return new JobDiscoveryRunResult(
                     startedAt, completedAt, duration,
                     plannedQueries, executedQueries, failedQueries,
@@ -366,7 +427,7 @@ public class JobDiscoveryService {
                     extractionAttempts, extractionSuccesses, extractionFailures,
                     persistenceAttempts, createdVacancies, alreadyExistingAfterRace, persistenceFailures,
                     queryLimitReached, scrapeLimitReached, extractionLimitReached, uniqueReferenceLimitReached,
-                    createdVacancyIds, issues, omittedIssueCount);
+                    createdVacancyIds, issues, omittedIssueCount, budgetDecision);
         }
     }
 }

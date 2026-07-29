@@ -38,7 +38,11 @@ class FirecrawlPropertiesBindingTest {
                         "firecrawl.connect-timeout=5s",
                         "firecrawl.read-timeout=65s",
                         "firecrawl.scrape-timeout=60s",
-                        "firecrawl.max-markdown-chars=100000")
+                        "firecrawl.max-markdown-chars=100000",
+                        "firecrawl.credit-usage-timeout=10s",
+                        "firecrawl.cost.search-results-per-credit-block=10",
+                        "firecrawl.cost.search-credits-per-block=2",
+                        "firecrawl.cost.basic-scrape-credits=1")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     FirecrawlProperties properties = context.getBean(FirecrawlProperties.class);
@@ -50,6 +54,10 @@ class FirecrawlPropertiesBindingTest {
                     assertThat(properties.readTimeout()).isEqualTo(Duration.ofSeconds(65));
                     assertThat(properties.scrapeTimeout()).isEqualTo(Duration.ofSeconds(60));
                     assertThat(properties.maxMarkdownChars()).isEqualTo(100_000);
+                    assertThat(properties.creditUsageTimeout()).isEqualTo(Duration.ofSeconds(10));
+                    assertThat(properties.cost().searchResultsPerCreditBlock()).isEqualTo(10);
+                    assertThat(properties.cost().searchCreditsPerBlock()).isEqualTo(2);
+                    assertThat(properties.cost().basicScrapeCredits()).isEqualTo(1);
                 });
     }
 
@@ -64,7 +72,11 @@ class FirecrawlPropertiesBindingTest {
                         "firecrawl.connect-timeout=2s",
                         "firecrawl.read-timeout=2m",
                         "firecrawl.scrape-timeout=90s",
-                        "firecrawl.max-markdown-chars=250000")
+                        "firecrawl.max-markdown-chars=250000",
+                        "firecrawl.credit-usage-timeout=15s",
+                        "firecrawl.cost.search-results-per-credit-block=20",
+                        "firecrawl.cost.search-credits-per-block=4",
+                        "firecrawl.cost.basic-scrape-credits=2")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     FirecrawlProperties properties = context.getBean(FirecrawlProperties.class);
@@ -76,6 +88,10 @@ class FirecrawlPropertiesBindingTest {
                     assertThat(properties.readTimeout()).isEqualTo(Duration.ofMinutes(2));
                     assertThat(properties.scrapeTimeout()).isEqualTo(Duration.ofSeconds(90));
                     assertThat(properties.maxMarkdownChars()).isEqualTo(250_000);
+                    assertThat(properties.creditUsageTimeout()).isEqualTo(Duration.ofSeconds(15));
+                    assertThat(properties.cost().searchResultsPerCreditBlock()).isEqualTo(20);
+                    assertThat(properties.cost().searchCreditsPerBlock()).isEqualTo(4);
+                    assertThat(properties.cost().basicScrapeCredits()).isEqualTo(2);
                 });
     }
 
