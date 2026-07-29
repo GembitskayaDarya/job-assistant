@@ -38,6 +38,7 @@ import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -862,9 +863,14 @@ class JobDiscoveryServiceTest {
     // --- Fixtures and fakes ------------------------------------------------------------------
 
     private JobDiscoveryService service(JobDiscoveryProperties.Execution execution) {
-        JobDiscoveryProperties properties = new JobDiscoveryProperties(true, execution, budget());
+        JobDiscoveryProperties properties = new JobDiscoveryProperties(true, execution, budget(), disabledScheduler());
         return new JobDiscoveryService(candidateProfileProvider, queryPlanner, jobSearchPort, jobPageFetchPort,
                 vacancyExtractionService, vacancyIngestionService, vacancyRepository, budgetPort, properties, CLOCK);
+    }
+
+    private JobDiscoveryProperties.Scheduler disabledScheduler() {
+        return new JobDiscoveryProperties.Scheduler(false, "0 0 8 * * *", "Europe/Warsaw",
+                Duration.ofHours(2), Duration.ofMinutes(1));
     }
 
     private JobDiscoveryProperties.Execution execution(int maxQueries, int maxScrapes, int maxExtractions,

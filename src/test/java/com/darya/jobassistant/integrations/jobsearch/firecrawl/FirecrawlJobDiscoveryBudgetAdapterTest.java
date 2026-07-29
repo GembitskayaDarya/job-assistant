@@ -353,7 +353,9 @@ class FirecrawlJobDiscoveryBudgetAdapterTest {
                 new FirecrawlProperties.Cost(10, 2, 1));
         JobDiscoveryProperties jobDiscoveryProperties = new JobDiscoveryProperties(true,
                 new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50),
-                new JobDiscoveryProperties.Budget(800, 200, 15));
+                new JobDiscoveryProperties.Budget(800, 200, 15),
+                new JobDiscoveryProperties.Scheduler(false, "0 0 8 * * *", "Europe/Warsaw",
+                        Duration.ofHours(2), Duration.ofMinutes(1)));
         WebClient webClient = new FirecrawlWebClientConfig(firecrawlProperties).firecrawlWebClient(OBJECT_MAPPER);
         return new FirecrawlJobDiscoveryBudgetAdapter(webClient, firecrawlProperties, jobDiscoveryProperties);
     }

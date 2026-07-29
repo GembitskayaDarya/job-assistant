@@ -1,6 +1,11 @@
 package com.darya.jobassistant.jobdiscovery.config;
 
+import java.time.DateTimeException;
+import java.time.Duration;
+import java.time.ZoneId;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.scheduling.support.CronExpression;
+import org.springframework.util.StringUtils;
 
 /**
  * Activation and per-run cost bounds for {@code JobDiscoveryService}. Deliberately provider-
@@ -20,9 +25,19 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * FirecrawlProperties.Cost} for the separate, provider-specific pricing assumptions used to turn a
  * planned run into a credit estimate, and {@code JobDiscoveryBudgetPolicy} for how these limits are
  * applied to that estimate.
+ *
+ * <p>{@link #scheduler()} configures the optional daily {@code JobDiscoveryScheduler} trigger.
+ * Unlike {@link #execution()}/{@link #budget()}, {@link Scheduler}'s own fields are validated
+ * whenever {@code scheduler.enabled=true} - independent of {@link #enabled}, so that {@code
+ * job-discovery.scheduler.enabled=true} together with {@code job-discovery.enabled=false} fails
+ * startup with a clear configuration error rather than the scheduler silently never running (a
+ * {@code JobDiscoveryScheduler} bean cannot exist at all in that combination, since it requires a
+ * real {@code JobDiscoveryService} bean, itself gated on {@code job-discovery.enabled=true} - this
+ * check surfaces that same misconfiguration earlier and more clearly, directly from the property
+ * binder, instead of only as a missing-bean startup failure).
  */
 @ConfigurationProperties(prefix = "job-discovery")
-public record JobDiscoveryProperties(boolean enabled, Execution execution, Budget budget) {
+public record JobDiscoveryProperties(boolean enabled, Execution execution, Budget budget, Scheduler scheduler) {
 
     private static final int MIN_MAX_QUERIES_PER_RUN = 1;
     private static final int MAX_MAX_QUERIES_PER_RUN = 10;
@@ -40,6 +55,8 @@ public record JobDiscoveryProperties(boolean enabled, Execution execution, Budge
     private static final long MAX_RESERVE_CREDITS = 1_000_000;
     private static final long MIN_MAX_ESTIMATED_CREDITS_PER_RUN = 1;
     private static final long MAX_MAX_ESTIMATED_CREDITS_PER_RUN = 100_000;
+    private static final Duration MIN_LOCK_AT_MOST_FOR = Duration.ofMinutes(1);
+    private static final Duration MAX_LOCK_AT_MOST_FOR = Duration.ofHours(12);
 
     public JobDiscoveryProperties {
         if (enabled) {
@@ -76,6 +93,53 @@ public record JobDiscoveryProperties(boolean enabled, Execution execution, Budge
                                 + ") must not exceed job-discovery.budget.monthly-credit-limit (" + budget.monthlyCreditLimit() + ")");
             }
         }
+        if (scheduler != null && scheduler.enabled()) {
+            if (!enabled) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.enabled=true requires job-discovery.enabled=true - "
+                                + "a scheduler cannot be requested for a discovery service that is itself disabled");
+            }
+            if (!StringUtils.hasText(scheduler.cron())) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.cron must not be blank when job-discovery.scheduler.enabled=true");
+            }
+            try {
+                CronExpression.parse(scheduler.cron());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.cron is not a valid Spring six-field cron expression: "
+                                + scheduler.cron(), e);
+            }
+            if (!StringUtils.hasText(scheduler.zone())) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.zone must not be blank when job-discovery.scheduler.enabled=true");
+            }
+            try {
+                ZoneId.of(scheduler.zone());
+            } catch (DateTimeException e) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.zone is not a valid zone id: " + scheduler.zone(), e);
+            }
+            if (scheduler.lockAtMostFor() == null
+                    || scheduler.lockAtMostFor().compareTo(MIN_LOCK_AT_MOST_FOR) < 0
+                    || scheduler.lockAtMostFor().compareTo(MAX_LOCK_AT_MOST_FOR) > 0) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.lock-at-most-for must be between " + MIN_LOCK_AT_MOST_FOR + " and "
+                                + MAX_LOCK_AT_MOST_FOR + " when job-discovery.scheduler.enabled=true, but was "
+                                + scheduler.lockAtMostFor());
+            }
+            if (scheduler.lockAtLeastFor() == null || scheduler.lockAtLeastFor().isNegative()) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.lock-at-least-for must not be negative when "
+                                + "job-discovery.scheduler.enabled=true, but was " + scheduler.lockAtLeastFor());
+            }
+            if (scheduler.lockAtLeastFor().compareTo(scheduler.lockAtMostFor()) >= 0) {
+                throw new IllegalArgumentException(
+                        "job-discovery.scheduler.lock-at-least-for (" + scheduler.lockAtLeastFor()
+                                + ") must be strictly less than job-discovery.scheduler.lock-at-most-for ("
+                                + scheduler.lockAtMostFor() + ")");
+            }
+        }
     }
 
     private static void requireInRange(int value, int min, int max, String propertyName) {
@@ -110,6 +174,26 @@ public record JobDiscoveryProperties(boolean enabled, Execution execution, Budge
             long monthlyCreditLimit,
             long reserveCredits,
             long maxEstimatedCreditsPerRun
+    ) {
+    }
+
+    /**
+     * Configuration for the optional daily {@code JobDiscoveryScheduler} trigger - see the class
+     * javadoc for why these fields are validated independently of {@link #enabled}.
+     *
+     * <p>{@link #lockAtMostFor()} must stay comfortably larger than the maximum expected discovery
+     * duration (so a still-running node is never overtaken by a second acquisition while genuinely
+     * healthy) and shorter than the intended scheduling interval (so a crashed node's stale lock
+     * cannot suppress the next legitimate occurrence indefinitely) - this class cannot verify
+     * either relationship automatically, since it does not attempt to infer the interval between
+     * arbitrary cron expressions; both must be sized deliberately by whoever configures them.
+     */
+    public record Scheduler(
+            boolean enabled,
+            String cron,
+            String zone,
+            Duration lockAtMostFor,
+            Duration lockAtLeastFor
     ) {
     }
 }

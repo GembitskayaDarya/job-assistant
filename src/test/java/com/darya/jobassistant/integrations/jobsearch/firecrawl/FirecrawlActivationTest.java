@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.darya.jobassistant.config.FirecrawlProperties;
 import com.darya.jobassistant.jobdiscovery.config.JobDiscoveryProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -101,7 +102,9 @@ class FirecrawlActivationTest {
         JobDiscoveryProperties jobDiscoveryProperties() {
             return new JobDiscoveryProperties(true,
                     new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50),
-                    new JobDiscoveryProperties.Budget(800, 200, 15));
+                    new JobDiscoveryProperties.Budget(800, 200, 15),
+                    new JobDiscoveryProperties.Scheduler(false, "0 0 8 * * *", "Europe/Warsaw",
+                            Duration.ofHours(2), Duration.ofMinutes(1)));
         }
     }
 }

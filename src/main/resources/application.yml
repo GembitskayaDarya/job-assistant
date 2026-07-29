@@ -124,6 +124,16 @@ job-discovery:
     monthly-credit-limit: ${JOB_DISCOVERY_MONTHLY_CREDIT_LIMIT:800}
     reserve-credits: ${JOB_DISCOVERY_RESERVE_CREDITS:200}
     max-estimated-credits-per-run: ${JOB_DISCOVERY_MAX_ESTIMATED_CREDITS_PER_RUN:15}
+  # Optional daily trigger for JobDiscoveryService, off by default. lock-at-most-for must stay
+  # comfortably larger than the slowest expected discovery run (bounded by the execution limits
+  # above) and shorter than the interval between cron occurrences, so a crashed node's stale lock
+  # can never suppress the next legitimate run indefinitely.
+  scheduler:
+    enabled: ${JOB_DISCOVERY_SCHEDULER_ENABLED:false}
+    cron: ${JOB_DISCOVERY_SCHEDULER_CRON:0 0 8 * * *}
+    zone: ${JOB_DISCOVERY_SCHEDULER_ZONE:Europe/Warsaw}
+    lock-at-most-for: ${JOB_DISCOVERY_LOCK_AT_MOST_FOR:2h}
+    lock-at-least-for: ${JOB_DISCOVERY_LOCK_AT_LEAST_FOR:1m}
 
 vacancy-import:
   session-ttl: ${VACANCY_IMPORT_SESSION_TTL:24h}

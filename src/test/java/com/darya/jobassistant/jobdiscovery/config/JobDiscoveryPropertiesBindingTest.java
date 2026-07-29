@@ -2,6 +2,8 @@ package com.darya.jobassistant.jobdiscovery.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -92,6 +94,97 @@ class JobDiscoveryPropertiesBindingTest {
                         "job-discovery.execution.max-unique-references-per-run=30",
                         "job-discovery.execution.max-reported-issues=50")
                 .run(context -> assertThat(context).hasFailed());
+    }
+
+    // --- scheduler -------------------------------------------------------------------------------
+
+    @Test
+    void binding_mapsSchedulerApplicationYmlDefaults() {
+        contextRunner
+                .withPropertyValues(disabledDefaultPropertiesWithScheduler())
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    JobDiscoveryProperties properties = context.getBean(JobDiscoveryProperties.class);
+                    assertThat(properties.scheduler().enabled()).isFalse();
+                    assertThat(properties.scheduler().cron()).isEqualTo("0 0 8 * * *");
+                    assertThat(properties.scheduler().zone()).isEqualTo("Europe/Warsaw");
+                    assertThat(properties.scheduler().lockAtMostFor()).isEqualTo(Duration.ofHours(2));
+                    assertThat(properties.scheduler().lockAtLeastFor()).isEqualTo(Duration.ofMinutes(1));
+                });
+    }
+
+    @Test
+    void binding_mapsOverriddenSchedulerValuesWhenEnabled() {
+        contextRunner
+                .withPropertyValues(
+                        "job-discovery.enabled=true",
+                        "job-discovery.execution.max-queries-per-run=3",
+                        "job-discovery.execution.max-scrapes-per-run=5",
+                        "job-discovery.execution.max-extractions-per-run=5",
+                        "job-discovery.execution.max-unique-references-per-run=30",
+                        "job-discovery.execution.max-reported-issues=50",
+                        "job-discovery.budget.monthly-credit-limit=800",
+                        "job-discovery.budget.reserve-credits=200",
+                        "job-discovery.budget.max-estimated-credits-per-run=15",
+                        "job-discovery.scheduler.enabled=true",
+                        "job-discovery.scheduler.cron=0 30 6 * * *",
+                        "job-discovery.scheduler.zone=UTC",
+                        "job-discovery.scheduler.lock-at-most-for=90m",
+                        "job-discovery.scheduler.lock-at-least-for=2m")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    JobDiscoveryProperties properties = context.getBean(JobDiscoveryProperties.class);
+                    assertThat(properties.scheduler().enabled()).isTrue();
+                    assertThat(properties.scheduler().cron()).isEqualTo("0 30 6 * * *");
+                    assertThat(properties.scheduler().zone()).isEqualTo("UTC");
+                    assertThat(properties.scheduler().lockAtMostFor()).isEqualTo(Duration.ofMinutes(90));
+                    assertThat(properties.scheduler().lockAtLeastFor()).isEqualTo(Duration.ofMinutes(2));
+                });
+    }
+
+    @Test
+    void binding_schedulerEnabledWithDiscoveryDisabled_failsContext() {
+        contextRunner
+                .withPropertyValues(
+                        "job-discovery.enabled=false",
+                        "job-discovery.scheduler.enabled=true",
+                        "job-discovery.scheduler.cron=0 0 8 * * *",
+                        "job-discovery.scheduler.zone=Europe/Warsaw",
+                        "job-discovery.scheduler.lock-at-most-for=2h",
+                        "job-discovery.scheduler.lock-at-least-for=1m")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void binding_schedulerEnabledWithInvalidCron_failsContext() {
+        contextRunner
+                .withPropertyValues(
+                        "job-discovery.enabled=true",
+                        "job-discovery.execution.max-queries-per-run=3",
+                        "job-discovery.execution.max-scrapes-per-run=5",
+                        "job-discovery.execution.max-extractions-per-run=5",
+                        "job-discovery.execution.max-unique-references-per-run=30",
+                        "job-discovery.execution.max-reported-issues=50",
+                        "job-discovery.budget.monthly-credit-limit=800",
+                        "job-discovery.budget.reserve-credits=200",
+                        "job-discovery.budget.max-estimated-credits-per-run=15",
+                        "job-discovery.scheduler.enabled=true",
+                        "job-discovery.scheduler.cron=not a cron",
+                        "job-discovery.scheduler.zone=Europe/Warsaw",
+                        "job-discovery.scheduler.lock-at-most-for=2h",
+                        "job-discovery.scheduler.lock-at-least-for=1m")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    private String[] disabledDefaultPropertiesWithScheduler() {
+        String[] base = disabledDefaultProperties();
+        String[] withScheduler = Arrays.copyOf(base, base.length + 5);
+        withScheduler[base.length] = "job-discovery.scheduler.enabled=false";
+        withScheduler[base.length + 1] = "job-discovery.scheduler.cron=0 0 8 * * *";
+        withScheduler[base.length + 2] = "job-discovery.scheduler.zone=Europe/Warsaw";
+        withScheduler[base.length + 3] = "job-discovery.scheduler.lock-at-most-for=2h";
+        withScheduler[base.length + 4] = "job-discovery.scheduler.lock-at-least-for=1m";
+        return withScheduler;
     }
 
     private String[] disabledDefaultProperties() {
