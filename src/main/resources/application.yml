@@ -41,6 +41,17 @@ spring:
     time-zone: UTC
 
   ai:
+    # Spring AI's own documented default is 10 (spring.ai.retry.max-attempts) - a single
+    # application-level ChatClient call would otherwise silently retry up to 9 additional times
+    # against the real OpenAI HTTP endpoint on any 5xx (TransientAiException). Pinned to 1 here so
+    # one adapter invocation (VacancyExtractionPort/JobAnalysisAiPort) always makes exactly one
+    # provider HTTP attempt - proven via MaxAttemptsRetryPolicy(1) in
+    # SpringAiRetryAutoConfigurationTest. The durable VacancyRecommendationTask retry (persisted,
+    # bounded, attempt_count-tracked) remains the only automatic retry for candidate-fit analysis;
+    # a manual /analyze failure is surfaced to the user for a manual retry, never retried
+    # transparently underneath them.
+    retry:
+      max-attempts: ${SPRING_AI_RETRY_MAX_ATTEMPTS:1}
     openai:
       api-key: ${OPENAI_API_KEY:}
       chat:

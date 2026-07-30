@@ -34,6 +34,11 @@ logs/
 config/candidate-profile.yml
 !config/candidate-profile.example.yml
 
+### Database backups (local pg_dump snapshots - never committed) ###
+*.dump
+*.backup
+backups/
+
 ### IntelliJ IDEA ###
 .idea/
 *.iws

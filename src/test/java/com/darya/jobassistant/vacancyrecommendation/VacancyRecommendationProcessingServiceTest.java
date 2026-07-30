@@ -579,6 +579,9 @@ class VacancyRecommendationProcessingServiceTest {
         assertThat(result.deadTasks()).isEqualTo(1);
         assertThat(result.notificationFailures()).isEqualTo(1);
         verify(taskRepository, never()).scheduleRetry(any(), any(), any(), any(), any());
+        // One processing attempt makes at most one Telegram send request - a permanent failure
+        // must never be retried transparently within the same attempt.
+        verify(jobNotificationPort, times(1)).send(any());
     }
 
     @Test
@@ -605,6 +608,10 @@ class VacancyRecommendationProcessingServiceTest {
 
         assertThat(result.retryScheduled()).isEqualTo(1);
         verify(taskRepository, never()).markDead(any(), any(), any(), any());
+        // One processing attempt makes at most one Telegram send request - the durable task retry
+        // (a later, separate claim) is the only mechanism that may try again, never a hidden
+        // transport-level retry within this same attempt.
+        verify(jobNotificationPort, times(1)).send(any());
     }
 
     @Test
