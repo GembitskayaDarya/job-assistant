@@ -47,6 +47,8 @@ services:
       JOB_MONITORING_RECIPIENT_CHAT_ID: ${JOB_MONITORING_RECIPIENT_CHAT_ID:-}
       LOG_LEVEL_SCHEDULER: ${LOG_LEVEL_SCHEDULER:-INFO}
       LOG_LEVEL_MONITORING: ${LOG_LEVEL_MONITORING:-INFO}
+    volumes:
+      - ./config/candidate-profile.yml:/app/config/candidate-profile.yml:ro
     ports:
       - "8080:8080"
     healthcheck:
