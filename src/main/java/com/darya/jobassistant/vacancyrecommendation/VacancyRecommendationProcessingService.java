@@ -11,7 +11,7 @@ import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
-import com.darya.jobassistant.integrations.notifier.JobNotification;
+import com.darya.jobassistant.integrations.notifier.CompactVacancyRecommendation;
 import com.darya.jobassistant.integrations.notifier.JobNotificationException;
 import com.darya.jobassistant.integrations.notifier.JobNotificationFactory;
 import com.darya.jobassistant.integrations.notifier.JobNotificationFailureType;
@@ -324,7 +324,7 @@ public class VacancyRecommendationProcessingService {
     private void deliverNotification(VacancyRecommendationTaskEntity task, UUID vacancyId, JobAnalysis analysis, RunAccumulator acc) {
         Long recipientChatId = properties.recipientChatId();
         Vacancy vacancy = loadVacancyOrThrow(vacancyId);
-        JobNotification notification = jobNotificationFactory.create(vacancy, analysis, recipientChatId);
+        CompactVacancyRecommendation recommendation = jobNotificationFactory.createCompactRecommendation(vacancy, analysis, recipientChatId);
 
         DeliveryDecision decision = reserveOrRetrieveDelivery(vacancyId, recipientChatId);
         if (decision.sent()) {
@@ -341,13 +341,14 @@ public class VacancyRecommendationProcessingService {
         acc.notificationAttempts++;
         JobNotificationResult sendResult;
         try {
-            sendResult = jobNotificationPort.send(notification);
+            sendResult = jobNotificationPort.sendCompactRecommendation(recommendation);
         } catch (JobNotificationException e) {
             acc.notificationFailures++;
             VacancyRecommendationFailureCategory category = classifyTelegramFailure(e.failureType());
             acc.addIssue(VacancyRecommendationIssueCategory.NOTIFICATION_FAILED, task.getId(), vacancyId, category.name());
             markDeliveryFailedSafely(delivery.id(), e.failureType().name());
-            if (category == VacancyRecommendationFailureCategory.TELEGRAM_PERMANENT_ERROR) {
+            if (category == VacancyRecommendationFailureCategory.TELEGRAM_PERMANENT_ERROR
+                    || category == VacancyRecommendationFailureCategory.TELEGRAM_MESSAGE_TOO_LARGE) {
                 handleNonRecoverableFailure(task, category, acc);
             } else {
                 handleRecoverableFailure(task, category, acc);
@@ -531,6 +532,7 @@ public class VacancyRecommendationProcessingService {
         return switch (failureType) {
             case PERMANENT_FAILURE -> VacancyRecommendationFailureCategory.TELEGRAM_PERMANENT_ERROR;
             case TEMPORARY_FAILURE, UNEXPECTED_FAILURE -> VacancyRecommendationFailureCategory.TELEGRAM_TRANSIENT_ERROR;
+            case PAYLOAD_TOO_LARGE -> VacancyRecommendationFailureCategory.TELEGRAM_MESSAGE_TOO_LARGE;
         };
     }
 

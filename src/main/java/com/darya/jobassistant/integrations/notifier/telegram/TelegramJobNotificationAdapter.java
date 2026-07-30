@@ -1,5 +1,6 @@
 package com.darya.jobassistant.integrations.notifier.telegram;
 
+import com.darya.jobassistant.integrations.notifier.CompactVacancyRecommendation;
 import com.darya.jobassistant.integrations.notifier.JobNotification;
 import com.darya.jobassistant.integrations.notifier.JobNotificationException;
 import com.darya.jobassistant.integrations.notifier.JobNotificationFailureType;
@@ -8,7 +9,8 @@ import com.darya.jobassistant.integrations.notifier.JobNotificationResult;
 import com.darya.jobassistant.util.TelegramMessageUtils;
 import java.io.IOException;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
+import java.util.Optional;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.ParseMode;
@@ -19,26 +21,35 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiRequestException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 /**
- * Telegram implementation of {@link JobNotificationPort}. Reuses the existing {@link
- * TelegramClient} bean (the same client the bot uses to send command replies) rather than a
- * second bot/session/token. Stateless: holds only its two collaborators.
+ * Telegram implementation of {@link JobNotificationPort}. Uses a dedicated {@code
+ * notificationTelegramClient} bean (see {@code TelegramBotConfig}) - separate from the bean the
+ * bot's long-polling loop and command replies use - built with {@code
+ * retryOnConnectionFailure(false)}: a single processing attempt (either {@link #send} or {@link
+ * #sendCompactRecommendation}) must never contain a hidden OkHttp transport-level replay of a
+ * message-send request. Both methods still reuse the same bot token; only the transport/retry
+ * posture differs. Stateless otherwise: holds only its collaborators.
  *
- * <p>Scope is intentionally narrow - format, split if needed, send, translate the outcome. It
- * never touches vacancy/analysis/notification-delivery persistence and never decides whether to
- * reserve or mark a delivery; that orchestration belongs to {@code JobMonitoringService}.
+ * <p>Scope is intentionally narrow - format, send, translate the outcome. It never touches
+ * vacancy/analysis/notification-delivery persistence and never decides whether to reserve or mark
+ * a delivery; that orchestration belongs to {@code JobMonitoringService}/{@code
+ * VacancyRecommendationProcessingService}.
  *
- * <p>Message-length handling lives here, not in {@link TelegramJobNotificationFormatter}: the
- * formatter always returns the complete, unmodified text (including the shared analysis block
- * exactly as {@code JobAnalysisTelegramFormatter} produced it); this adapter splits that text via
- * {@link TelegramMessageUtils#split(String)} into as many Telegram messages as needed and sends
- * them in order. This keeps "how do we render an analysis" and "how do we fit it into Telegram's
- * transport limit" as separate concerns, and guarantees a long analysis is never rendered
- * differently from a short one. If a later chunk fails to send after earlier ones already
- * succeeded, the already-delivered chunks cannot be recalled - this is an accepted limitation of
- * multi-message delivery with no atomic "send all or nothing" primitive in the Telegram Bot API.
+ * <p>{@link #send} (legacy monitoring path): message-length handling lives here, not in {@link
+ * TelegramJobNotificationFormatter} - the formatter always returns the complete, unmodified text
+ * (including the shared analysis block exactly as {@code JobAnalysisTelegramFormatter} produced
+ * it); this adapter splits that text via {@link TelegramMessageUtils#split(String)} into as many
+ * Telegram messages as needed and sends them in order. If a later chunk fails to send after
+ * earlier ones already succeeded, the already-delivered chunks cannot be recalled - this is an
+ * accepted limitation of multi-message delivery with no atomic "send all or nothing" primitive in
+ * the Telegram Bot API. This behavior is completely unchanged by {@link #sendCompactRecommendation}.
+ *
+ * <p>{@link #sendCompactRecommendation} (automatic recommendation path): never chunks. {@link
+ * CompactRecommendationTelegramFormatter} guarantees at most one message; if it cannot fit even
+ * essential fields, this method fails with {@link JobNotificationFailureType#PAYLOAD_TOO_LARGE}
+ * before {@code telegramClient.execute} is ever called - zero Telegram HTTP requests for that
+ * outcome.
  */
 @Component
-@RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "telegram", name = "enabled", havingValue = "true")
 public class TelegramJobNotificationAdapter implements JobNotificationPort {
 
@@ -50,24 +61,48 @@ public class TelegramJobNotificationAdapter implements JobNotificationPort {
 
     private final TelegramClient telegramClient;
     private final TelegramJobNotificationFormatter formatter;
+    private final CompactRecommendationTelegramFormatter compactFormatter;
+
+    public TelegramJobNotificationAdapter(
+            @Qualifier("notificationTelegramClient") TelegramClient telegramClient,
+            TelegramJobNotificationFormatter formatter,
+            CompactRecommendationTelegramFormatter compactFormatter) {
+        this.telegramClient = telegramClient;
+        this.formatter = formatter;
+        this.compactFormatter = compactFormatter;
+    }
 
     @Override
     public JobNotificationResult send(JobNotification notification) {
         List<String> chunks = TelegramMessageUtils.split(formatter.format(notification));
         JobNotificationResult result = JobNotificationResult.accepted();
         for (String chunk : chunks) {
-            SendMessage sendMessage = SendMessage.builder()
-                    .chatId(notification.recipientChatId())
-                    .text(chunk)
-                    .parseMode(ParseMode.MARKDOWNV2)
-                    .build();
-            try {
-                result = toResult(telegramClient.execute(sendMessage));
-            } catch (TelegramApiException e) {
-                throw translate(e);
-            }
+            result = sendOneMessage(notification.recipientChatId(), chunk);
         }
         return result;
+    }
+
+    @Override
+    public JobNotificationResult sendCompactRecommendation(CompactVacancyRecommendation recommendation) {
+        Optional<String> rendered = compactFormatter.format(recommendation);
+        if (rendered.isEmpty()) {
+            throw new JobNotificationException(JobNotificationFailureType.PAYLOAD_TOO_LARGE,
+                    "Recommendation message could not fit within Telegram's single-message limit");
+        }
+        return sendOneMessage(recommendation.recipientChatId(), rendered.get());
+    }
+
+    private JobNotificationResult sendOneMessage(Long recipientChatId, String text) {
+        SendMessage sendMessage = SendMessage.builder()
+                .chatId(recipientChatId)
+                .text(text)
+                .parseMode(ParseMode.MARKDOWNV2)
+                .build();
+        try {
+            return toResult(telegramClient.execute(sendMessage));
+        } catch (TelegramApiException e) {
+            throw translate(e);
+        }
     }
 
     private JobNotificationResult toResult(Message sent) {

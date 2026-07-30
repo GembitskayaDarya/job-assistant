@@ -85,6 +85,9 @@ management:
 telegram:
   enabled: ${TELEGRAM_ENABLED:false}
   token: ${TELEGRAM_BOT_TOKEN:}
+  # Bounds the dedicated notification-send OkHttp transport (connect/read/write alike) - see
+  # TelegramBotConfig#notificationTelegramClient. Replaces OkHttp's own unconfigurable 10s default.
+  notification-send-timeout: ${TELEGRAM_NOTIFICATION_SEND_TIMEOUT:10s}
 
 jobsource:
   remoteok:

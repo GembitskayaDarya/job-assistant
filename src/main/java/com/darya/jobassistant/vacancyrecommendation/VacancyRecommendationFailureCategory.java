@@ -26,6 +26,15 @@ public enum VacancyRecommendationFailureCategory {
     /** Telegram rejected the send in a way retrying is unlikely to resolve (see {@code JobNotificationFailureType#PERMANENT_FAILURE}). */
     TELEGRAM_PERMANENT_ERROR,
 
+    /**
+     * The rendered recommendation message could not fit within Telegram's single-message limit
+     * even after deterministic truncation (see {@code JobNotificationFailureType#PAYLOAD_TOO_LARGE}).
+     * Never a real Telegram send attempt - treated as non-recoverable, like {@link
+     * #TELEGRAM_PERMANENT_ERROR}, since retrying without changing the AI-generated content would
+     * produce the same result.
+     */
+    TELEGRAM_MESSAGE_TOO_LARGE,
+
     /** A database state transition did not apply as expected (e.g. a lost lease, a lost unique race). */
     DATABASE_CONFLICT,
 

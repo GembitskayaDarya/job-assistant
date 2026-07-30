@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.ai.model.JobAnalysis;
+import com.darya.jobassistant.integrations.notifier.CompactVacancyRecommendation;
 import com.darya.jobassistant.integrations.notifier.JobNotification;
 import com.darya.jobassistant.telegram.format.JobAnalysisTelegramFormatter;
 import com.darya.jobassistant.integrations.notifier.JobNotificationException;
@@ -44,7 +45,8 @@ class TelegramJobNotificationAdapterTest {
     @BeforeEach
     void setUp() {
         adapter = new TelegramJobNotificationAdapter(
-                telegramClient, new TelegramJobNotificationFormatter(new JobAnalysisTelegramFormatter()));
+                telegramClient, new TelegramJobNotificationFormatter(new JobAnalysisTelegramFormatter()),
+                new CompactRecommendationTelegramFormatter());
     }
 
     @Test
@@ -269,6 +271,111 @@ class TelegramJobNotificationAdapterTest {
         adapter.send(notification(999L));
 
         verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    // --- sendCompactRecommendation (Sprint 8 Step 11A.1) --------------------------------------
+
+    @Test
+    void sendCompactRecommendation_normalRecommendation_invokesExecuteExactlyOnce() throws TelegramApiException {
+        Message sentMessage = new Message();
+        sentMessage.setMessageId(1);
+        when(telegramClient.execute(any(SendMessage.class))).thenReturn(sentMessage);
+
+        adapter.sendCompactRecommendation(compactRecommendation(999L, "Good match.", List.of("Java"), List.of()));
+
+        verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    @Test
+    void sendCompactRecommendation_longButValidRecommendation_stillInvokesExecuteExactlyOnce() throws TelegramApiException {
+        Message sentMessage = new Message();
+        when(telegramClient.execute(any(SendMessage.class))).thenReturn(sentMessage);
+        String longReason = "Reason. ".repeat(200);
+        List<String> manyStrengths = java.util.stream.IntStream.range(0, 30)
+                .mapToObj(i -> "Strength " + i + " with descriptive text").toList();
+
+        adapter.sendCompactRecommendation(compactRecommendation(999L, longReason, manyStrengths, manyStrengths));
+
+        verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    @Test
+    void sendCompactRecommendation_oversizedEssentialFields_failsBeforeExecute_zeroInvocations() throws TelegramApiException {
+        String hugeUrl = "https://example.com/" + "x".repeat(6000);
+        CompactVacancyRecommendation oversized = new CompactVacancyRecommendation(
+                vacancyId, 999L, "T", "C", hugeUrl, 50, "ok", List.of(), List.of(), null, null, null);
+
+        assertThatThrownBy(() -> adapter.sendCompactRecommendation(oversized))
+                .isInstanceOf(JobNotificationException.class)
+                .satisfies(e -> assertThat(((JobNotificationException) e).failureType())
+                        .isEqualTo(JobNotificationFailureType.PAYLOAD_TOO_LARGE));
+
+        verify(telegramClient, org.mockito.Mockito.never()).execute(any(SendMessage.class));
+    }
+
+    @Test
+    void sendCompactRecommendation_temporaryFailure_invokesExecuteExactlyOnce() throws TelegramApiException {
+        ApiResponse<Message> response = ApiResponse.<Message>builder()
+                .errorCode(500)
+                .errorDescription("Internal Server Error")
+                .build();
+        TelegramApiRequestException cause = new TelegramApiRequestException("Internal Server Error", response);
+        when(telegramClient.execute(any(SendMessage.class))).thenThrow(cause);
+
+        assertThatThrownBy(() -> adapter.sendCompactRecommendation(compactRecommendation(999L, "ok", List.of(), List.of())))
+                .isInstanceOf(JobNotificationException.class)
+                .satisfies(e -> assertThat(((JobNotificationException) e).failureType())
+                        .isEqualTo(JobNotificationFailureType.TEMPORARY_FAILURE));
+
+        verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    @Test
+    void sendCompactRecommendation_permanentFailure_invokesExecuteExactlyOnce() throws TelegramApiException {
+        ApiResponse<Message> response = ApiResponse.<Message>builder()
+                .errorCode(403)
+                .errorDescription("Forbidden: bot was blocked by the user")
+                .build();
+        TelegramApiRequestException cause = new TelegramApiRequestException("Forbidden", response);
+        when(telegramClient.execute(any(SendMessage.class))).thenThrow(cause);
+
+        assertThatThrownBy(() -> adapter.sendCompactRecommendation(compactRecommendation(999L, "ok", List.of(), List.of())))
+                .isInstanceOf(JobNotificationException.class)
+                .satisfies(e -> assertThat(((JobNotificationException) e).failureType())
+                        .isEqualTo(JobNotificationFailureType.PERMANENT_FAILURE));
+
+        verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    @Test
+    void sendCompactRecommendation_timeout_invokesExecuteExactlyOnce() throws TelegramApiException {
+        java.net.SocketTimeoutException timeout = new java.net.SocketTimeoutException("Read timed out");
+        TelegramApiException cause = new TelegramApiException("Unable to execute sendMessage method", timeout);
+        when(telegramClient.execute(any(SendMessage.class))).thenThrow(cause);
+
+        assertThatThrownBy(() -> adapter.sendCompactRecommendation(compactRecommendation(999L, "ok", List.of(), List.of())))
+                .isInstanceOf(JobNotificationException.class);
+
+        verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    @Test
+    void sendCompactRecommendation_neverRetriesOrRepeatsOnFailure() throws TelegramApiException {
+        when(telegramClient.execute(any(SendMessage.class)))
+                .thenThrow(new TelegramApiException("boom"));
+
+        assertThatThrownBy(() -> adapter.sendCompactRecommendation(compactRecommendation(999L, "ok", List.of(), List.of())))
+                .isInstanceOf(JobNotificationException.class);
+
+        // Exactly one attempt - no adapter-level retry/repeat loop exists.
+        verify(telegramClient, org.mockito.Mockito.times(1)).execute(any(SendMessage.class));
+    }
+
+    private CompactVacancyRecommendation compactRecommendation(
+            long recipientChatId, String reason, List<String> strengths, List<String> risks) {
+        return new CompactVacancyRecommendation(
+                vacancyId, recipientChatId, "Backend Engineer", "Acme Corp", "https://example.com/job-1",
+                85, reason, strengths, risks, "Berlin", "REMOTE", "100k EUR");
     }
 
     private int countOccurrences(String haystack, String needle) {

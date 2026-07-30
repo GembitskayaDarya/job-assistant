@@ -12,5 +12,12 @@ public enum JobNotificationFailureType {
     PERMANENT_FAILURE,
 
     /** The failure could not be safely classified as temporary or permanent. */
-    UNEXPECTED_FAILURE
+    UNEXPECTED_FAILURE,
+
+    /**
+     * The rendered message could not fit within the provider's single-message limit even after
+     * deterministic truncation. Raised before any provider HTTP call is made - never a genuine
+     * send failure. Retrying without changing the content is never expected to help.
+     */
+    PAYLOAD_TOO_LARGE
 }

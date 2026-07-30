@@ -26,6 +26,30 @@ public final class TelegramMessageUtils {
     }
 
     /**
+     * Truncates already-{@link #escapeMarkdownV2(String) escaped} text to at most {@code
+     * maxLength} characters (marker included), cutting only at a safe boundary - never splitting a
+     * UTF-16 surrogate pair, and never separating a MarkdownV2 escape backslash from the character
+     * it escapes (the same two rules {@link #split(String)} already applies when hard-splitting a
+     * single overlong line). Returns {@code text} unchanged when it already fits. Used by callers
+     * that must bound one specific field's contribution to a single message rather than splitting
+     * the whole message into multiple deliveries - see {@code CompactRecommendationTelegramFormatter}.
+     */
+    public static String truncateSafely(String escapedText, int maxLength, String marker) {
+        if (escapedText == null) {
+            return "";
+        }
+        if (escapedText.length() <= maxLength) {
+            return escapedText;
+        }
+        int budget = Math.max(0, maxLength - marker.length());
+        int end = Math.min(budget, escapedText.length());
+        while (end > 0 && !isSafeCutPoint(escapedText, end)) {
+            end--;
+        }
+        return escapedText.substring(0, end) + marker;
+    }
+
+    /**
      * Escapes every character MarkdownV2 treats as reserved syntax, per
      * <a href="https://core.telegram.org/bots/api#markdownv2-style">Telegram's MarkdownV2 spec</a>.
      * Telegram rejects the whole message if any reserved character appears unescaped,

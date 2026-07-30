@@ -155,7 +155,7 @@ class VacancyRecommendationProcessingServiceDurabilityIntegrationTest {
         JobAnalysisService jobAnalysisService = mock(JobAnalysisService.class);
         when(jobAnalysisService.analyze(any(), any())).thenReturn(analysis(90));
         JobNotificationPort jobNotificationPort = mock(JobNotificationPort.class);
-        when(jobNotificationPort.send(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
+        when(jobNotificationPort.sendCompactRecommendation(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
 
         VacancyRecommendationProcessingService newNode = newService(jobAnalysisService, jobNotificationPort);
         VacancyRecommendationProcessingResult result = newNode.processPending();
@@ -188,7 +188,7 @@ class VacancyRecommendationProcessingServiceDurabilityIntegrationTest {
         VacancyRecommendationTaskEntity reloaded = taskRepository.findById(taskId).orElseThrow();
         assertThat(reloaded.getOutcome()).isEqualTo(VacancyRecommendationTaskOutcome.MANUALLY_REVIEWED);
         verify(jobAnalysisService, never()).analyze(any(), any());
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -210,7 +210,7 @@ class VacancyRecommendationProcessingServiceDurabilityIntegrationTest {
         assertThat(result.alreadyNotifiedTasks()).isEqualTo(1);
         VacancyRecommendationTaskEntity reloaded = taskRepository.findById(taskId).orElseThrow();
         assertThat(reloaded.getOutcome()).isEqualTo(VacancyRecommendationTaskOutcome.ALREADY_NOTIFIED);
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
         assertThat(notificationDeliveryRepository.findExistingDelivery(vacancyId, RECIPIENT_CHAT_ID).orElseThrow().status())
                 .isEqualTo(NotificationDeliveryStatus.SENT);
     }
@@ -233,7 +233,7 @@ class VacancyRecommendationProcessingServiceDurabilityIntegrationTest {
         });
 
         JobNotificationPort sharedPort = mock(JobNotificationPort.class);
-        when(sharedPort.send(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
+        when(sharedPort.sendCompactRecommendation(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
         VacancyRecommendationProcessingService nodeA = newService(mock(JobAnalysisService.class), sharedPort);
         VacancyRecommendationProcessingService nodeB = newService(mock(JobAnalysisService.class), sharedPort);
 
@@ -251,7 +251,7 @@ class VacancyRecommendationProcessingServiceDurabilityIntegrationTest {
         VacancyRecommendationProcessingResult resultB = futureB.get(10, TimeUnit.SECONDS);
 
         assertThat(resultA.notifiedTasks() + resultB.notifiedTasks()).isEqualTo(1);
-        verify(sharedPort, times(1)).send(any());
+        verify(sharedPort, times(1)).sendCompactRecommendation(any());
         VacancyRecommendationTaskEntity reloaded = taskRepository.findByVacancyId(vacancyId).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(VacancyRecommendationTaskStatus.COMPLETED);
         assertThat(reloaded.getOutcome()).isEqualTo(VacancyRecommendationTaskOutcome.NOTIFIED);

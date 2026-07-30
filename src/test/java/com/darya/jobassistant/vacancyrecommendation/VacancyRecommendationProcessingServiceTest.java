@@ -22,7 +22,7 @@ import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
-import com.darya.jobassistant.integrations.notifier.JobNotification;
+import com.darya.jobassistant.integrations.notifier.CompactVacancyRecommendation;
 import com.darya.jobassistant.integrations.notifier.JobNotificationException;
 import com.darya.jobassistant.integrations.notifier.JobNotificationFactory;
 import com.darya.jobassistant.integrations.notifier.JobNotificationFailureType;
@@ -189,7 +189,7 @@ class VacancyRecommendationProcessingServiceTest {
 
         assertThat(result.manuallyReviewedTasks()).isEqualTo(1);
         verify(jobAnalysisService, never()).analyze(any(), any());
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -203,7 +203,7 @@ class VacancyRecommendationProcessingServiceTest {
         VacancyRecommendationProcessingResult result = service.processPending();
 
         assertThat(result.manuallyReviewedTasks()).isEqualTo(1);
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -218,7 +218,7 @@ class VacancyRecommendationProcessingServiceTest {
         VacancyRecommendationProcessingResult result = service.processPending();
 
         assertThat(result.completedTasks()).isEqualTo(1);
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
         verify(jobAnalysisService, never()).analyze(any(), any());
     }
 
@@ -233,7 +233,7 @@ class VacancyRecommendationProcessingServiceTest {
 
         service.processPending();
 
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -319,7 +319,7 @@ class VacancyRecommendationProcessingServiceTest {
         VacancyRecommendationProcessingResult result = service.processPending();
 
         assertThat(result.belowThresholdTasks()).isEqualTo(1);
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -345,7 +345,7 @@ class VacancyRecommendationProcessingServiceTest {
         VacancyRecommendationProcessingResult result = service.processPending();
 
         assertThat(result.manuallyReviewedTasks()).isEqualTo(1);
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -489,7 +489,7 @@ class VacancyRecommendationProcessingServiceTest {
         when(jobAnalysisRepository.findByVacancyId(vacancyId)).thenReturn(Optional.of(automatic));
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
-        when(jobNotificationFactory.create(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        when(jobNotificationFactory.createCompactRecommendation(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
         when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
                 .thenReturn(NotificationReservationResult.alreadyExists());
         when(notificationDeliveryRepository.findExistingDelivery(vacancyId, RECIPIENT_CHAT_ID))
@@ -500,7 +500,7 @@ class VacancyRecommendationProcessingServiceTest {
         VacancyRecommendationProcessingResult result = service.processPending();
 
         assertThat(result.alreadyNotifiedTasks()).isEqualTo(1);
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -511,7 +511,7 @@ class VacancyRecommendationProcessingServiceTest {
         when(jobAnalysisRepository.findByVacancyId(vacancyId)).thenReturn(Optional.of(automatic));
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
-        when(jobNotificationFactory.create(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        when(jobNotificationFactory.createCompactRecommendation(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
         when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
                 .thenReturn(NotificationReservationResult.alreadyExists());
         when(notificationDeliveryRepository.findExistingDelivery(vacancyId, RECIPIENT_CHAT_ID)).thenReturn(Optional.empty());
@@ -521,7 +521,7 @@ class VacancyRecommendationProcessingServiceTest {
         VacancyRecommendationProcessingResult result = service.processPending();
 
         assertThat(result.retryScheduled()).isEqualTo(1);
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     @Test
@@ -532,7 +532,7 @@ class VacancyRecommendationProcessingServiceTest {
         when(jobAnalysisRepository.findByVacancyId(vacancyId)).thenReturn(Optional.of(automatic));
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
-        when(jobNotificationFactory.create(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        when(jobNotificationFactory.createCompactRecommendation(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
         when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
                 .thenReturn(NotificationReservationResult.alreadyExists());
         NotificationDelivery failedDelivery = delivery(vacancyId, NotificationDeliveryStatus.FAILED);
@@ -541,7 +541,7 @@ class VacancyRecommendationProcessingServiceTest {
                 failedDelivery.id(), vacancyId, RECIPIENT_CHAT_ID, NotificationDeliveryStatus.PENDING, NOW, null, null, null);
         when(notificationDeliveryRepository.retryFailed(failedDelivery.id(), NOW))
                 .thenReturn(NotificationDeliveryTransitionResult.updated(retried));
-        when(jobNotificationPort.send(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
+        when(jobNotificationPort.sendCompactRecommendation(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
         when(notificationDeliveryRepository.markSent(retried.id(), NOW))
                 .thenReturn(NotificationDeliveryTransitionResult.updated(
                         new NotificationDelivery(retried.id(), vacancyId, RECIPIENT_CHAT_ID, NotificationDeliveryStatus.SENT, NOW, NOW, null, null)));
@@ -551,7 +551,7 @@ class VacancyRecommendationProcessingServiceTest {
         VacancyRecommendationProcessingResult result = service.processPending();
 
         assertThat(result.notifiedTasks()).isEqualTo(1);
-        verify(jobNotificationPort, times(1)).send(any());
+        verify(jobNotificationPort, times(1)).sendCompactRecommendation(any());
     }
 
     @Test
@@ -562,11 +562,11 @@ class VacancyRecommendationProcessingServiceTest {
         when(jobAnalysisRepository.findByVacancyId(vacancyId)).thenReturn(Optional.of(automatic));
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
-        when(jobNotificationFactory.create(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        when(jobNotificationFactory.createCompactRecommendation(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
         NotificationDelivery pendingDelivery = delivery(vacancyId, NotificationDeliveryStatus.PENDING);
         when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
                 .thenReturn(NotificationReservationResult.reserved(pendingDelivery));
-        when(jobNotificationPort.send(any()))
+        when(jobNotificationPort.sendCompactRecommendation(any()))
                 .thenThrow(new JobNotificationException(JobNotificationFailureType.PERMANENT_FAILURE, "bot blocked by user"));
         when(notificationDeliveryRepository.markFailed(eq(pendingDelivery.id()), any(), any()))
                 .thenReturn(NotificationDeliveryTransitionResult.updated(
@@ -581,7 +581,7 @@ class VacancyRecommendationProcessingServiceTest {
         verify(taskRepository, never()).scheduleRetry(any(), any(), any(), any(), any());
         // One processing attempt makes at most one Telegram send request - a permanent failure
         // must never be retried transparently within the same attempt.
-        verify(jobNotificationPort, times(1)).send(any());
+        verify(jobNotificationPort, times(1)).sendCompactRecommendation(any());
     }
 
     @Test
@@ -592,11 +592,11 @@ class VacancyRecommendationProcessingServiceTest {
         when(jobAnalysisRepository.findByVacancyId(vacancyId)).thenReturn(Optional.of(automatic));
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
-        when(jobNotificationFactory.create(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        when(jobNotificationFactory.createCompactRecommendation(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
         NotificationDelivery pendingDelivery = delivery(vacancyId, NotificationDeliveryStatus.PENDING);
         when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
                 .thenReturn(NotificationReservationResult.reserved(pendingDelivery));
-        when(jobNotificationPort.send(any()))
+        when(jobNotificationPort.sendCompactRecommendation(any()))
                 .thenThrow(new JobNotificationException(JobNotificationFailureType.TEMPORARY_FAILURE, "telegram unavailable"));
         when(notificationDeliveryRepository.markFailed(eq(pendingDelivery.id()), any(), any()))
                 .thenReturn(NotificationDeliveryTransitionResult.updated(
@@ -611,7 +611,7 @@ class VacancyRecommendationProcessingServiceTest {
         // One processing attempt makes at most one Telegram send request - the durable task retry
         // (a later, separate claim) is the only mechanism that may try again, never a hidden
         // transport-level retry within this same attempt.
-        verify(jobNotificationPort, times(1)).send(any());
+        verify(jobNotificationPort, times(1)).sendCompactRecommendation(any());
     }
 
     @Test
@@ -622,11 +622,11 @@ class VacancyRecommendationProcessingServiceTest {
         when(jobAnalysisRepository.findByVacancyId(vacancyId)).thenReturn(Optional.of(automatic));
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
-        when(jobNotificationFactory.create(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        when(jobNotificationFactory.createCompactRecommendation(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
         NotificationDelivery pendingDelivery = delivery(vacancyId, NotificationDeliveryStatus.PENDING);
         when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
                 .thenReturn(NotificationReservationResult.reserved(pendingDelivery));
-        when(jobNotificationPort.send(any())).thenReturn(JobNotificationResult.accepted());
+        when(jobNotificationPort.sendCompactRecommendation(any())).thenReturn(JobNotificationResult.accepted());
         when(notificationDeliveryRepository.markSent(pendingDelivery.id(), NOW))
                 .thenReturn(NotificationDeliveryTransitionResult.invalidState());
         when(taskRepository.scheduleRetry(any(), any(), any(), eq(VacancyRecommendationFailureCategory.DATABASE_CONFLICT), any()))
@@ -655,7 +655,7 @@ class VacancyRecommendationProcessingServiceTest {
 
         assertThat(result.manuallyReviewedTasks()).isEqualTo(1);
         verify(notificationDeliveryRepository, never()).reserve(any(), any(), any());
-        verify(jobNotificationPort, never()).send(any());
+        verify(jobNotificationPort, never()).sendCompactRecommendation(any());
     }
 
     // --- Retry/DEAD attempt-count boundary ------------------------------------------------------
@@ -697,6 +697,58 @@ class VacancyRecommendationProcessingServiceTest {
 
         assertThat(result.deadTasks()).isEqualTo(1);
         verify(taskRepository, never()).scheduleRetry(any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Sprint 8 Step 11A.1 smoke-test configuration proof: with {@code maxAttempts=1} (the intended
+     * controlled-live-run setting), a single Telegram temporary failure already exhausts the only
+     * allowed attempt - the task goes straight to DEAD, never RETRY_WAIT, so no later application
+     * retry (and therefore no second Telegram send) can ever happen for this task.
+     */
+    @Test
+    void maxAttemptsOne_telegramTemporaryFailure_goesStraightToDead_createsNoLaterTaskRetry() {
+        VacancyRecommendationProcessingService serviceWithMaxAttemptsOne = serviceWithMaxAttempts(1);
+        // attemptCount=1 represents the post-claim state claimByIds would return (production
+        // increments attempt_count exactly once per claim) - already == maxAttempts(1).
+        VacancyRecommendationTaskEntity claimedTask = task(VacancyRecommendationTaskStatus.PENDING, 1);
+        UUID vacancyId = claimedTask.getVacancyId();
+        when(taskRepository.selectClaimCandidates(1)).thenReturn(List.of(claimedTask));
+        when(taskRepository.claimByIds(any(), anyLong(), any())).thenReturn(List.of(claimedTask));
+        JobAnalysisEntity automatic = analysisEntity(vacancyId, AnalysisStatus.COMPLETED, AnalysisOrigin.AUTOMATIC_DISCOVERY, null, 90);
+        when(jobAnalysisRepository.findByVacancyId(vacancyId)).thenReturn(Optional.of(automatic));
+        Vacancy vacancy = vacancy(vacancyId);
+        when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
+        when(jobNotificationFactory.createCompactRecommendation(eq(vacancy), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        NotificationDelivery pendingDelivery = delivery(vacancyId, NotificationDeliveryStatus.PENDING);
+        when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
+                .thenReturn(NotificationReservationResult.reserved(pendingDelivery));
+        when(jobNotificationPort.sendCompactRecommendation(any()))
+                .thenThrow(new JobNotificationException(JobNotificationFailureType.TEMPORARY_FAILURE, "telegram unavailable"));
+        when(notificationDeliveryRepository.markFailed(eq(pendingDelivery.id()), any(), any()))
+                .thenReturn(NotificationDeliveryTransitionResult.updated(
+                        new NotificationDelivery(pendingDelivery.id(), vacancyId, RECIPIENT_CHAT_ID, NotificationDeliveryStatus.FAILED, NOW, null, NOW, "TEMPORARY_FAILURE")));
+        when(taskRepository.markDead(any(), any(), eq(VacancyRecommendationFailureCategory.TELEGRAM_TRANSIENT_ERROR), any()))
+                .thenReturn(true);
+
+        VacancyRecommendationProcessingResult result = serviceWithMaxAttemptsOne.processPending();
+
+        assertThat(result.deadTasks()).isEqualTo(1);
+        verify(taskRepository, never()).scheduleRetry(any(), any(), any(), any(), any());
+        verify(jobNotificationPort, times(1)).sendCompactRecommendation(any());
+    }
+
+    private VacancyRecommendationProcessingService serviceWithMaxAttempts(int maxAttempts) {
+        RecommendationPolicyProperties policyProperties = new RecommendationPolicyProperties(MINIMUM_SCORE);
+        VacancyRecommendationProperties properties = new VacancyRecommendationProperties(
+                true, RECIPIENT_CHAT_ID,
+                new VacancyRecommendationProperties.Processing(
+                        1, maxAttempts, Duration.ofMinutes(20), Duration.ofMinutes(10), Duration.ofHours(2)),
+                new VacancyRecommendationProperties.Scheduler(
+                        false, Duration.ofMinutes(10), Duration.ofMinutes(1), Duration.ofHours(1), Duration.ofSeconds(10)));
+        return new VacancyRecommendationProcessingService(
+                taskRepository, vacancyRepository, jobAnalysisRepository, vacancyJobOfferMapper,
+                candidateProfileProvider, jobAnalysisService, jobNotificationFactory, jobNotificationPort,
+                notificationDeliveryRepository, policyProperties, properties, CLOCK, transactionManager);
     }
 
     @Test
@@ -770,11 +822,11 @@ class VacancyRecommendationProcessingServiceTest {
         // Deliberately any(): a test may already have its own findByIdWithCompany stub for a
         // different Vacancy instance (e.g. one used earlier to build the JobOffer for the AI
         // call) - this must match regardless of which instance loadVacancyOrThrow actually returns.
-        when(jobNotificationFactory.create(any(), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
+        when(jobNotificationFactory.createCompactRecommendation(any(), any(), eq(RECIPIENT_CHAT_ID))).thenReturn(notification(vacancyId));
         NotificationDelivery pendingDelivery = delivery(vacancyId, NotificationDeliveryStatus.PENDING);
         when(notificationDeliveryRepository.reserve(eq(vacancyId), eq(RECIPIENT_CHAT_ID), any()))
                 .thenReturn(NotificationReservationResult.reserved(pendingDelivery));
-        when(jobNotificationPort.send(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
+        when(jobNotificationPort.sendCompactRecommendation(any())).thenReturn(JobNotificationResult.accepted("msg-1"));
         when(notificationDeliveryRepository.markSent(pendingDelivery.id(), NOW))
                 .thenReturn(NotificationDeliveryTransitionResult.updated(
                         new NotificationDelivery(pendingDelivery.id(), vacancyId, RECIPIENT_CHAT_ID, NotificationDeliveryStatus.SENT, NOW, NOW, null, null)));
@@ -851,8 +903,9 @@ class VacancyRecommendationProcessingServiceTest {
                 "6 years vs. no stated requirement.", "Remote preference matches.", "Solid match");
     }
 
-    private JobNotification notification(UUID vacancyId) {
-        return new JobNotification(vacancyId, RECIPIENT_CHAT_ID, "Backend Engineer", "Acme Corp", "https://example.com/job", analysis(90));
+    private CompactVacancyRecommendation notification(UUID vacancyId) {
+        return new CompactVacancyRecommendation(vacancyId, RECIPIENT_CHAT_ID, "Backend Engineer", "Acme Corp", "https://example.com/job",
+                90, "Solid match", List.of("Java"), List.of(), null, null, null);
     }
 
     private NotificationDelivery delivery(UUID vacancyId, NotificationDeliveryStatus status) {
