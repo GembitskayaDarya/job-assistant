@@ -70,7 +70,7 @@ class JobAnalysisRepositoryTest {
     void claimIfAbsent_newVacancy_insertsInProgressRow() {
         UUID vacancyId = persistVacancy().getId();
 
-        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
         entityManager.flush();
 
         assertThat(claimed).isPresent();
@@ -83,10 +83,10 @@ class JobAnalysisRepositoryTest {
     @Test
     void claimIfAbsent_secondCallForSameVacancy_returnsEmpty() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
         entityManager.flush();
 
-        Optional<JobAnalysisEntity> second = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        Optional<JobAnalysisEntity> second = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
 
         assertThat(second).isEmpty();
         assertThat(countByVacancyId(vacancyId)).isEqualTo(1);
@@ -98,7 +98,7 @@ class JobAnalysisRepositoryTest {
         jobAnalysisRepository.persist(vacancyId, analysis(), AnalysisOrigin.MONITORING);
         entityManager.flush();
 
-        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
 
         assertThat(claimed).isEmpty();
         assertThat(jobAnalysisRepository.findCompletedByVacancyId(vacancyId)).isPresent();
@@ -107,7 +107,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void completeClaim_inProgressClaim_transitionsToCompletedAndStoresResultWithListsSurvivingRoundTrip() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
         entityManager.flush();
         JobAnalysis analysis = new JobAnalysis(
                 77, List.of("Strong Java", "Kafka experience"), List.of("No AWS"), List.of("Kubernetes"), List.of("Terraform"),
@@ -159,7 +159,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void reclaimStaleClaim_freshClaim_isNotReclaimed() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
         entityManager.flush();
 
         boolean reclaimed = jobAnalysisRepository.reclaimStaleClaim(vacancyId, NOW.plusSeconds(10), NOW.minusSeconds(1));
@@ -170,7 +170,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void reclaimStaleClaim_staleClaim_isReclaimedAndUpdatedAtAdvances() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
         entityManager.flush();
         Instant later = NOW.plusSeconds(600);
         Instant staleThreshold = NOW.plusSeconds(120);
@@ -188,7 +188,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void releaseClaim_inProgressClaim_deletesRowAndAllowsANewClaimAfterwards() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
         entityManager.flush();
 
         boolean released = jobAnalysisRepository.releaseClaim(vacancyId);
@@ -198,7 +198,7 @@ class JobAnalysisRepositoryTest {
         assertThat(released).isTrue();
         assertThat(countByVacancyId(vacancyId)).isEqualTo(0);
 
-        Optional<JobAnalysisEntity> reclaimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW.plusSeconds(1), AnalysisOrigin.MANUAL);
+        Optional<JobAnalysisEntity> reclaimed = jobAnalysisRepository.claimIfAbsent(vacancyId, NOW.plusSeconds(1), AnalysisOrigin.MANUAL, NOW.plusSeconds(1));
         assertThat(reclaimed).isPresent();
     }
 
@@ -217,7 +217,7 @@ class JobAnalysisRepositoryTest {
     @Test
     void findCompletedByVacancyId_inProgressClaim_returnsEmpty() {
         UUID vacancyId = persistVacancy().getId();
-        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL);
+        jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
         entityManager.flush();
 
         assertThat(jobAnalysisRepository.findCompletedByVacancyId(vacancyId)).isEmpty();
@@ -249,7 +249,7 @@ class JobAnalysisRepositoryTest {
                 futures.add(executor.submit(() -> {
                     barrier.await();
                     return transactionTemplate.execute(
-                            status -> jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL).isPresent());
+                            status -> jobAnalysisRepository.claimIfAbsent(vacancyId, NOW, AnalysisOrigin.MANUAL, NOW).isPresent());
                 }));
             }
 
@@ -450,6 +450,49 @@ class JobAnalysisRepositoryTest {
         boolean released = jobAnalysisRepository.releaseReanalysisClaim(vacancyId, NOW);
 
         assertThat(released).isFalse();
+    }
+
+    @Test
+    void markManuallyReviewedIfAbsent_neverReviewedRow_setsTheTimestamp() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), 1, AnalysisOrigin.AUTOMATIC_DISCOVERY);
+        entityManager.flush();
+        entityManager.clear();
+
+        jobAnalysisRepository.markManuallyReviewedIfAbsent(vacancyId, NOW);
+        entityManager.flush();
+        entityManager.clear();
+
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getManuallyReviewedAt()).isEqualTo(NOW);
+        assertThat(reloaded.getAnalysisOrigin()).isEqualTo(AnalysisOrigin.AUTOMATIC_DISCOVERY);
+    }
+
+    @Test
+    void markManuallyReviewedIfAbsent_alreadyReviewedRow_doesNotOverwriteTheEarlierTimestamp() {
+        UUID vacancyId = persistVacancy().getId();
+        Instant firstReview = NOW.minusSeconds(3600);
+        JobAnalysisEntity entity = persistCompletedAnalysis(vacancyId, analysis(), 1, AnalysisOrigin.MANUAL);
+        entity.setManuallyReviewedAt(firstReview);
+        jobAnalysisRepository.save(entity);
+        entityManager.flush();
+        entityManager.clear();
+
+        jobAnalysisRepository.markManuallyReviewedIfAbsent(vacancyId, NOW);
+        entityManager.flush();
+        entityManager.clear();
+
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getManuallyReviewedAt()).isEqualTo(firstReview);
+    }
+
+    @Test
+    void markManuallyReviewedIfAbsent_noRowForVacancy_doesNothingAndDoesNotThrow() {
+        UUID vacancyId = persistVacancy().getId();
+
+        jobAnalysisRepository.markManuallyReviewedIfAbsent(vacancyId, NOW);
+
+        assertThat(countByVacancyId(vacancyId)).isZero();
     }
 
     private JobAnalysisEntity persistCompletedAnalysis(UUID vacancyId, JobAnalysis analysis, int version, AnalysisOrigin origin) {

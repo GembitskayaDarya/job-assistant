@@ -443,7 +443,7 @@ class JobDiscoveryServiceTest {
 
         assertThat(result.extractionFailures()).isEqualTo(1);
         assertThat(result.persistenceAttempts()).isZero();
-        verify(vacancyIngestionService, never()).persist(any(VacancyCreationCommand.class));
+        verify(vacancyIngestionService, never()).persistDiscovered(any(VacancyCreationCommand.class));
         assertThat(result.issues().get(0).category()).isEqualTo(JobDiscoveryIssueCategory.EXTRACTION_FAILED);
     }
 
@@ -467,7 +467,7 @@ class JobDiscoveryServiceTest {
         service.runDiscovery();
 
         ArgumentCaptor<VacancyCreationCommand> captor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
-        verify(vacancyIngestionService).persist(captor.capture());
+        verify(vacancyIngestionService).persistDiscovered(captor.capture());
         VacancyCreationCommand command = captor.getValue();
         assertThat(command.companyName()).isEqualTo("Acme Corp");
         assertThat(command.title()).isEqualTo("Senior Java Backend Engineer");
@@ -493,7 +493,7 @@ class JobDiscoveryServiceTest {
         service.runDiscovery();
 
         ArgumentCaptor<VacancyCreationCommand> captor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
-        verify(vacancyIngestionService).persist(captor.capture());
+        verify(vacancyIngestionService).persistDiscovered(captor.capture());
         assertThat(captor.getValue().source()).isEqualToIgnoringCase("web_discovery");
         assertThat(captor.getValue().source()).doesNotContainIgnoringCase("firecrawl");
     }
@@ -510,7 +510,7 @@ class JobDiscoveryServiceTest {
         service.runDiscovery();
 
         ArgumentCaptor<VacancyCreationCommand> captor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
-        verify(vacancyIngestionService).persist(captor.capture());
+        verify(vacancyIngestionService).persistDiscovered(captor.capture());
         assertThat(captor.getValue().url()).isEqualTo(rawUrl);
     }
 
@@ -530,7 +530,7 @@ class JobDiscoveryServiceTest {
         service.runDiscovery();
 
         ArgumentCaptor<VacancyCreationCommand> captor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
-        verify(vacancyIngestionService).persist(captor.capture());
+        verify(vacancyIngestionService).persistDiscovered(captor.capture());
         assertThat(captor.getValue().remoteMode()).isEqualTo(RemotePolicy.UNSPECIFIED);
     }
 
@@ -550,7 +550,7 @@ class JobDiscoveryServiceTest {
         service.runDiscovery();
 
         ArgumentCaptor<VacancyCreationCommand> captor = ArgumentCaptor.forClass(VacancyCreationCommand.class);
-        verify(vacancyIngestionService).persist(captor.capture());
+        verify(vacancyIngestionService).persistDiscovered(captor.capture());
         VacancyCreationCommand command = captor.getValue();
         assertThat(command.location()).isNull();
         assertThat(command.salaryMin()).isNull();
@@ -565,7 +565,7 @@ class JobDiscoveryServiceTest {
         jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
         stubScrapeAndExtractSuccess("https://example.com/jobs/1");
         UUID vacancyId = UUID.randomUUID();
-        when(vacancyIngestionService.persist(any(VacancyCreationCommand.class)))
+        when(vacancyIngestionService.persistDiscovered(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(Vacancy.builder().id(vacancyId).build(), true));
         JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
 
@@ -580,7 +580,7 @@ class JobDiscoveryServiceTest {
         stubPlan(List.of(request("q1")));
         jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
         stubScrapeAndExtractSuccess("https://example.com/jobs/1");
-        when(vacancyIngestionService.persist(any(VacancyCreationCommand.class)))
+        when(vacancyIngestionService.persistDiscovered(any(VacancyCreationCommand.class)))
                 .thenReturn(new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), false));
         JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
 
@@ -600,7 +600,7 @@ class JobDiscoveryServiceTest {
         stubScrapeAndExtractSuccess("https://example.com/jobs/1");
         stubScrapeAndExtractSuccess("https://example.com/jobs/2");
         UUID secondVacancyId = UUID.randomUUID();
-        when(vacancyIngestionService.persist(any(VacancyCreationCommand.class)))
+        when(vacancyIngestionService.persistDiscovered(any(VacancyCreationCommand.class)))
                 .thenThrow(new RuntimeException("db failure"))
                 .thenReturn(new VacancyCreationResult(Vacancy.builder().id(secondVacancyId).build(), true));
         JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
@@ -696,9 +696,9 @@ class JobDiscoveryServiceTest {
         service.runDiscovery();
 
         // JobDiscoveryService never opens a transaction of its own - the only DB write happens
-        // through VacancyIngestionService.persist(VacancyCreationCommand), which owns its own
+        // through VacancyIngestionService.persistDiscovered(VacancyCreationCommand), which owns its own
         // short REQUIRES_NEW transaction and canonical-conflict retry (see that class's own tests).
-        verify(vacancyIngestionService, times(1)).persist(any(VacancyCreationCommand.class));
+        verify(vacancyIngestionService, times(1)).persistDiscovered(any(VacancyCreationCommand.class));
     }
 
     // --- Budget gate -------------------------------------------------------------------------
@@ -804,7 +804,7 @@ class JobDiscoveryServiceTest {
         service.runDiscovery();
 
         verify(vacancyRepository, never()).existsByCanonicalUrl(any());
-        verify(vacancyIngestionService, never()).persist(any(VacancyCreationCommand.class));
+        verify(vacancyIngestionService, never()).persistDiscovered(any(VacancyCreationCommand.class));
     }
 
     @Test
@@ -898,7 +898,7 @@ class JobDiscoveryServiceTest {
     }
 
     private void stubPersistCreated() {
-        when(vacancyIngestionService.persist(any(VacancyCreationCommand.class)))
+        when(vacancyIngestionService.persistDiscovered(any(VacancyCreationCommand.class)))
                 .thenAnswer(inv -> new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), true));
     }
 

@@ -88,10 +88,14 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
      *
      * <p>{@code origin} is recorded on the claim row itself (not just at completion) since it
      * describes which workflow initiated the analysis, a fact that is already true the moment
-     * the claim is taken.
+     * the claim is taken. {@code manuallyReviewedAt} is caller-supplied rather than derived from
+     * {@code origin} here: only {@code AnalyzeVacancyService} ever passes a non-null value (the
+     * instant of the human's own {@code /analyze} action), so this repository never has to encode
+     * "which origins count as manual review" as a rule of its own.
      */
-    default Optional<JobAnalysisEntity> claimIfAbsent(UUID vacancyId, Instant claimedAt, AnalysisOrigin origin) {
-        return claimIfAbsentWithOrigin(vacancyId, claimedAt, JobAnalysisModelVersion.CURRENT, origin.name());
+    default Optional<JobAnalysisEntity> claimIfAbsent(
+            UUID vacancyId, Instant claimedAt, AnalysisOrigin origin, Instant manuallyReviewedAt) {
+        return claimIfAbsentWithOrigin(vacancyId, claimedAt, JobAnalysisModelVersion.CURRENT, origin.name(), manuallyReviewedAt);
     }
 
     /**
@@ -103,8 +107,8 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
     @Query(value = """
             INSERT INTO job_analysis
                 (vacancy_id, status, pros, cons, missing_required_skills, missing_preferred_skills,
-                 analysis_version, analysis_origin, created_at, updated_at)
-            VALUES (:vacancyId, 'IN_PROGRESS', '{}', '{}', '{}', '{}', :version, :origin, :claimedAt, :claimedAt)
+                 analysis_version, analysis_origin, manually_reviewed_at, created_at, updated_at)
+            VALUES (:vacancyId, 'IN_PROGRESS', '{}', '{}', '{}', '{}', :version, :origin, :manuallyReviewedAt, :claimedAt, :claimedAt)
             ON CONFLICT (vacancy_id) DO NOTHING
             RETURNING *
             """, nativeQuery = true)
@@ -112,7 +116,25 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
             @Param("vacancyId") UUID vacancyId,
             @Param("claimedAt") Instant claimedAt,
             @Param("version") int version,
-            @Param("origin") String origin);
+            @Param("origin") String origin,
+            @Param("manuallyReviewedAt") Instant manuallyReviewedAt);
+
+    /**
+     * Idempotently records that a human has reviewed this vacancy's analysis, without touching its
+     * {@code analysisOrigin} or any AI-produced content - used when {@code AnalyzeVacancyService}
+     * reuses an already-{@code COMPLETED} row (of any origin) instead of recalculating it. Leaves
+     * an already-set {@code manuallyReviewedAt} untouched, so calling this more than once for the
+     * same vacancy is always safe.
+     *
+     * @return true if this call set the marker, false if it was already present
+     */
+    default boolean markManuallyReviewedIfAbsent(UUID vacancyId, Instant reviewedAt) {
+        return markManuallyReviewedIfNull(vacancyId, reviewedAt) == 1;
+    }
+
+    @Modifying
+    @Query("UPDATE JobAnalysisEntity e SET e.manuallyReviewedAt = :reviewedAt WHERE e.vacancyId = :vacancyId AND e.manuallyReviewedAt IS NULL")
+    int markManuallyReviewedIfNull(@Param("vacancyId") UUID vacancyId, @Param("reviewedAt") Instant reviewedAt);
 
     /**
      * Atomically transitions a claim from {@code IN_PROGRESS} to {@code COMPLETED}, storing the
@@ -218,10 +240,17 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
                 vacancyId, JobAnalysisModelVersion.CURRENT, now, staleThreshold, AnalysisStatus.COMPLETED) == 1;
     }
 
+    /**
+     * {@code manuallyReviewedAt} is stamped here too (via {@code COALESCE}, so an already-set
+     * value is preserved): every reanalysis is {@code /analyze}-triggered - see {@code
+     * AnalyzeVacancyService} - so winning this claim is itself a manual review action, not just a
+     * hint that one might follow.
+     */
     @Modifying
     @Query("""
             UPDATE JobAnalysisEntity e
-            SET e.reanalysisTargetVersion = :targetVersion, e.reanalysisClaimedAt = :now
+            SET e.reanalysisTargetVersion = :targetVersion, e.reanalysisClaimedAt = :now,
+                e.manuallyReviewedAt = COALESCE(e.manuallyReviewedAt, :now)
             WHERE e.vacancyId = :vacancyId AND e.status = :completedStatus AND e.analysisVersion < :targetVersion
               AND (e.reanalysisTargetVersion IS NULL OR e.reanalysisClaimedAt < :staleThreshold)
             """)
@@ -323,6 +352,7 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysisEntity, 
                         entity.getSummary()),
                 entity.getAnalysisVersion(),
                 entity.getAnalysisOrigin(),
-                entity.getCreatedAt());
+                entity.getCreatedAt(),
+                entity.getManuallyReviewedAt());
     }
 }

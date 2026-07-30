@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 
 import com.darya.jobassistant.monitoring.JobMonitoringUseCase;
 import com.darya.jobassistant.monitoring.config.JobMonitoringProperties;
+import com.darya.jobassistant.vacancyrecommendation.config.RecommendationPolicyProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -59,14 +60,14 @@ class JobMonitoringSchedulerActivationTest {
                 "job-monitoring.fixed-delay=30m",
                 "job-monitoring.initial-delay=1m",
                 "job-monitoring.keyword=java backend",
-                "job-monitoring.minimum-score=70",
                 "job-monitoring.max-notifications=5",
-                "job-monitoring.recipient-chat-id=12345"
+                "job-monitoring.recipient-chat-id=12345",
+                "recommendation-policy.minimum-score=70"
         };
     }
 
     @Configuration
-    @EnableConfigurationProperties(JobMonitoringProperties.class)
+    @EnableConfigurationProperties({JobMonitoringProperties.class, RecommendationPolicyProperties.class})
     static class TestConfig {
 
         @Bean

@@ -38,12 +38,18 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * V12. This class specifically exercises the tool an operator runs <em>against a V12 database
  * that has not yet been backfilled</em>, so its own test database must stay at V12 to match that
  * real scenario, regardless of what later migrations this project's "latest" schema has gained.
+ *
+ * <p>{@code hibernate.ddl-auto} is overridden to {@code none} here: {@code @DataJpaTest} validates
+ * every {@code @Entity} in the app against the actual schema, not just the ones this class exercises,
+ * so once any later migration adds a column to an unrelated entity (e.g. {@code job_analysis}), a
+ * V12-pinned database would otherwise fail Hibernate's schema validation for a mismatch this class
+ * has no interest in.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Import(JpaAuditingConfig.class)
-@TestPropertySource(properties = "spring.flyway.target=12")
+@TestPropertySource(properties = {"spring.flyway.target=12", "spring.jpa.hibernate.ddl-auto=none"})
 class VacancyCanonicalUrlAuditRepositoryTest {
 
     @Container

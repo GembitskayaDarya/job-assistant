@@ -6,6 +6,9 @@ import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.policy.JobOfferMatchPolicy;
+import com.darya.jobassistant.vacancyrecommendation.repository.VacancyRecommendationTaskRepository;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -39,14 +42,20 @@ public class VacancyIngestionService {
 
     private final VacancyCreationService vacancyCreationService;
     private final JobOfferMatchPolicy jobOfferMatchPolicy;
+    private final VacancyRecommendationTaskRepository vacancyRecommendationTaskRepository;
+    private final Clock clock;
     private final TransactionTemplate perItemTransaction;
 
     public VacancyIngestionService(
             VacancyCreationService vacancyCreationService,
             JobOfferMatchPolicy jobOfferMatchPolicy,
+            VacancyRecommendationTaskRepository vacancyRecommendationTaskRepository,
+            Clock clock,
             PlatformTransactionManager transactionManager) {
         this.vacancyCreationService = vacancyCreationService;
         this.jobOfferMatchPolicy = jobOfferMatchPolicy;
+        this.vacancyRecommendationTaskRepository = vacancyRecommendationTaskRepository;
+        this.clock = clock;
         this.perItemTransaction = new TransactionTemplate(transactionManager);
         this.perItemTransaction.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);
     }
@@ -61,18 +70,28 @@ public class VacancyIngestionService {
     }
 
     /**
-     * Provider-neutral persistence entry point for any caller that already has a fully-built
-     * {@link VacancyCreationCommand} - e.g. {@code JobDiscoveryService}, whose extracted vacancy
-     * data (location, remote mode, salary, posted date) {@link #persist(JobOffer)} has no way to
-     * carry. Reuses the exact same per-item {@code REQUIRES_NEW} transaction and
-     * canonical-conflict retry-once behavior as {@link #persist(JobOffer)}/{@link #ingest} - {@code
-     * createWithRetry} is the one implementation of that transaction boundary in the whole project;
-     * this overload does not duplicate it. Unlike {@link #persist(JobOffer)}, the full {@link
-     * VacancyCreationResult} is returned (not just the {@code Vacancy}) so a caller can distinguish
-     * a newly created vacancy from one that already existed.
+     * Discovery-specific atomic persistence entry point - the only caller is {@code
+     * JobDiscoveryService}, whose extracted vacancy data (location, remote mode, salary, posted
+     * date) {@link #persist(JobOffer)} has no way to carry. Reuses the exact same per-item {@code
+     * REQUIRES_NEW} transaction and canonical-conflict retry-once behavior as {@link
+     * #persist(JobOffer)}/{@link #ingest} - {@code createWithRetry} is the one implementation of
+     * that transaction boundary in the whole project; this method does not duplicate it. Unlike
+     * {@link #persist(JobOffer)}, the full {@link VacancyCreationResult} is returned (not just the
+     * {@code Vacancy}) so the caller can distinguish a newly created vacancy from one that already
+     * existed.
+     *
+     * <p>When the result is {@code CREATED}, exactly one {@code VacancyRecommendationTask} in
+     * {@code PENDING} status is inserted for it inside this same transaction, atomically - see
+     * {@link #createAndRegisterTask}. A durable task therefore either commits together with its
+     * {@code Vacancy}, or neither commits at all: task-insert failure (including the structurally
+     * unreachable {@code uk_vacancy_recommendation_task_vacancy} conflict) propagates out of this
+     * transaction exactly like any other failure inside {@link
+     * VacancyCreationService#createIfAbsent} would, rolling the {@code Vacancy} insert back with
+     * it. When the result is {@code ALREADY_EXISTS} (including after a canonical-conflict retry),
+     * no task is created and no existing vacancy's task is touched or inferred.
      */
-    public VacancyCreationResult persist(VacancyCreationCommand command) {
-        return createWithRetry(command);
+    public VacancyCreationResult persistDiscovered(VacancyCreationCommand command) {
+        return createWithRetry(command, true);
     }
 
     /**
@@ -114,13 +133,32 @@ public class VacancyIngestionService {
     }
 
     private VacancyCreationResult createWithRetry(VacancyCreationCommand command) {
+        return createWithRetry(command, false);
+    }
+
+    private VacancyCreationResult createWithRetry(VacancyCreationCommand command, boolean registerRecommendationTask) {
         try {
-            return perItemTransaction.execute(status -> vacancyCreationService.createIfAbsent(command));
+            return perItemTransaction.execute(status -> createAndRegisterTask(command, registerRecommendationTask));
         } catch (CanonicalVacancyCreationConflictException e) {
             log.debug("Lost a canonical URL race for \"{}\"; retrying once in a fresh transaction",
                     command.title());
-            return perItemTransaction.execute(status -> vacancyCreationService.createIfAbsent(command));
+            return perItemTransaction.execute(status -> createAndRegisterTask(command, registerRecommendationTask));
         }
+    }
+
+    /**
+     * Runs inside {@code perItemTransaction} - see {@link #createWithRetry(VacancyCreationCommand,
+     * boolean)}. Task registration happens only for a {@code newlyCreated} result: the losing side
+     * of a canonical-URL race resolves to {@code ALREADY_EXISTS} on retry (see {@link
+     * VacancyIngestionService class javadoc}) and must never register a second task for a vacancy
+     * some other, already-committed run already owns.
+     */
+    private VacancyCreationResult createAndRegisterTask(VacancyCreationCommand command, boolean registerRecommendationTask) {
+        VacancyCreationResult result = vacancyCreationService.createIfAbsent(command);
+        if (registerRecommendationTask && result.newlyCreated()) {
+            vacancyRecommendationTaskRepository.createPending(result.vacancy().getId(), Instant.now(clock));
+        }
+        return result;
     }
 
     private VacancyCreationCommand buildCreationCommand(JobOffer jobOffer) {

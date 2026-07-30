@@ -15,6 +15,10 @@ import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.dto.VacancyIngestionResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.policy.JobOfferMatchPolicy;
+import com.darya.jobassistant.vacancyrecommendation.repository.VacancyRecommendationTaskRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,17 +53,23 @@ class VacancyIngestionServiceTest {
     private JobOfferMatchPolicy jobOfferMatchPolicy;
 
     @Mock
+    private VacancyRecommendationTaskRepository vacancyRecommendationTaskRepository;
+
+    @Mock
     private PlatformTransactionManager transactionManager;
 
     @Mock
     private TransactionStatus transactionStatus;
+
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-29T10:00:00Z"), ZoneOffset.UTC);
 
     private VacancyIngestionService vacancyIngestionService;
 
     @BeforeEach
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
-        vacancyIngestionService = new VacancyIngestionService(vacancyCreationService, jobOfferMatchPolicy, transactionManager);
+        vacancyIngestionService = new VacancyIngestionService(
+                vacancyCreationService, jobOfferMatchPolicy, vacancyRecommendationTaskRepository, CLOCK, transactionManager);
     }
 
     @Test
@@ -414,6 +424,87 @@ class VacancyIngestionServiceTest {
         // back on account of the second item's failure.
         verify(transactionManager, times(1)).commit(transactionStatus);
         verify(vacancyCreationService, times(3)).createIfAbsent(any());
+    }
+
+    @Test
+    void persistDiscovered_created_registersExactlyOnePendingTaskInSameTransaction() {
+        UUID vacancyId = UUID.randomUUID();
+        Vacancy createdVacancy = Vacancy.builder().id(vacancyId).title("Backend Engineer").build();
+        VacancyCreationCommand command = discoveryCommand("https://example.com/job-1");
+        when(vacancyCreationService.createIfAbsent(command))
+                .thenReturn(new VacancyCreationResult(createdVacancy, true));
+
+        VacancyCreationResult result = vacancyIngestionService.persistDiscovered(command);
+
+        assertThat(result.newlyCreated()).isTrue();
+        verify(vacancyRecommendationTaskRepository).createPending(vacancyId, Instant.now(CLOCK));
+        // Task insertion happens inside the same (single) transaction as the Vacancy insert.
+        verify(transactionManager, times(1)).getTransaction(any());
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @Test
+    void persistDiscovered_alreadyExists_doesNotRegisterATask() {
+        VacancyCreationCommand command = discoveryCommand("https://example.com/job-1");
+        Vacancy existing = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyCreationService.createIfAbsent(command))
+                .thenReturn(new VacancyCreationResult(existing, false));
+
+        VacancyCreationResult result = vacancyIngestionService.persistDiscovered(command);
+
+        assertThat(result.newlyCreated()).isFalse();
+        verify(vacancyRecommendationTaskRepository, never()).createPending(any(), any());
+    }
+
+    @Test
+    void persistDiscovered_canonicalConflict_losingRetryReportsAlreadyExists_andNoTaskIsRegistered() {
+        VacancyCreationCommand command = discoveryCommand("https://example.com/job-1");
+        Vacancy winner = Vacancy.builder().id(UUID.randomUUID()).build();
+        when(vacancyCreationService.createIfAbsent(command))
+                .thenThrow(new CanonicalVacancyCreationConflictException("lost the race"))
+                .thenReturn(new VacancyCreationResult(winner, false));
+
+        VacancyCreationResult result = vacancyIngestionService.persistDiscovered(command);
+
+        assertThat(result.newlyCreated()).isFalse();
+        assertThat(result.vacancy()).isSameAs(winner);
+        verify(vacancyRecommendationTaskRepository, never()).createPending(any(), any());
+        verify(transactionManager, times(1)).rollback(transactionStatus);
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @Test
+    void persistDiscovered_taskInsertionFails_rollsBackTheWholeTransaction_vacancyIsNotCommitted() {
+        UUID vacancyId = UUID.randomUUID();
+        VacancyCreationCommand command = discoveryCommand("https://example.com/job-1");
+        Vacancy createdVacancy = Vacancy.builder().id(vacancyId).build();
+        when(vacancyCreationService.createIfAbsent(command))
+                .thenReturn(new VacancyCreationResult(createdVacancy, true));
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException("unique violation"))
+                .when(vacancyRecommendationTaskRepository).createPending(any(), any());
+
+        assertThatThrownBy(() -> vacancyIngestionService.persistDiscovered(command))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+
+        verify(transactionManager, never()).commit(any());
+        verify(transactionManager, times(1)).rollback(transactionStatus);
+    }
+
+    @Test
+    void persistDiscovered_doesNotConsultMatchPolicy() {
+        VacancyCreationCommand command = discoveryCommand("https://example.com/job-1");
+        when(vacancyCreationService.createIfAbsent(command))
+                .thenReturn(new VacancyCreationResult(Vacancy.builder().id(UUID.randomUUID()).build(), true));
+
+        vacancyIngestionService.persistDiscovered(command);
+
+        verify(jobOfferMatchPolicy, never()).matches(any());
+    }
+
+    private VacancyCreationCommand discoveryCommand(String url) {
+        return new VacancyCreationCommand(
+                "Acme Corp", "Backend Engineer", "Build backend services", url,
+                null, null, null, null, null, null, "remoteok", null);
     }
 
     private JobOffer jobOffer(String url) {

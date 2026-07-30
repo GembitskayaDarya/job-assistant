@@ -90,6 +90,7 @@ class JobNotificationCandidateTest {
                 85, List.of("Java"), List.of(), List.of(), List.of(),
                 "6 years vs. no stated requirement.", "Remote preference matches.", "Strong match");
         return new PersistedJobAnalysis(
-                UUID.randomUUID(), vacancyId, analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MONITORING, Instant.now());
+                UUID.randomUUID(), vacancyId, analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MONITORING,
+                Instant.now(), null);
     }
 }

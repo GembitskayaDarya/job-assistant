@@ -738,7 +738,8 @@ class JobMonitoringServiceTest {
     private JobNotificationCandidate candidateFor(Vacancy vacancy, JobAnalysis analysis) {
         return new JobNotificationCandidate(
                 vacancy, new PersistedJobAnalysis(
-                        UUID.randomUUID(), vacancy.getId(), analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MONITORING, FIXED_INSTANT));
+                        UUID.randomUUID(), vacancy.getId(), analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MONITORING,
+                        FIXED_INSTANT, null));
     }
 
     private JobNotification notification() {

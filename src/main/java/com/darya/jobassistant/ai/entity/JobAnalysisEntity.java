@@ -32,6 +32,13 @@ import org.hibernate.type.SqlTypes;
  * outdated: unlike the {@code IN_PROGRESS} claim above, the row stays {@code COMPLETED} and every
  * existing analysis field stays readable for the whole reanalysis attempt, so a concurrent reader
  * never sees a gap. Both fields are null exactly when no reanalysis is in flight.
+ *
+ * <p>{@code manuallyReviewedAt} records the moment a human actually reviewed this analysis via
+ * {@code /analyze} - set on a fresh {@code MANUAL} claim, on a reused already-completed row, and on
+ * a reanalysis claim, but never inferred from {@code analysisOrigin} alone (an {@code
+ * AUTOMATIC_DISCOVERY} or {@code MONITORING} row a human later reviewed also gets this set, without
+ * its origin changing). This is the durable signal {@code VacancyRecommendationProcessingService}
+ * checks to suppress automatic re-analysis and notification.
  */
 @Entity
 @Table(name = "job_analysis")
@@ -88,4 +95,7 @@ public class JobAnalysisEntity extends BaseEntity {
 
     @Column(name = "reanalysis_claimed_at")
     private Instant reanalysisClaimedAt;
+
+    @Column(name = "manually_reviewed_at")
+    private Instant manuallyReviewedAt;
 }

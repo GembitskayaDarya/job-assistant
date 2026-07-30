@@ -3,6 +3,7 @@ package com.darya.jobassistant.scheduler;
 import com.darya.jobassistant.monitoring.JobMonitoringUseCase;
 import com.darya.jobassistant.monitoring.config.JobMonitoringProperties;
 import com.darya.jobassistant.monitoring.dto.JobMonitoringCommand;
+import com.darya.jobassistant.vacancyrecommendation.config.RecommendationPolicyProperties;
 import java.time.Duration;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class JobMonitoringScheduler {
 
     private final JobMonitoringUseCase jobMonitoringUseCase;
     private final JobMonitoringProperties jobMonitoringProperties;
+    private final RecommendationPolicyProperties recommendationPolicyProperties;
 
     @Scheduled(
             fixedDelayString = "${job-monitoring.fixed-delay}",
@@ -48,7 +50,7 @@ public class JobMonitoringScheduler {
         try {
             // JobMonitoringService already logs its own fetched/persisted/analyzed/matched/
             // notified/failed summary at info level - logging duration here avoids duplicating it.
-            jobMonitoringUseCase.monitor(jobMonitoringProperties.toCommand());
+            jobMonitoringUseCase.monitor(jobMonitoringProperties.toCommand(recommendationPolicyProperties.minimumScore()));
             log.debug("Scheduled job monitoring run completed in {}", Duration.between(startedAt, Instant.now()));
         } catch (RuntimeException e) {
             log.error("Scheduled job monitoring run failed - will resume on the next scheduled invocation", e);

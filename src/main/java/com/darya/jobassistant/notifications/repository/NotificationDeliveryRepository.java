@@ -24,6 +24,19 @@ public interface NotificationDeliveryRepository
         extends JpaRepository<NotificationDeliveryEntity, UUID>, NotificationDeliveryRepositoryCustom {
 
     /**
+     * Plain lookup backing {@code VacancyRecommendationProcessingService}'s retry path: when
+     * {@link #reserve} reports {@code ALREADY_EXISTS}, this loads the existing row so the caller
+     * can decide what "already exists" means for it (already {@code SENT}, still {@code PENDING}
+     * from a previous attempt that crashed before resolving, or {@code FAILED} and eligible for
+     * {@link NotificationDeliveryRepositoryCustom#retryFailed}).
+     */
+    default Optional<NotificationDelivery> findExistingDelivery(UUID vacancyId, Long recipientChatId) {
+        return findByVacancyIdAndRecipientChatId(vacancyId, recipientChatId).map(NotificationDeliveryRepository::toDomain);
+    }
+
+    Optional<NotificationDeliveryEntity> findByVacancyIdAndRecipientChatId(UUID vacancyId, Long recipientChatId);
+
+    /**
      * Atomically reserves a PENDING delivery for the given vacancy/recipient pair, using the
      * unique constraint on (vacancy_id, recipient_chat_id) as the sole source of truth for
      * novelty. Avoids an exists()-then-save() check-then-act race across concurrent callers.

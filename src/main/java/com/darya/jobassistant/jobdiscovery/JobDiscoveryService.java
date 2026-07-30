@@ -48,9 +48,10 @@ import org.springframework.stereotype.Service;
  * VacancyExtractionService} boundaries and the existing, already-transactional {@link
  * VacancyIngestionService}. Deliberately not {@code @Transactional} and opens no transaction of
  * its own: search, canonicalization, the persisted-identity pre-check, Scrape, and AI Extraction
- * all run outside any write transaction; only {@link VacancyIngestionService#persist(VacancyCreationCommand)}
- * opens a transaction, one short {@code REQUIRES_NEW} transaction per candidate, entirely inside
- * that call.
+ * all run outside any write transaction; only {@link VacancyIngestionService#persistDiscovered(VacancyCreationCommand)}
+ * opens a transaction, one short {@code REQUIRES_NEW} transaction per candidate (Vacancy and its
+ * durable {@code VacancyRecommendationTask} committed atomically together - see that method),
+ * entirely inside that call.
  *
  * <p>Conditional on {@code job-discovery.enabled=true}, matching this project's established
  * activation convention ({@code JobMonitoringService}/{@code telegram.enabled}, {@code
@@ -298,7 +299,7 @@ public class JobDiscoveryService {
         acc.persistenceAttempts++;
         VacancyCreationCommand command = buildCreationCommand(sourceUrl, content, extracted);
         try {
-            VacancyCreationResult result = vacancyIngestionService.persist(command);
+            VacancyCreationResult result = vacancyIngestionService.persistDiscovered(command);
             if (result.newlyCreated()) {
                 acc.createdVacancies++;
                 acc.createdVacancyIds.add(result.vacancy().getId());

@@ -20,6 +20,7 @@ import com.darya.jobassistant.notifications.query.JobNotificationCandidateQueryP
 import com.darya.jobassistant.notifications.repository.NotificationDeliveryRepository;
 import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.service.VacancyIngestionService;
+import com.darya.jobassistant.vacancyrecommendation.config.RecommendationPolicyProperties;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -44,8 +45,9 @@ class JobMonitoringSchedulerTest {
     @BeforeEach
     void setUp() {
         JobMonitoringProperties properties = new JobMonitoringProperties(
-                true, Duration.ofMinutes(30), Duration.ofMinutes(1), "java backend", 70, 5, 12345L);
-        scheduler = new JobMonitoringScheduler(jobMonitoringUseCase, properties);
+                true, Duration.ofMinutes(30), Duration.ofMinutes(1), "java backend", 5, 12345L);
+        RecommendationPolicyProperties recommendationPolicyProperties = new RecommendationPolicyProperties(70);
+        scheduler = new JobMonitoringScheduler(jobMonitoringUseCase, properties, recommendationPolicyProperties);
     }
 
     @Test

@@ -165,9 +165,39 @@ job-monitoring:
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}
   initial-delay: ${JOB_MONITORING_INITIAL_DELAY:1m}
   keyword: ${JOB_MONITORING_KEYWORD:java backend}
-  minimum-score: ${JOB_MONITORING_MINIMUM_SCORE:70}
   max-notifications: ${JOB_MONITORING_MAX_NOTIFICATIONS:5}
   recipient-chat-id: ${JOB_MONITORING_RECIPIENT_CHAT_ID:}
+
+# The single shared "is this AI match score good enough to notify about" threshold - used by both
+# job-monitoring above and vacancy-recommendation below. Previously job-monitoring.minimum-score
+# (JOB_MONITORING_MINIMUM_SCORE); moved here in Sprint 8 Step 10 so the two workflows can never be
+# configured with two different thresholds for the same business decision. Same default (70) as
+# before the move.
+recommendation-policy:
+  minimum-score: ${RECOMMENDATION_MINIMUM_SCORE:70}
+
+# Sprint 8 Step 10: durable analysis + Telegram notification pipeline for automatic web-discovery
+# vacancies. Disabled by default. Enabling it requires Job Analysis (always available) and
+# Telegram (telegram.enabled=true) - missing infrastructure fails startup clearly rather than the
+# processing service being silently omitted.
+vacancy-recommendation:
+  enabled: ${VACANCY_RECOMMENDATION_ENABLED:false}
+  recipient-chat-id: ${VACANCY_RECOMMENDATION_RECIPIENT_CHAT_ID:}
+  processing:
+    batch-size: ${VACANCY_RECOMMENDATION_BATCH_SIZE:5}
+    max-attempts: ${VACANCY_RECOMMENDATION_MAX_ATTEMPTS:3}
+    lease-duration: ${VACANCY_RECOMMENDATION_LEASE_DURATION:20m}
+    retry-initial-delay: ${VACANCY_RECOMMENDATION_RETRY_INITIAL_DELAY:10m}
+    retry-max-delay: ${VACANCY_RECOMMENDATION_RETRY_MAX_DELAY:2h}
+  # lock-at-most-for must stay greater than processing.lease-duration above: ShedLock's cluster
+  # -wide lock must never be released while this node could still legitimately be working through
+  # a claimed batch (the task lease is the crash-recovery bound within that).
+  scheduler:
+    enabled: ${VACANCY_RECOMMENDATION_SCHEDULER_ENABLED:false}
+    fixed-delay: ${VACANCY_RECOMMENDATION_FIXED_DELAY:10m}
+    initial-delay: ${VACANCY_RECOMMENDATION_INITIAL_DELAY:1m}
+    lock-at-most-for: ${VACANCY_RECOMMENDATION_LOCK_AT_MOST_FOR:1h}
+    lock-at-least-for: ${VACANCY_RECOMMENDATION_LOCK_AT_LEAST_FOR:10s}
 
 webclient:
   timeout-ms: ${WEBCLIENT_TIMEOUT_MS:20000}

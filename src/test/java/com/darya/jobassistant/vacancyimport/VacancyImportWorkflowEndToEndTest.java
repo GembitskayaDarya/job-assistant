@@ -337,13 +337,14 @@ class VacancyImportWorkflowEndToEndTest {
     }
 
     private void stubJobAnalysisRepository() {
-        lenient().when(jobAnalysisRepository.claimIfAbsent(any(), any(), any())).thenAnswer(inv -> {
+        lenient().when(jobAnalysisRepository.claimIfAbsent(any(), any(), any(), any())).thenAnswer(inv -> {
             if (persistedAnalysis.get() != null) {
                 return Optional.empty();
             }
             UUID vacancyId = inv.getArgument(0);
             Instant claimedAt = inv.getArgument(1);
             AnalysisOrigin origin = inv.getArgument(2);
+            Instant manuallyReviewedAt = inv.getArgument(3);
             JobAnalysisEntity claim = JobAnalysisEntity.builder()
                     .id(UUID.randomUUID())
                     .vacancyId(vacancyId)
@@ -353,6 +354,7 @@ class VacancyImportWorkflowEndToEndTest {
                     .missingRequiredSkills(List.of())
                     .missingPreferredSkills(List.of())
                     .analysisOrigin(origin)
+                    .manuallyReviewedAt(manuallyReviewedAt)
                     .createdAt(claimedAt)
                     .updatedAt(claimedAt)
                     .build();

@@ -9,6 +9,10 @@ import java.util.UUID;
  * the {@code /analyze} command) - {@code vacancyId}, {@code analysisVersion} and {@code
  * analysisOrigin} live here rather than on {@link JobAnalysis} because they are persistence/
  * workflow metadata, not AI output: the AI never produces either value.
+ *
+ * @param manuallyReviewedAt present exactly when a human has actually reviewed this analysis via
+ *     {@code /analyze} - never inferred from {@code analysisOrigin}; see {@code
+ *     JobAnalysisEntity#manuallyReviewedAt} for the exact semantics.
  */
 public record PersistedJobAnalysis(
         UUID id,
@@ -16,7 +20,8 @@ public record PersistedJobAnalysis(
         JobAnalysis analysis,
         int analysisVersion,
         AnalysisOrigin analysisOrigin,
-        Instant createdAt
+        Instant createdAt,
+        Instant manuallyReviewedAt
 ) {
     public PersistedJobAnalysis {
         if (id == null) {
@@ -37,5 +42,10 @@ public record PersistedJobAnalysis(
         if (createdAt == null) {
             throw new IllegalArgumentException("createdAt must not be null");
         }
+    }
+
+    /** True when a human has actually reviewed this analysis via {@code /analyze}. */
+    public boolean isManuallyReviewed() {
+        return manuallyReviewedAt != null || analysisOrigin == AnalysisOrigin.MANUAL;
     }
 }

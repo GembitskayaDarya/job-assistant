@@ -13,6 +13,9 @@ public enum AnalysisOrigin {
     /** Started by the scheduled monitoring workflow. */
     MONITORING,
 
+    /** Started by {@code VacancyRecommendationProcessingService} for an automatic web-discovery Vacancy. */
+    AUTOMATIC_DISCOVERY,
+
     /** Row created before analysis origin was persisted - never assumed to be MANUAL or MONITORING. */
     LEGACY
 }

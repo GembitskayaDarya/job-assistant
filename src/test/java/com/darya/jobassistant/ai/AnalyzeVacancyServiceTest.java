@@ -98,7 +98,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(completedEntity(analysis)));
 
         AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
@@ -120,7 +120,7 @@ class AnalyzeVacancyServiceTest {
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
         when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
         // First call: nothing exists yet, so a fresh claim is taken and AI is called once.
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), eq(AnalysisOrigin.MANUAL)))
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), eq(AnalysisOrigin.MANUAL), any()))
                 .thenReturn(Optional.of(inProgressEntity()));
         when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
 
@@ -128,7 +128,7 @@ class AnalyzeVacancyServiceTest {
 
         // Second call: the row now exists, completed at the current version - claimIfAbsent loses
         // and the completed, current-version row is returned without another AI call.
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), eq(AnalysisOrigin.MANUAL)))
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), eq(AnalysisOrigin.MANUAL), any()))
                 .thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID))
                 .thenReturn(Optional.of(completedEntity(analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.MANUAL)));
@@ -149,7 +149,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.of(inProgressEntity()));
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
         when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
@@ -179,7 +179,7 @@ class AnalyzeVacancyServiceTest {
         CandidateProfile profile = candidateProfile();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.of(inProgressEntity()));
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
         RuntimeException providerFailure = new RuntimeException("HTTP 429 - insufficient_quota");
         when(jobAnalysisService.analyze(profile, jobOffer))
@@ -200,7 +200,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(completedEntity(analysis)));
 
         AnalyzeVacancyResult first = service.analyze(VACANCY_ID);
@@ -220,7 +220,7 @@ class AnalyzeVacancyServiceTest {
         // Our own insert lost the unique-constraint race: claimIfAbsent returns empty because
         // another caller's row already exists, and by the time we inspect it, that caller has
         // already completed it.
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(completedEntity(winningAnalysis)));
 
         AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
@@ -236,7 +236,7 @@ class AnalyzeVacancyServiceTest {
         JobOffer jobOffer = jobOffer();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(inProgressEntity()));
         when(jobAnalysisRepository.reclaimStaleClaim(eq(VACANCY_ID), any(), any())).thenReturn(false);
 
@@ -256,7 +256,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(inProgressEntity()));
         Instant staleThreshold = NOW.minus(STALE_AFTER);
         when(jobAnalysisRepository.reclaimStaleClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(true);
@@ -280,7 +280,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.of(inProgressEntity()));
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
         when(candidateProfileProvider.getProfile()).thenReturn(profile);
         when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
@@ -308,7 +308,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysisEntity outdated = completedEntity(oldAnalysis, 1, AnalysisOrigin.MONITORING);
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(outdated));
         Instant staleThreshold = NOW.minus(STALE_AFTER);
         when(jobAnalysisRepository.attemptReanalysisClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(true);
@@ -334,7 +334,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysisEntity outdated = completedEntity(oldAnalysis, 1, AnalysisOrigin.MONITORING);
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(outdated));
         Instant staleThreshold = NOW.minus(STALE_AFTER);
         when(jobAnalysisRepository.attemptReanalysisClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(true);
@@ -363,7 +363,7 @@ class AnalyzeVacancyServiceTest {
         JobAnalysisEntity outdated = completedEntity(oldAnalysis, 1, AnalysisOrigin.MONITORING);
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(outdated));
         Instant staleThreshold = NOW.minus(STALE_AFTER);
         when(jobAnalysisRepository.attemptReanalysisClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(false);
@@ -373,6 +373,70 @@ class AnalyzeVacancyServiceTest {
         assertThat(result).isEqualTo(new AnalyzeVacancyResult.Available(jobOffer, oldAnalysis, false));
         verify(jobAnalysisService, never()).analyze(any(), any());
         verify(jobAnalysisRepository, never()).completeReanalysis(any(), any(), any(), any());
+    }
+
+    @Test
+    void analyze_newClaim_stampsManuallyReviewedAtOnTheClaimItself() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        Vacancy vacancy = vacancy();
+        JobOffer jobOffer = jobOffer();
+        CandidateProfile profile = candidateProfile();
+        JobAnalysis analysis = jobAnalysis();
+        when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
+        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
+        when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
+
+        service.analyze(VACANCY_ID);
+
+        // Every /analyze-initiated claim is inherently a manual review action, stamped at the
+        // exact moment the claim itself is taken - not left for a later, separate write.
+        verify(jobAnalysisRepository).claimIfAbsent(VACANCY_ID, NOW, AnalysisOrigin.MANUAL, NOW);
+    }
+
+    @Test
+    void analyze_reusingExistingCurrentVersionAnalysis_marksManuallyReviewedWithoutTouchingOrigin() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        Vacancy vacancy = vacancy();
+        JobOffer jobOffer = jobOffer();
+        JobAnalysis analysis = jobAnalysis();
+        // Reused analysis was originally created automatically (AUTOMATIC_DISCOVERY) - reuse must
+        // never overwrite that origin, only stamp the manual-review marker.
+        JobAnalysisEntity existing = completedEntity(analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.AUTOMATIC_DISCOVERY);
+        when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(existing));
+
+        service.analyze(VACANCY_ID);
+
+        verify(jobAnalysisRepository).markManuallyReviewedIfAbsent(VACANCY_ID, NOW);
+        verify(jobAnalysisRepository, never()).completeClaim(any(), any(), any());
+        verify(jobAnalysisService, never()).analyze(any(), any());
+    }
+
+    @Test
+    void analyze_reusingExistingLegacyOriginAnalysis_marksManuallyReviewedWithoutPromotingOriginOrCallingAi() {
+        // A LEGACY-origin row (backfilled pre-provenance data) must be treated exactly like any
+        // other origin here: /analyze stamps the manual-review marker and leaves the origin as
+        // LEGACY - it is never rewritten to MANUAL merely because a human viewed it via /analyze.
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        Vacancy vacancy = vacancy();
+        JobOffer jobOffer = jobOffer();
+        JobAnalysis analysis = jobAnalysis();
+        JobAnalysisEntity existing = completedEntity(analysis, JobAnalysisModelVersion.CURRENT, AnalysisOrigin.LEGACY);
+        when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(existing));
+
+        service.analyze(VACANCY_ID);
+
+        verify(jobAnalysisRepository).markManuallyReviewedIfAbsent(VACANCY_ID, NOW);
+        verify(jobAnalysisRepository, never()).completeClaim(any(), any(), any());
+        verify(jobAnalysisService, never()).analyze(any(), any());
     }
 
     private Vacancy vacancy() {

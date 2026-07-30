@@ -30,6 +30,12 @@ public class NotificationDeliveryRepositoryImpl implements NotificationDeliveryR
             WHERE id = :deliveryId AND status = 'PENDING'
             """;
 
+    private static final String RETRY_FAILED_SQL = """
+            UPDATE notification_delivery
+            SET status = 'PENDING', failed_at = NULL, failure_code = NULL, updated_at = :retriedAt
+            WHERE id = :deliveryId AND status = 'FAILED'
+            """;
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -48,6 +54,15 @@ public class NotificationDeliveryRepositoryImpl implements NotificationDeliveryR
                 .setParameter("deliveryId", deliveryId)
                 .setParameter("failedAt", failedAt)
                 .setParameter("failureCode", failureCode)
+                .executeUpdate();
+        return toTransitionResult(deliveryId, updatedRows);
+    }
+
+    @Override
+    public NotificationDeliveryTransitionResult retryFailed(UUID deliveryId, Instant retriedAt) {
+        int updatedRows = entityManager.createNativeQuery(RETRY_FAILED_SQL)
+                .setParameter("deliveryId", deliveryId)
+                .setParameter("retriedAt", retriedAt)
                 .executeUpdate();
         return toTransitionResult(deliveryId, updatedRows);
     }

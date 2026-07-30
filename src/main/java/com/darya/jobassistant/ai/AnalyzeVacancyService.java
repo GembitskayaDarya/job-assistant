@@ -112,7 +112,8 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
      */
     private ClaimOutcome acquireClaim(UUID vacancyId) {
         Instant now = Instant.now(clock);
-        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(vacancyId, now, AnalysisOrigin.MANUAL);
+        Optional<JobAnalysisEntity> claimed =
+                jobAnalysisRepository.claimIfAbsent(vacancyId, now, AnalysisOrigin.MANUAL, now);
         if (claimed.isPresent()) {
             return new ClaimOutcome.NewClaim();
         }
@@ -136,14 +137,21 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
     }
 
     /**
-     * A completed row at the current version is simply returned. An outdated one is safely
-     * recalculated via the reanalysis-claim mechanism instead: if this call wins the claim, the
-     * old content stays put and readable while the AI call runs; if another caller already owns a
-     * valid (non-stale) reanalysis claim, or the row was upgraded to current between our read and
-     * this attempt, the still-readable completed content is returned without calling AI again.
+     * A completed row at the current version is simply returned - but first stamped as manually
+     * reviewed (if not already), since {@code /analyze} reusing it is itself the user's manual
+     * review action, regardless of the row's original {@code analysisOrigin} (which is preserved
+     * untouched - see {@code JobAnalysisRepository#markManuallyReviewedIfAbsent}). This runs inside
+     * the same short transaction as the claim check itself (Transaction A in {@link #analyze}), no
+     * AI call involved. An outdated row is safely recalculated via the reanalysis-claim mechanism
+     * instead: if this call wins the claim, the old content stays put and readable while the AI
+     * call runs (the claim itself also stamps the manual-review marker - see {@link
+     * JobAnalysisRepository#attemptReanalysisClaim}); if another caller already owns a valid
+     * (non-stale) reanalysis claim, or the row was upgraded to current between our read and this
+     * attempt, the still-readable completed content is returned without calling AI again.
      */
     private ClaimOutcome acquireForCompletedRow(UUID vacancyId, JobAnalysisEntity current, Instant now) {
         if (current.getAnalysisVersion() >= JobAnalysisModelVersion.CURRENT) {
+            jobAnalysisRepository.markManuallyReviewedIfAbsent(vacancyId, now);
             return new ClaimOutcome.AlreadyAvailable(JobAnalysisRepository.toDomain(current).analysis());
         }
 
