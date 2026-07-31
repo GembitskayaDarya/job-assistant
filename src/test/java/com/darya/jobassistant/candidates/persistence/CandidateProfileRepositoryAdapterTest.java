@@ -3,10 +3,11 @@ package com.darya.jobassistant.candidates.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.darya.jobassistant.candidates.CandidateProfileConcurrentModificationException;
-import com.darya.jobassistant.candidates.PersistedCandidateLanguage;
-import com.darya.jobassistant.candidates.PersistedCandidateProfile;
-import com.darya.jobassistant.candidates.PersistedCandidateSkill;
+import com.darya.jobassistant.candidates.aggregate.CandidateProfileConcurrentModificationException;
+import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
+import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
+import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
+import com.darya.jobassistant.candidates.aggregate.CandidateSkill;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.candidates.entity.CandidateProfileEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileLanguageEntity;
@@ -17,6 +18,7 @@ import com.darya.jobassistant.candidates.repository.CandidateProfileSkillReposit
 import com.darya.jobassistant.config.JpaAuditingConfig;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -72,16 +74,17 @@ class CandidateProfileRepositoryAdapterTest {
     // Field initializers run before @Autowired injection in JUnit/Spring test lifecycle, so this
     // is built lazily per call rather than once as a field.
     private CandidateProfileRepositoryAdapter adapter() {
-        return new CandidateProfileRepositoryAdapter(candidateProfileRepository, candidateProfileSkillRepository, candidateProfileLanguageRepository);
+        return new CandidateProfileRepositoryAdapter(
+                candidateProfileRepository, candidateProfileSkillRepository, candidateProfileLanguageRepository, Clock.systemUTC());
     }
 
     // ---- 1/2. New profile persists parent, skills, and languages ----
 
     @Test
     void save_newProfile_persistsParentScalarData() {
-        PersistedCandidateProfile toSave = validProfile("new-" + UUID.randomUUID(), List.of(), List.of());
+        CandidateProfileAggregate toSave = validProfile("new-" + UUID.randomUUID(), List.of(), List.of());
 
-        PersistedCandidateProfile saved = adapter().save(toSave);
+        CandidateProfileAggregate saved = adapter().save(toSave);
 
         assertThat(saved.id()).isNotNull();
         assertThat(saved.version()).isZero();
@@ -94,11 +97,11 @@ class CandidateProfileRepositoryAdapterTest {
 
     @Test
     void save_newProfileWithSkillsAndLanguages_persistsAllChildren() {
-        PersistedCandidateProfile toSave = validProfile("children-" + UUID.randomUUID(),
-                List.of(new PersistedCandidateSkill("Java", "Language", SkillProficiency.EXPERT)),
-                List.of(new PersistedCandidateLanguage("en", "FLUENT")));
+        CandidateProfileAggregate toSave = validProfile("children-" + UUID.randomUUID(),
+                List.of(new CandidateSkill("Java", "Language", SkillProficiency.EXPERT)),
+                List.of(new CandidateLanguage("en", "FLUENT")));
 
-        PersistedCandidateProfile saved = adapter().save(toSave);
+        CandidateProfileAggregate saved = adapter().save(toSave);
 
         assertThat(candidateProfileSkillRepository.findByCandidateProfileId(saved.id()))
                 .extracting(CandidateProfileSkillEntity::getSkillName)
@@ -113,21 +116,21 @@ class CandidateProfileRepositoryAdapterTest {
     void findByProfileKey_existingProfile_returnsCompleteDomainModel() {
         String key = "load-" + UUID.randomUUID();
         adapter().save(validProfile(key,
-                List.of(new PersistedCandidateSkill("Kafka", null, SkillProficiency.STRONG)),
-                List.of(new PersistedCandidateLanguage("pl", null))));
+                List.of(new CandidateSkill("Kafka", null, SkillProficiency.STRONG)),
+                List.of(new CandidateLanguage("pl", null))));
         entityManager.clear();
 
-        Optional<PersistedCandidateProfile> found = adapter().findByProfileKey(key);
+        Optional<CandidateProfileAggregate> found = adapter().findByProfileKey(key);
 
         assertThat(found).isPresent();
         assertThat(found.get().targetRole()).isEqualTo("Senior Java Backend Engineer");
-        assertThat(found.get().skills()).extracting(PersistedCandidateSkill::name).containsExactly("Kafka");
-        assertThat(found.get().languages()).extracting(PersistedCandidateLanguage::languageCode).containsExactly("pl");
+        assertThat(found.get().skills()).extracting(CandidateSkill::name).containsExactly("Kafka");
+        assertThat(found.get().languages()).extracting(CandidateLanguage::languageCode).containsExactly("pl");
     }
 
     @Test
     void findByProfileKey_missingProfile_returnsEmpty() {
-        Optional<PersistedCandidateProfile> found = adapter().findByProfileKey("missing-" + UUID.randomUUID());
+        Optional<CandidateProfileAggregate> found = adapter().findByProfileKey("missing-" + UUID.randomUUID());
 
         assertThat(found).isEmpty();
     }
@@ -138,18 +141,18 @@ class CandidateProfileRepositoryAdapterTest {
     void findByProfileKey_afterPersistenceContextCleared_returnedProfileFieldsAreStillFullyReadable() {
         String key = "no-proxy-" + UUID.randomUUID();
         adapter().save(validProfile(key,
-                List.of(new PersistedCandidateSkill("Java", null, SkillProficiency.EXPERT)),
-                List.of(new PersistedCandidateLanguage("en", null))));
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)),
+                List.of(new CandidateLanguage("en", null))));
 
-        PersistedCandidateProfile found = adapter().findByProfileKey(key).orElseThrow();
+        CandidateProfileAggregate found = adapter().findByProfileKey(key).orElseThrow();
         // The mapper already extracted every value into plain records before this returns, so
         // clearing the persistence context afterward cannot invalidate anything reachable from
         // "found" - unlike a JPA entity or a lazy collection, there is no proxy left to detach.
         entityManager.clear();
 
-        assertThat(found.skills()).extracting(PersistedCandidateSkill::name).containsExactly("Java");
-        assertThat(found.languages()).extracting(PersistedCandidateLanguage::languageCode).containsExactly("en");
-        assertThat(found).isInstanceOf(PersistedCandidateProfile.class);
+        assertThat(found.skills()).extracting(CandidateSkill::name).containsExactly("Java");
+        assertThat(found.languages()).extracting(CandidateLanguage::languageCode).containsExactly("en");
+        assertThat(found).isInstanceOf(CandidateProfileAggregate.class);
     }
 
     // ---- 6. Updating scalar values ----
@@ -157,9 +160,9 @@ class CandidateProfileRepositoryAdapterTest {
     @Test
     void save_updateWithChangedScalars_persistsTheChange() {
         String key = "update-scalar-" + UUID.randomUUID();
-        PersistedCandidateProfile initial = adapter().save(validProfile(key, List.of(), List.of()));
+        CandidateProfileAggregate initial = adapter().save(validProfile(key, List.of(), List.of()));
 
-        PersistedCandidateProfile updated = adapter().save(withTargetRole(initial, "Staff Java Backend Engineer"));
+        CandidateProfileAggregate updated = adapter().save(withTargetRole(initial, "Staff Java Backend Engineer"));
 
         assertThat(updated.targetRole()).isEqualTo("Staff Java Backend Engineer");
         assertThat(candidateProfileRepository.findById(initial.id()).orElseThrow().getTargetRole())
@@ -171,10 +174,10 @@ class CandidateProfileRepositoryAdapterTest {
     @Test
     void save_updateWithDifferentSkillSet_removesOldSkillsAndStoresNewOnes() {
         String key = "replace-skills-" + UUID.randomUUID();
-        PersistedCandidateProfile initial = adapter().save(validProfile(key,
-                List.of(new PersistedCandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of()));
+        CandidateProfileAggregate initial = adapter().save(validProfile(key,
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of()));
 
-        adapter().save(withSkills(initial, List.of(new PersistedCandidateSkill("Kafka", null, SkillProficiency.STRONG))));
+        adapter().save(withSkills(initial, List.of(new CandidateSkill("Kafka", null, SkillProficiency.STRONG))));
 
         assertThat(candidateProfileSkillRepository.findByCandidateProfileId(initial.id()))
                 .extracting(CandidateProfileSkillEntity::getSkillName)
@@ -184,10 +187,10 @@ class CandidateProfileRepositoryAdapterTest {
     @Test
     void save_updateWithDifferentLanguageSet_removesOldLanguagesAndStoresNewOnes() {
         String key = "replace-languages-" + UUID.randomUUID();
-        PersistedCandidateProfile initial = adapter().save(validProfile(key,
-                List.of(), List.of(new PersistedCandidateLanguage("en", null))));
+        CandidateProfileAggregate initial = adapter().save(validProfile(key,
+                List.of(), List.of(new CandidateLanguage("en", null))));
 
-        adapter().save(withLanguages(initial, List.of(new PersistedCandidateLanguage("pl", "STRONG"))));
+        adapter().save(withLanguages(initial, List.of(new CandidateLanguage("pl", "STRONG"))));
 
         assertThat(candidateProfileLanguageRepository.findByCandidateProfileId(initial.id()))
                 .extracting(CandidateProfileLanguageEntity::getLanguageCode)
@@ -204,14 +207,14 @@ class CandidateProfileRepositoryAdapterTest {
     @Test
     void save_updateKeepingOneSkillNameAcrossTheReplace_succeeds() {
         String key = "keep-skill-" + UUID.randomUUID();
-        PersistedCandidateProfile initial = adapter().save(validProfile(key,
-                List.of(new PersistedCandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of()));
+        CandidateProfileAggregate initial = adapter().save(validProfile(key,
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of()));
 
-        PersistedCandidateProfile updated = adapter().save(withSkills(initial, List.of(
-                new PersistedCandidateSkill("Java", null, SkillProficiency.STRONG),
-                new PersistedCandidateSkill("Kafka", null, SkillProficiency.BASIC))));
+        CandidateProfileAggregate updated = adapter().save(withSkills(initial, List.of(
+                new CandidateSkill("Java", null, SkillProficiency.STRONG),
+                new CandidateSkill("Kafka", null, SkillProficiency.BASIC))));
 
-        assertThat(updated.skills()).extracting(PersistedCandidateSkill::name).containsExactlyInAnyOrder("Java", "Kafka");
+        assertThat(updated.skills()).extracting(CandidateSkill::name).containsExactlyInAnyOrder("Java", "Kafka");
         assertThat(candidateProfileSkillRepository.findByCandidateProfileId(initial.id())).hasSize(2);
     }
 
@@ -219,7 +222,7 @@ class CandidateProfileRepositoryAdapterTest {
 
     @Test
     void save_emptySkillsAndLanguages_isSupported() {
-        PersistedCandidateProfile saved = adapter().save(validProfile("empty-" + UUID.randomUUID(), List.of(), List.of()));
+        CandidateProfileAggregate saved = adapter().save(validProfile("empty-" + UUID.randomUUID(), List.of(), List.of()));
 
         assertThat(saved.skills()).isEmpty();
         assertThat(saved.languages()).isEmpty();
@@ -228,8 +231,8 @@ class CandidateProfileRepositoryAdapterTest {
     @Test
     void save_updateReplacingSkillsWithEmptySet_deletesAllPreviousSkills() {
         String key = "to-empty-" + UUID.randomUUID();
-        PersistedCandidateProfile initial = adapter().save(validProfile(key,
-                List.of(new PersistedCandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of()));
+        CandidateProfileAggregate initial = adapter().save(validProfile(key,
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of()));
 
         adapter().save(withSkills(initial, List.of()));
 
@@ -239,9 +242,9 @@ class CandidateProfileRepositoryAdapterTest {
     // ---- 10/11/12. Child-write failure rolls back the entire save, including the parent ----
 
     /**
-     * {@link PersistedCandidateProfile}'s own constructor already rejects duplicate skill names
-     * (see {@code PersistedCandidateProfileTest}), so a duplicate can never reach {@code
-     * save(PersistedCandidateProfile)} through the port - by design, this is defense in depth,
+     * {@link CandidateProfileAggregate}'s own constructor already rejects duplicate skill names
+     * (see {@code CandidateProfileAggregateTest}), so a duplicate can never reach {@code
+     * save(CandidateProfileAggregate)} through the port - by design, this is defense in depth,
      * not a gap. This test instead proves the underlying atomicity guarantee directly: using the
      * exact same repositories and delete-then-insert mechanics {@link
      * CandidateProfileRepositoryAdapter} is built from, inside one real transaction, a duplicate
@@ -255,7 +258,7 @@ class CandidateProfileRepositoryAdapterTest {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         String key = "atomic-" + UUID.randomUUID();
         UUID profileId = tx.execute(status -> adapter().save(validProfile(key,
-                List.of(new PersistedCandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of())).id());
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of())).id());
 
         assertThatThrownBy(() -> tx.execute(status -> {
             CandidateProfileEntity parent = candidateProfileRepository.findById(profileId).orElseThrow();
@@ -284,14 +287,64 @@ class CandidateProfileRepositoryAdapterTest {
         assertThat(reloadedSkills).extracting(CandidateProfileSkillEntity::getSkillName).containsExactly("Java");
     }
 
+    /**
+     * The public-port counterpart the defense-in-depth test above does not replace: this calls
+     * exactly {@code CandidateProfileRepositoryPort.save(profile)} - no direct repository
+     * operations - with a domain-valid but database-invalid child value ({@code
+     * CandidateLanguage} proficiency longer than the {@code candidate_profile_language.proficiency
+     * VARCHAR(50)} column, which the domain deliberately does not length-check - see {@code
+     * CandidateLanguageTest.constructor_proficiencyLongerThanDatabaseColumn_isDomainValid}). The
+     * update also changes a parent scalar field, so this proves the parent's versioned update
+     * (already committed to this transaction's session) is rolled back together with the failed
+     * child insert, not just that the child insert itself fails.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void save_publicPort_childWriteFailureAfterParentVersionedUpdate_rollsBackTheWholeSave() {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        String key = "public-rollback-" + UUID.randomUUID();
+        CandidateProfileRepositoryPort port = adapter();
+
+        CandidateProfileAggregate initial = tx.execute(status -> port.save(validProfile(key,
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)),
+                List.of(new CandidateLanguage("en", "FLUENT")))));
+        String originalTargetRole = initial.targetRole();
+        long originalVersion = initial.version();
+
+        CandidateProfileAggregate invalidUpdate = new CandidateProfileAggregate(
+                initial.id(), initial.profileKey(), "Updated Target Role", initial.seniority(), initial.experienceYears(),
+                initial.preferredCompanyType(), initial.preferredLocation(), initial.employmentModel(), initial.remotePolicy(),
+                initial.salaryCurrency(), initial.minimumSalary(),
+                initial.skills(),
+                List.of(new CandidateLanguage("en", "A".repeat(51))),
+                initial.version());
+
+        assertThatThrownBy(() -> tx.execute(status -> port.save(invalidUpdate)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        CandidateProfileAggregate reloaded = tx.execute(status -> port.findByProfileKey(key).orElseThrow());
+        assertThat(reloaded.targetRole()).isEqualTo(originalTargetRole);
+        assertThat(reloaded.version()).isEqualTo(originalVersion);
+        assertThat(reloaded.skills()).extracting(CandidateSkill::name).containsExactly("Java");
+        assertThat(reloaded.languages()).extracting(CandidateLanguage::languageCode).containsExactly("en");
+        assertThat(reloaded.languages()).extracting(CandidateLanguage::proficiency).containsExactly("FLUENT");
+
+        // Direct database check - not just the port's own read path - that no partial/invalid
+        // child row survives.
+        List<CandidateProfileLanguageEntity> rawLanguages =
+                tx.execute(status -> candidateProfileLanguageRepository.findByCandidateProfileId(initial.id()));
+        assertThat(rawLanguages).hasSize(1);
+        assertThat(rawLanguages.get(0).getProficiency()).isEqualTo("FLUENT");
+    }
+
     // ---- 13/14. Version is returned and increments on update ----
 
     @Test
     void save_newProfile_returnsVersionZero_andUpdateIncrementsIt() {
-        PersistedCandidateProfile initial = adapter().save(validProfile("version-" + UUID.randomUUID(), List.of(), List.of()));
+        CandidateProfileAggregate initial = adapter().save(validProfile("version-" + UUID.randomUUID(), List.of(), List.of()));
         assertThat(initial.version()).isZero();
 
-        PersistedCandidateProfile updated = adapter().save(withTargetRole(initial, "Updated Role"));
+        CandidateProfileAggregate updated = adapter().save(withTargetRole(initial, "Updated Role"));
 
         assertThat(updated.version()).isEqualTo(1L);
     }
@@ -305,32 +358,139 @@ class CandidateProfileRepositoryAdapterTest {
         String key = "stale-" + UUID.randomUUID();
 
         tx.execute(status -> adapter().save(validProfile(key,
-                List.of(new PersistedCandidateSkill("Java", null, SkillProficiency.EXPERT)),
-                List.of(new PersistedCandidateLanguage("en", null)))));
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)),
+                List.of(new CandidateLanguage("en", null)))));
 
-        PersistedCandidateProfile firstWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
-        PersistedCandidateProfile secondWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        CandidateProfileAggregate firstWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        CandidateProfileAggregate secondWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
 
         tx.execute(status -> adapter().save(withTargetRole(firstWriterCopy, "Updated by first writer")));
 
         assertThatThrownBy(() -> tx.execute(status -> adapter().save(withTargetRole(secondWriterCopy, "Updated by second writer"))))
                 .isInstanceOf(CandidateProfileConcurrentModificationException.class);
 
-        PersistedCandidateProfile finalState = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        CandidateProfileAggregate finalState = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
         assertThat(finalState.targetRole()).isEqualTo("Updated by first writer");
         assertThat(finalState.version()).isEqualTo(1L);
-        assertThat(finalState.skills()).extracting(PersistedCandidateSkill::name).containsExactly("Java");
-        assertThat(finalState.languages()).extracting(PersistedCandidateLanguage::languageCode).containsExactly("en");
+        assertThat(finalState.skills()).extracting(CandidateSkill::name).containsExactly("Java");
+        assertThat(finalState.languages()).extracting(CandidateLanguage::languageCode).containsExactly("en");
+    }
+
+    // ---- Sprint 9 Step 2 correction: aggregate-level optimistic locking investigation ----
+    //
+    // These four tests prove whether a save that changes ONLY skills or ONLY languages (every
+    // parent scalar field left exactly as loaded) still performs a real, version-checked write of
+    // the aggregate. Against the pre-correction merge-of-a-detached-entity strategy in
+    // saveParent()/toDetachedEntityForUpdate(), Hibernate's dirty checking finds no scalar field
+    // difference to flush, so no UPDATE statement is ever issued: the parent version silently
+    // fails to increment, and - because no UPDATE runs - the caller-supplied version is never
+    // actually checked against the database, so a stale concurrent skills/languages-only write is
+    // NOT rejected. Skills and languages are part of the Candidate Profile aggregate, so this is a
+    // lost-update bug, not a false positive: two concurrent skills-only writers can each believe
+    // they succeeded from version N, and the second one silently discards whichever child state
+    // the first one wrote, without either writer or a reader ever seeing an increment or a
+    // conflict.
+
+    @Test
+    void save_skillsOnlyChange_incrementsParentVersion() {
+        String key = "skills-only-version-" + UUID.randomUUID();
+        CandidateProfileAggregate initial = adapter().save(validProfile(key,
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)), List.of()));
+        long previousVersion = initial.version();
+
+        CandidateProfileAggregate loaded = adapter().findByProfileKey(key).orElseThrow();
+        CandidateProfileAggregate skillsOnlyChange =
+                withSkills(loaded, List.of(new CandidateSkill("Kafka", null, SkillProficiency.STRONG)));
+
+        CandidateProfileAggregate saved = adapter().save(skillsOnlyChange);
+
+        assertThat(saved.version()).isEqualTo(previousVersion + 1);
+        assertThat(candidateProfileRepository.findById(initial.id()).orElseThrow().getVersion())
+                .isEqualTo(previousVersion + 1);
+    }
+
+    @Test
+    void save_languagesOnlyChange_incrementsParentVersion() {
+        String key = "languages-only-version-" + UUID.randomUUID();
+        CandidateProfileAggregate initial = adapter().save(validProfile(key,
+                List.of(), List.of(new CandidateLanguage("en", null))));
+        long previousVersion = initial.version();
+
+        CandidateProfileAggregate loaded = adapter().findByProfileKey(key).orElseThrow();
+        CandidateProfileAggregate languagesOnlyChange =
+                withLanguages(loaded, List.of(new CandidateLanguage("pl", "STRONG")));
+
+        CandidateProfileAggregate saved = adapter().save(languagesOnlyChange);
+
+        assertThat(saved.version()).isEqualTo(previousVersion + 1);
+        assertThat(candidateProfileRepository.findById(initial.id()).orElseThrow().getVersion())
+                .isEqualTo(previousVersion + 1);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void save_concurrentSkillsOnlyStaleUpdate_throwsConcurrentModificationException() {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        String key = "concurrent-skills-only-" + UUID.randomUUID();
+
+        tx.execute(status -> adapter().save(validProfile(key,
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)),
+                List.of(new CandidateLanguage("en", null)))));
+
+        CandidateProfileAggregate firstWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        CandidateProfileAggregate secondWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        long originalVersion = firstWriterCopy.version();
+
+        CandidateProfileAggregate afterFirstWrite = tx.execute(status -> adapter().save(
+                withSkills(firstWriterCopy, List.of(new CandidateSkill("Kafka", null, SkillProficiency.STRONG)))));
+        assertThat(afterFirstWrite.version()).isEqualTo(originalVersion + 1);
+
+        assertThatThrownBy(() -> tx.execute(status -> adapter().save(
+                withSkills(secondWriterCopy, List.of(new CandidateSkill("Docker", null, SkillProficiency.BASIC))))))
+                .isInstanceOf(CandidateProfileConcurrentModificationException.class);
+
+        CandidateProfileAggregate finalState = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        assertThat(finalState.version()).isEqualTo(originalVersion + 1);
+        assertThat(finalState.skills()).extracting(CandidateSkill::name).containsExactly("Kafka");
+        assertThat(finalState.languages()).extracting(CandidateLanguage::languageCode).containsExactly("en");
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void save_concurrentLanguagesOnlyStaleUpdate_throwsConcurrentModificationException() {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        String key = "concurrent-languages-only-" + UUID.randomUUID();
+
+        tx.execute(status -> adapter().save(validProfile(key,
+                List.of(new CandidateSkill("Java", null, SkillProficiency.EXPERT)),
+                List.of(new CandidateLanguage("en", null)))));
+
+        CandidateProfileAggregate firstWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        CandidateProfileAggregate secondWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        long originalVersion = firstWriterCopy.version();
+
+        CandidateProfileAggregate afterFirstWrite = tx.execute(status -> adapter().save(
+                withLanguages(firstWriterCopy, List.of(new CandidateLanguage("pl", "STRONG")))));
+        assertThat(afterFirstWrite.version()).isEqualTo(originalVersion + 1);
+
+        assertThatThrownBy(() -> tx.execute(status -> adapter().save(
+                withLanguages(secondWriterCopy, List.of(new CandidateLanguage("ru", "BASIC"))))))
+                .isInstanceOf(CandidateProfileConcurrentModificationException.class);
+
+        CandidateProfileAggregate finalState = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
+        assertThat(finalState.version()).isEqualTo(originalVersion + 1);
+        assertThat(finalState.skills()).extracting(CandidateSkill::name).containsExactly("Java");
+        assertThat(finalState.languages()).extracting(CandidateLanguage::languageCode).containsExactly("pl");
     }
 
     // ---- 17/18. Same skill/language across different profiles ----
 
     @Test
     void save_sameSkillName_acrossTwoDifferentProfiles_bothAccepted() {
-        PersistedCandidateProfile profileA = adapter().save(validProfile("skill-a-" + UUID.randomUUID(),
-                List.of(new PersistedCandidateSkill("Kafka", null, SkillProficiency.STRONG)), List.of()));
-        PersistedCandidateProfile profileB = adapter().save(validProfile("skill-b-" + UUID.randomUUID(),
-                List.of(new PersistedCandidateSkill("Kafka", null, SkillProficiency.WORKING)), List.of()));
+        CandidateProfileAggregate profileA = adapter().save(validProfile("skill-a-" + UUID.randomUUID(),
+                List.of(new CandidateSkill("Kafka", null, SkillProficiency.STRONG)), List.of()));
+        CandidateProfileAggregate profileB = adapter().save(validProfile("skill-b-" + UUID.randomUUID(),
+                List.of(new CandidateSkill("Kafka", null, SkillProficiency.WORKING)), List.of()));
 
         assertThat(candidateProfileSkillRepository.findByCandidateProfileId(profileA.id())).hasSize(1);
         assertThat(candidateProfileSkillRepository.findByCandidateProfileId(profileB.id())).hasSize(1);
@@ -338,10 +498,10 @@ class CandidateProfileRepositoryAdapterTest {
 
     @Test
     void save_sameLanguageCode_acrossTwoDifferentProfiles_bothAccepted() {
-        PersistedCandidateProfile profileA = adapter().save(validProfile("lang-a-" + UUID.randomUUID(),
-                List.of(), List.of(new PersistedCandidateLanguage("pl", null))));
-        PersistedCandidateProfile profileB = adapter().save(validProfile("lang-b-" + UUID.randomUUID(),
-                List.of(), List.of(new PersistedCandidateLanguage("pl", null))));
+        CandidateProfileAggregate profileA = adapter().save(validProfile("lang-a-" + UUID.randomUUID(),
+                List.of(), List.of(new CandidateLanguage("pl", null))));
+        CandidateProfileAggregate profileB = adapter().save(validProfile("lang-b-" + UUID.randomUUID(),
+                List.of(), List.of(new CandidateLanguage("pl", null))));
 
         assertThat(candidateProfileLanguageRepository.findByCandidateProfileId(profileA.id())).hasSize(1);
         assertThat(candidateProfileLanguageRepository.findByCandidateProfileId(profileB.id())).hasSize(1);
@@ -358,30 +518,30 @@ class CandidateProfileRepositoryAdapterTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
-    private PersistedCandidateProfile validProfile(
-            String profileKey, List<PersistedCandidateSkill> skills, List<PersistedCandidateLanguage> languages) {
-        return new PersistedCandidateProfile(
+    private CandidateProfileAggregate validProfile(
+            String profileKey, List<CandidateSkill> skills, List<CandidateLanguage> languages) {
+        return new CandidateProfileAggregate(
                 null, profileKey, "Senior Java Backend Engineer", "Senior", 6,
                 "Product", "Europe", "B2B", "REMOTE", "EUR", new BigDecimal("8000.00"),
                 skills, languages, 0L);
     }
 
-    private PersistedCandidateProfile withTargetRole(PersistedCandidateProfile profile, String targetRole) {
-        return new PersistedCandidateProfile(
+    private CandidateProfileAggregate withTargetRole(CandidateProfileAggregate profile, String targetRole) {
+        return new CandidateProfileAggregate(
                 profile.id(), profile.profileKey(), targetRole, profile.seniority(), profile.experienceYears(),
                 profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
                 profile.salaryCurrency(), profile.minimumSalary(), profile.skills(), profile.languages(), profile.version());
     }
 
-    private PersistedCandidateProfile withSkills(PersistedCandidateProfile profile, List<PersistedCandidateSkill> skills) {
-        return new PersistedCandidateProfile(
+    private CandidateProfileAggregate withSkills(CandidateProfileAggregate profile, List<CandidateSkill> skills) {
+        return new CandidateProfileAggregate(
                 profile.id(), profile.profileKey(), profile.targetRole(), profile.seniority(), profile.experienceYears(),
                 profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
                 profile.salaryCurrency(), profile.minimumSalary(), skills, profile.languages(), profile.version());
     }
 
-    private PersistedCandidateProfile withLanguages(PersistedCandidateProfile profile, List<PersistedCandidateLanguage> languages) {
-        return new PersistedCandidateProfile(
+    private CandidateProfileAggregate withLanguages(CandidateProfileAggregate profile, List<CandidateLanguage> languages) {
+        return new CandidateProfileAggregate(
                 profile.id(), profile.profileKey(), profile.targetRole(), profile.seniority(), profile.experienceYears(),
                 profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
                 profile.salaryCurrency(), profile.minimumSalary(), profile.skills(), languages, profile.version());

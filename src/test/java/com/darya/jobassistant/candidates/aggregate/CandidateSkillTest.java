@@ -1,15 +1,16 @@
-package com.darya.jobassistant.candidates;
+package com.darya.jobassistant.candidates.aggregate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.candidates.SkillProficiency;
 import org.junit.jupiter.api.Test;
 
-class PersistedCandidateSkillTest {
+class CandidateSkillTest {
 
     @Test
     void constructor_validSkill_isCreated() {
-        PersistedCandidateSkill skill = new PersistedCandidateSkill("Java", "Language", SkillProficiency.EXPERT);
+        CandidateSkill skill = new CandidateSkill("Java", "Language", SkillProficiency.EXPERT);
 
         assertThat(skill.name()).isEqualTo("Java");
         assertThat(skill.category()).isEqualTo("Language");
@@ -18,39 +19,39 @@ class PersistedCandidateSkillTest {
 
     @Test
     void constructor_nameIsTrimmed() {
-        PersistedCandidateSkill skill = new PersistedCandidateSkill("  Kafka  ", null, SkillProficiency.STRONG);
+        CandidateSkill skill = new CandidateSkill("  Kafka  ", null, SkillProficiency.STRONG);
 
         assertThat(skill.name()).isEqualTo("Kafka");
     }
 
     @Test
     void constructor_nullName_isRejected() {
-        assertThatThrownBy(() -> new PersistedCandidateSkill(null, null, SkillProficiency.WORKING))
+        assertThatThrownBy(() -> new CandidateSkill(null, null, SkillProficiency.WORKING))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void constructor_blankName_isRejected() {
-        assertThatThrownBy(() -> new PersistedCandidateSkill("   ", null, SkillProficiency.WORKING))
+        assertThatThrownBy(() -> new CandidateSkill("   ", null, SkillProficiency.WORKING))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void constructor_nullProficiency_isRejected() {
-        assertThatThrownBy(() -> new PersistedCandidateSkill("Java", null, null))
+        assertThatThrownBy(() -> new CandidateSkill("Java", null, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void constructor_blankCategory_becomesNull() {
-        PersistedCandidateSkill skill = new PersistedCandidateSkill("Redis", "   ", SkillProficiency.BASIC);
+        CandidateSkill skill = new CandidateSkill("Redis", "   ", SkillProficiency.BASIC);
 
         assertThat(skill.category()).isNull();
     }
 
     @Test
     void constructor_categoryIsTrimmed() {
-        PersistedCandidateSkill skill = new PersistedCandidateSkill("Redis", "  Datastore  ", SkillProficiency.BASIC);
+        CandidateSkill skill = new CandidateSkill("Redis", "  Datastore  ", SkillProficiency.BASIC);
 
         assertThat(skill.category()).isEqualTo("Datastore");
     }

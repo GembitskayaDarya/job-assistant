@@ -185,19 +185,43 @@ Sprint 9 Step 1 added an additive PostgreSQL schema for Candidate Profile, skill
 Sprint 9 Step 2 added the clean domain/application boundary on top of that schema, still without
 switching anything at runtime:
 
-- `com.darya.jobassistant.candidates.PersistedCandidateProfile` (with `PersistedCandidateSkill`
-  and `PersistedCandidateLanguage`) is the framework-free domain model for the *persisted*
-  profile — deliberately a different type from the existing YAML-sourced `CandidateProfile`, since
-  that model's rich, importance-weighted preferences have no equivalent in Step 1's flat schema
-  and dozens of existing call sites depend on `CandidateProfile`/`CandidateSkill` staying
-  unchanged. This mirrors the same split the codebase already uses for `ai.model.JobAnalysis` vs.
-  `ai.model.PersistedJobAnalysis`.
+- `com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate` (with `CandidateSkill`
+  and `CandidateLanguage`, both in that same `aggregate` package) is the framework-free domain
+  model for the *persisted* profile. It is the intended **future source-of-truth business
+  aggregate** for Candidate Profile data — persistence is an implementation detail of what it
+  represents, not its purpose — deliberately kept as a different type from the existing
+  YAML-sourced `com.darya.jobassistant.candidates.CandidateProfile`, since that model's rich,
+  importance-weighted preferences have no equivalent in Step 1's flat schema and dozens of
+  existing call sites depend on `CandidateProfile`/`CandidateSkill` staying unchanged. The intended
+  transitional architecture:
+
+  ```text
+  CandidateProfileAggregate
+      = future PostgreSQL-backed source-of-truth domain aggregate
+
+  CandidateProfile
+      = current analysis-oriented projection JobAnalysisService actually reads from today,
+        sourced from config/candidate-profile.yml via ConfigurationCandidateProfileProvider
+
+  future assembler (not implemented yet)
+      CandidateProfileAggregate -> CandidateProfile
+  ```
+
+  Building that assembler, and switching `JobAnalysisService` to consume it, is later Sprint 9
+  work — this step does not persist weighted preferences until a proper schema/mapping for them
+  is designed.
 - `CandidateProfileRepositoryPort` (`findByProfileKey`, `save`) is the one repository port for the
   whole aggregate — skills and languages are parts of the Candidate Profile, not separate ports.
+  Every save of an *existing* aggregate performs a deliberate, unconditional version-checked
+  update of the whole parent row (see `CandidateProfileRepository.updateIfVersionMatches`) and
+  always increments `candidate_profile.version` — including a save that only changes skills or
+  languages — rather than relying on Hibernate's ordinary scalar-field dirty checking, which
+  would not otherwise guarantee either the increment or the optimistic-lock check for a
+  children-only change.
 - `com.darya.jobassistant.candidates.persistence.CandidateProfileRepositoryAdapter` implements the
   port against the Step 1 JPA entities/repositories, loading and saving the parent plus its skills
   and languages as one atomic unit (skills/languages are fully replaced on every save), and
-  translates a stale optimistic-lock write into `CandidateProfileConcurrentModificationException`.
+  translates a stale or missing-row version check into `CandidateProfileConcurrentModificationException`.
 - This adapter is a registered Spring bean but is **not** wired into `JobAnalysisService` or any
   other runtime workflow — `ConfigurationCandidateProfileProvider` remains the only source AI
   vacancy analysis reads from. Provider switching and YAML data migration are later Sprint 9 work.

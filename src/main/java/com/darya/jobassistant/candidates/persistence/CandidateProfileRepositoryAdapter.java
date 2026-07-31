@@ -1,20 +1,21 @@
 package com.darya.jobassistant.candidates.persistence;
 
-import com.darya.jobassistant.candidates.CandidateProfileConcurrentModificationException;
-import com.darya.jobassistant.candidates.CandidateProfileRepositoryPort;
-import com.darya.jobassistant.candidates.PersistedCandidateLanguage;
-import com.darya.jobassistant.candidates.PersistedCandidateProfile;
-import com.darya.jobassistant.candidates.PersistedCandidateSkill;
+import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
+import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
+import com.darya.jobassistant.candidates.aggregate.CandidateProfileConcurrentModificationException;
+import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
+import com.darya.jobassistant.candidates.aggregate.CandidateSkill;
 import com.darya.jobassistant.candidates.entity.CandidateProfileEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileLanguageEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileSkillEntity;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileSkillRepository;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +29,16 @@ import org.springframework.transaction.annotation.Transactional;
  * through a collection on the parent - Step 1's entities are unidirectional {@code @ManyToOne}
  * (see {@code CandidateProfileEntity}'s javadoc), so there is no lazy parent-side collection that
  * could leak a proxy across this boundary.
+ *
+ * <p><b>Aggregate-level optimistic locking (Sprint 9 Step 2 correction):</b> an update always
+ * performs {@link CandidateProfileRepository#updateIfVersionMatches}, an explicit, unconditional
+ * version-checked write of every parent scalar field, regardless of whether any of them actually
+ * changed. Skills and languages are part of this aggregate, so a save that changes only those must
+ * still increment {@code version} and still be rejected when stale - relying on Hibernate's
+ * ordinary scalar-field dirty checking would not guarantee either (an earlier version of this
+ * adapter merged a detached entity instead, which only happened to increment the version because
+ * it also - accidentally - left {@code updatedAt} unset, incidentally forcing Hibernate to always
+ * consider the row dirty; that was never a deliberate guarantee and is not relied on here).
  */
 @Repository
 @RequiredArgsConstructor
@@ -36,23 +47,24 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
     private final CandidateProfileRepository candidateProfileRepository;
     private final CandidateProfileSkillRepository candidateProfileSkillRepository;
     private final CandidateProfileLanguageRepository candidateProfileLanguageRepository;
+    private final Clock clock;
 
     @Override
     @Transactional(readOnly = true)
-    public Optional<PersistedCandidateProfile> findByProfileKey(String profileKey) {
+    public Optional<CandidateProfileAggregate> findByProfileKey(String profileKey) {
         return candidateProfileRepository.findByProfileKey(profileKey).map(this::loadComplete);
     }
 
     /**
-     * Saves the parent first (flushing immediately - see {@link #saveParent}, so a stale version
-     * is caught before any child row is touched, satisfying "a failed stale update does not
-     * modify skills or languages"), then fully replaces the skill and language sets. Everything
-     * runs inside this one transaction: a failure anywhere rolls back the parent update together
-     * with any child mutation already attempted.
+     * Saves the parent first - see {@link #saveParent}; a {@code @Modifying} query executes
+     * immediately when called, so a stale version is caught before any child row is touched,
+     * satisfying "a failed stale update does not modify skills or languages" - then fully replaces
+     * the skill and language sets. Everything runs inside this one transaction: a failure anywhere
+     * rolls back the parent update together with any child mutation already attempted.
      */
     @Override
     @Transactional
-    public PersistedCandidateProfile save(PersistedCandidateProfile profile) {
+    public CandidateProfileAggregate save(CandidateProfileAggregate profile) {
         CandidateProfileEntity savedParent = saveParent(profile);
         replaceSkills(savedParent, profile.skills());
         replaceLanguages(savedParent, profile.languages());
@@ -60,26 +72,41 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
     }
 
     /**
-     * A {@code null} {@link PersistedCandidateProfile#id()} means "not yet persisted" - creates a
-     * new row via a plain insert. A non-null id means "update" - builds a detached entity
-     * carrying the caller-supplied (possibly stale) {@link PersistedCandidateProfile#version()}
-     * and merges it, so Hibernate's own {@code @Version} check runs against exactly the revision
-     * the caller last observed rather than whatever is current at merge time; loading the current
-     * row first and overwriting its version field would defeat the optimistic-lock check instead
-     * of honoring it (see {@link CandidateProfilePersistenceMapper#toDetachedEntityForUpdate}).
-     * Flushed immediately so a stale-version conflict surfaces here, not after child work.
+     * A {@code null} {@link CandidateProfileAggregate#id()} means "not yet persisted" - creates a
+     * new row via a plain insert. A non-null id means "update" - performs an explicit,
+     * unconditional version-checked write of every parent scalar field via {@link
+     * CandidateProfileRepository#updateIfVersionMatches}, using the caller-supplied {@link
+     * CandidateProfileAggregate#version()} as the expected version. Zero rows updated means the
+     * row either no longer exists or {@code expectedVersion} is stale - either way, translated to
+     * {@link CandidateProfileConcurrentModificationException} before any child row is touched.
      */
-    private CandidateProfileEntity saveParent(PersistedCandidateProfile profile) {
-        CandidateProfileEntity toSave = profile.id() == null
-                ? CandidateProfilePersistenceMapper.toNewEntity(profile)
-                : CandidateProfilePersistenceMapper.toDetachedEntityForUpdate(profile);
-        try {
-            CandidateProfileEntity saved = candidateProfileRepository.save(toSave);
-            candidateProfileRepository.flush();
-            return saved;
-        } catch (OptimisticLockingFailureException e) {
-            throw concurrentModification(profile, e);
+    private CandidateProfileEntity saveParent(CandidateProfileAggregate profile) {
+        if (profile.id() == null) {
+            return candidateProfileRepository.save(CandidateProfilePersistenceMapper.toNewEntity(profile));
         }
+        int updatedRows = candidateProfileRepository.updateIfVersionMatches(
+                profile.id(),
+                profile.profileKey(),
+                profile.targetRole(),
+                profile.seniority(),
+                profile.experienceYears(),
+                profile.preferredCompanyType(),
+                profile.preferredLocation(),
+                profile.employmentModel(),
+                profile.remotePolicy(),
+                profile.salaryCurrency(),
+                profile.minimumSalary(),
+                Instant.now(clock),
+                profile.version());
+        if (updatedRows == 0) {
+            throw concurrentModification(profile);
+        }
+        // Re-fetched rather than reused from before the update: the modifying query above is a
+        // bulk JPQL statement, so it never populates or refreshes any managed entity instance
+        // itself - this is the first (and only) point where a real, current CandidateProfileEntity
+        // for this id becomes available in this transaction.
+        return candidateProfileRepository.findById(profile.id())
+                .orElseThrow(() -> concurrentModification(profile));
     }
 
     /**
@@ -92,7 +119,7 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
      * CandidateProfileRepositoryPort} - the expected collections are small enough that this is an
      * acceptable, explicit write-amplification trade-off.
      */
-    private void replaceSkills(CandidateProfileEntity profile, List<PersistedCandidateSkill> skills) {
+    private void replaceSkills(CandidateProfileEntity profile, List<CandidateSkill> skills) {
         candidateProfileSkillRepository.deleteAll(candidateProfileSkillRepository.findByCandidateProfileId(profile.getId()));
         candidateProfileSkillRepository.flush();
         List<CandidateProfileSkillEntity> toInsert = skills.stream()
@@ -102,7 +129,7 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
     }
 
     /** Same delete-then-insert strategy and flush-ordering rationale as {@link #replaceSkills}. */
-    private void replaceLanguages(CandidateProfileEntity profile, List<PersistedCandidateLanguage> languages) {
+    private void replaceLanguages(CandidateProfileEntity profile, List<CandidateLanguage> languages) {
         candidateProfileLanguageRepository.deleteAll(
                 candidateProfileLanguageRepository.findByCandidateProfileId(profile.getId()));
         candidateProfileLanguageRepository.flush();
@@ -112,17 +139,16 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
         candidateProfileLanguageRepository.saveAll(toInsert);
     }
 
-    private PersistedCandidateProfile loadComplete(CandidateProfileEntity entity) {
+    private CandidateProfileAggregate loadComplete(CandidateProfileEntity entity) {
         List<CandidateProfileSkillEntity> skills = candidateProfileSkillRepository.findByCandidateProfileId(entity.getId());
         List<CandidateProfileLanguageEntity> languages = candidateProfileLanguageRepository.findByCandidateProfileId(entity.getId());
         return CandidateProfilePersistenceMapper.toDomain(entity, skills, languages);
     }
 
-    private CandidateProfileConcurrentModificationException concurrentModification(
-            PersistedCandidateProfile profile, OptimisticLockingFailureException cause) {
+    private CandidateProfileConcurrentModificationException concurrentModification(CandidateProfileAggregate profile) {
         return new CandidateProfileConcurrentModificationException(
                 "Candidate profile '" + profile.profileKey() + "' (id=" + profile.id()
-                        + ") was concurrently modified by another transaction",
-                cause);
+                        + ") was concurrently modified by another transaction - expected version "
+                        + profile.version() + " no longer matches");
     }
 }
