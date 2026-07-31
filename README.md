@@ -182,6 +182,26 @@ Sprint 9 Step 1 added an additive PostgreSQL schema for Candidate Profile, skill
   the candidate doesn't have is represented by the *absence* of a row, exactly as in the YAML file
   today.
 
+Sprint 9 Step 2 added the clean domain/application boundary on top of that schema, still without
+switching anything at runtime:
+
+- `com.darya.jobassistant.candidates.PersistedCandidateProfile` (with `PersistedCandidateSkill`
+  and `PersistedCandidateLanguage`) is the framework-free domain model for the *persisted*
+  profile — deliberately a different type from the existing YAML-sourced `CandidateProfile`, since
+  that model's rich, importance-weighted preferences have no equivalent in Step 1's flat schema
+  and dozens of existing call sites depend on `CandidateProfile`/`CandidateSkill` staying
+  unchanged. This mirrors the same split the codebase already uses for `ai.model.JobAnalysis` vs.
+  `ai.model.PersistedJobAnalysis`.
+- `CandidateProfileRepositoryPort` (`findByProfileKey`, `save`) is the one repository port for the
+  whole aggregate — skills and languages are parts of the Candidate Profile, not separate ports.
+- `com.darya.jobassistant.candidates.persistence.CandidateProfileRepositoryAdapter` implements the
+  port against the Step 1 JPA entities/repositories, loading and saving the parent plus its skills
+  and languages as one atomic unit (skills/languages are fully replaced on every save), and
+  translates a stale optimistic-lock write into `CandidateProfileConcurrentModificationException`.
+- This adapter is a registered Spring bean but is **not** wired into `JobAnalysisService` or any
+  other runtime workflow — `ConfigurationCandidateProfileProvider` remains the only source AI
+  vacancy analysis reads from. Provider switching and YAML data migration are later Sprint 9 work.
+
 ### Default startup
 
 ```bash
