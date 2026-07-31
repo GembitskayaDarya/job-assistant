@@ -164,6 +164,24 @@ add an entry to say "no", just omit it. Supported proficiency values, most to le
 
 `NONE` is not a supported proficiency value.
 
+### Database persistence (in progress)
+
+Sprint 9 Step 1 added an additive PostgreSQL schema for Candidate Profile, skills, and languages
+(migration `V16__create_candidate_profile.sql`; entities/repositories under
+`com.darya.jobassistant.candidates.entity`/`.repository`). This is a persistence foundation only:
+
+- `ConfigurationCandidateProfileProvider` (reading `config/candidate-profile.yml` as described
+  above) remains the **only** runtime source of the Candidate Profile used for AI vacancy
+  matching — the new tables are not read or written by any workflow yet.
+- No profile is seeded into the new tables; the application starts normally with them empty.
+- Migrating real profile data onto this schema and switching the runtime provider over to it is
+  later Sprint 9 work, done only after that data has been migrated and validated.
+- Career History is intentionally out of scope for this step.
+- `candidate_profile_skill.proficiency` supports the same four values as above (`BASIC`,
+  `WORKING`, `STRONG`, `EXPERT`, no `NONE`) — enforced by a database `CHECK` constraint. A skill
+  the candidate doesn't have is represented by the *absence* of a row, exactly as in the YAML file
+  today.
+
 ### Default startup
 
 ```bash
