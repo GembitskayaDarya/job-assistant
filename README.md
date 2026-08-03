@@ -131,28 +131,31 @@ the core web flow. Database schema is version-controlled with Flyway migrations
 
 ## Candidate profile
 
-`application.yml` configures the application itself (database, Telegram, AI model, scheduling,
-...); it contains no personal data. The candidate profile used for AI vacancy matching — target
-role/seniority, experience, skills with proficiency, languages, and work preferences — lives in
-its own file, loaded via Spring's Config Data import:
-
-```yaml
-spring:
-  config:
-    import: file:${CANDIDATE_PROFILE_PATH:./config/candidate-profile.yml}
-```
+**Sprint 9 Step 4: PostgreSQL is the only runtime Candidate Profile source of truth.** The
+candidate profile used for AI vacancy matching — target role/seniority, experience, skills with
+proficiency, languages, and work preferences — is read from the `candidate_profile` table (and
+its skill/language/preference child tables) by `PersistentCandidateProfileProvider`, the only
+`CandidateProfileProvider` bean in the application. `config/candidate-profile.yml` is now a
+**migration-only** input: it is read exclusively by the explicit migration workflow described
+below, never by normal runtime, and there is no YAML fallback of any kind.
 
 ### First-time setup
 
+A fresh database has no persisted profile, so normal startup will fail fast (see [Runtime source
+of truth](#runtime-source-of-truth) below) until one exists. Get one in with the migration
+workflow:
+
 ```bash
 cp config/candidate-profile.example.yml config/candidate-profile.yml
+# edit config/candidate-profile.yml with your own role, skills, and preferences, then:
+CANDIDATE_PROFILE_MIGRATION_MODE=APPLY ./gradlew bootRun
 ```
 
-Then edit `config/candidate-profile.yml` with your own role, skills, and preferences.
 `config/candidate-profile.yml` is listed in `.gitignore`, so your personal data is never
-committed — only `config/candidate-profile.example.yml` (a generic template) is tracked. This
-file is required for the application to start; it is not a secret-management mechanism, just a
-place to keep personal profile data out of the source tree.
+committed — only `config/candidate-profile.example.yml` (a generic template) is tracked. It is
+not a secret-management mechanism, just a place to keep personal profile data out of the source
+tree, and only `APPLY` (or `DRY_RUN`) ever reads it — see `spring.config.import` in
+`application.yml`, which is `optional:` for exactly this reason.
 
 Skills absent from the file are treated as unknown, negligible, or intentionally excluded — don't
 add an entry to say "no", just omit it. Supported proficiency values, most to least confident:
@@ -164,16 +167,18 @@ add an entry to say "no", just omit it. Supported proficiency values, most to le
 
 `NONE` is not a supported proficiency value.
 
-### Database persistence (in progress)
+### Database persistence
 
 Sprint 9 Step 1 added an additive PostgreSQL schema for Candidate Profile, skills, and languages
 (migration `V16__create_candidate_profile.sql`; entities/repositories under
-`com.darya.jobassistant.candidates.entity`/`.repository`). This is a persistence foundation only:
+`com.darya.jobassistant.candidates.entity`/`.repository`). This was a persistence foundation only
+at the time - see [Runtime source of truth](#runtime-source-of-truth) below for where the runtime
+provider actually ended up (Sprint 9 Step 4):
 
-- `ConfigurationCandidateProfileProvider` (reading `config/candidate-profile.yml` as described
-  above) remains the **only** runtime source of the Candidate Profile used for AI vacancy
-  matching — the new tables are not read or written by any workflow yet.
-- No profile is seeded into the new tables; the application starts normally with them empty.
+- Originally, `ConfigurationCandidateProfileProvider` (reading `config/candidate-profile.yml`)
+  remained the only runtime source of the Candidate Profile used for AI vacancy matching, and the
+  new tables were not read or written by any workflow. Step 4 cut the runtime provider over to
+  PostgreSQL and removed `ConfigurationCandidateProfileProvider` entirely.
 - Migrating real profile data onto this schema and switching the runtime provider over to it is
   later Sprint 9 work, done only after that data has been migrated and validated.
 - Career History is intentionally out of scope for this step.
@@ -221,9 +226,9 @@ switching anything at runtime:
   port against the Step 1 JPA entities/repositories, loading and saving the parent plus its skills
   and languages as one atomic unit (skills/languages are fully replaced on every save), and
   translates a stale or missing-row version check into `CandidateProfileConcurrentModificationException`.
-- This adapter is a registered Spring bean but is **not** wired into `JobAnalysisService` or any
-  other runtime workflow — `ConfigurationCandidateProfileProvider` remains the only source AI
-  vacancy analysis reads from. Provider switching and YAML data migration are later Sprint 9 work.
+- At the time this adapter was added it was a registered Spring bean not yet wired into
+  `JobAnalysisService` or any other runtime workflow. Sprint 9 Step 4 wired it in via
+  `PersistentCandidateProfileProvider` - see below.
 
 Sprint 9 Step 3 added an explicit, idempotent, **opt-in only** migration of the real YAML profile
 into PostgreSQL, still without switching the runtime provider:
@@ -262,32 +267,81 @@ into PostgreSQL, still without switching the runtime provider:
   ```
 
   (or set `candidate-profile.migration.mode: DRY_RUN`/`APPLY` directly in your environment
-  config). Leaving the property unset, or set to `OFF`, keeps the runner bean from doing anything
-  — `OFF` is the default and requires no configuration at all.
+  config). Leaving the property unset, or set to `OFF`, is the default and requires no
+  configuration at all - Sprint 9 Step 4 correction: the runner bean (and the YAML migration
+  source it reads from) does not exist at all in that case, not merely inert.
 - **Rollback**: if the application is rolled back after a successful `APPLY`, nothing needs to be
   undone — the previous version keeps using YAML exactly as before, and the imported PostgreSQL
   rows simply sit unused until a later cutover. No destructive database rollback is required or
   performed automatically.
 
-### Default startup
+### Runtime source of truth
+
+Sprint 9 Step 4 completed the cutover: **PostgreSQL is the only runtime Candidate Profile source,
+with no YAML fallback.**
+
+- `com.darya.jobassistant.candidates.runtime.PersistentCandidateProfileProvider` is the only
+  `CandidateProfileProvider` bean. It loads the aggregate for `candidate-profile.runtime.profile-key`
+  (default `primary`, override via `CANDIDATE_PROFILE_RUNTIME_PROFILE_KEY`) through
+  `CandidateProfileRepositoryPort` and assembles it via `CandidateProfileAnalysisAssembler` - the
+  same assembler Step 3's migration parity check already exercised. No caching: every call is a
+  fresh read, so a profile update committed through `CandidateProfileRepositoryPort#save` is
+  visible on the very next call, with no application restart.
+- `CandidateProfileStartupValidator` is a Spring Boot `ApplicationRunner` (Sprint 9 Step 4
+  correction - originally an `ApplicationReadyEvent` listener, which runs too late: that event
+  marks the application as already ready to serve traffic). `ApplicationRunner`s execute inside
+  `SpringApplication.run()` itself, strictly before `ApplicationReadyEvent` is published, so a
+  failure here means the application is never considered ready at all. It calls the real provider
+  once and lets any failure - most commonly `CandidateProfileNotConfiguredException` (safe: no
+  profile field values in its message) - propagate completely uncaught; it is never caught,
+  logged-and-swallowed, or turned into a health indicator that lets startup succeed anyway. It is
+  active whenever `candidate-profile.migration.mode` is absent or `OFF` (normal runtime), and
+  automatically disabled during `DRY_RUN`/`APPLY` so migration can still run against a database
+  that does not have the profile yet.
+- `config/candidate-profile.yml` and `CandidateProfileProperties` are migration-only now -
+  `YamlCandidateProfileMigrationSource` (implementing `CandidateProfileMigrationSource`, not
+  `CandidateProfileProvider`) is the only reader, and only exists as a bean for
+  `candidate-profile.migration.mode=DRY_RUN`/`APPLY` (Sprint 9 Step 4 correction - not merely
+  "configured at all": `OFF` no longer registers it either, exactly like the property being
+  absent). `CandidateProfileMigrationRunner` shares the same condition.
+  - **YAML isolation guarantee, precisely stated**: `spring.config.import` for that file stays
+    `optional:`, which is a guarantee about *binding never failing*, not about *the file never
+    being read*. If `config/candidate-profile.yml` physically exists on disk, Spring's Config Data
+    machinery will still read and bind it into `CandidateProfileProperties` regardless of
+    migration mode - that part of Spring Boot's own startup sequence has no awareness of this
+    application's migration-mode condition. What *is* guaranteed: in normal runtime, nothing ever
+    consumes that bound data as Candidate Profile - `YamlCandidateProfileMigrationSource` is the
+    only reader of `CandidateProfileProperties` anywhere in the codebase, and its bean does not
+    exist outside `DRY_RUN`/`APPLY`. PostgreSQL, via `PersistentCandidateProfileProvider`, remains
+    the only source `JobAnalysisService` ever receives a `CandidateProfile` from.
+
+**Startup fails if no persistent profile exists yet** - run the migration first:
 
 ```bash
+# 1. On the previous (Step 3) application version: verify, then commit.
+CANDIDATE_PROFILE_MIGRATION_MODE=DRY_RUN ./gradlew bootRun
+CANDIDATE_PROFILE_MIGRATION_MODE=APPLY ./gradlew bootRun
+CANDIDATE_PROFILE_MIGRATION_MODE=DRY_RUN ./gradlew bootRun   # confirms WOULD_NO_OP
+
+# 2. Deploy this (Step 4) version with migration mode OFF/unset - normal startup:
 ./gradlew bootRun
 ```
 
-Loads `config/candidate-profile.yml` from the project root by default. If that file is missing,
-startup fails fast rather than falling back to an empty or fake profile — copy the example file
-as shown above, or set `CANDIDATE_PROFILE_PATH` (below).
+If normal startup fails with `CandidateProfileNotConfiguredException`, do not create a profile
+row by hand - run the `APPLY` command above against the target database and restart, or
+temporarily roll the application binary back to the Step 3 version (safe: Step 3 keeps using
+YAML, the imported PostgreSQL rows are simply unused, and no database rollback is needed - V16–V18
+stay applied either way).
 
-### Custom profile path
+### Custom profile path (migration only)
 
 ```bash
 CANDIDATE_PROFILE_PATH=/absolute/path/to/my-candidate-profile.yml \
-./gradlew bootRun
+CANDIDATE_PROFILE_MIGRATION_MODE=APPLY ./gradlew bootRun
 ```
 
-Useful for keeping your profile entirely outside the repository, or switching between multiple
-profiles without editing `config/candidate-profile.yml` in place.
+Useful for keeping your profile entirely outside the repository, or migrating from multiple
+source files. Has no effect outside migration mode.
 
 ## How to run
 
@@ -373,7 +427,9 @@ directly):
 
 | Variable                        | Default        | Description                                     |
 |----------------------------------|-----------------|---------------------------------------------------|
-| `CANDIDATE_PROFILE_PATH`         | `./config/candidate-profile.yml` | Path to the personal candidate profile YAML file — see [Candidate profile](#candidate-profile) |
+| `CANDIDATE_PROFILE_PATH`         | `./config/candidate-profile.yml` | Path to the candidate profile YAML file - migration-only, see [Candidate profile](#candidate-profile) |
+| `CANDIDATE_PROFILE_MIGRATION_MODE` | *(unset, i.e. `OFF`)* | `DRY_RUN`/`APPLY` runs the explicit one-time YAML→PostgreSQL migration on startup; unset/`OFF` runs normal PostgreSQL runtime |
+| `CANDIDATE_PROFILE_RUNTIME_PROFILE_KEY` | `primary`      | Business key `PersistentCandidateProfileProvider` looks the runtime profile up by |
 | `DB_HOST`                        | `localhost`     | PostgreSQL host                                   |
 | `DB_PORT`                        | `5432`          | PostgreSQL port                                   |
 | `DB_NAME`                        | `job_assistant` | Database name                                     |

@@ -85,37 +85,40 @@ class CandidateProfilePropertiesTest {
         assertThat(properties.languages()).isUnmodifiable();
     }
 
+    /**
+     * Sprint 9 Step 4: this record is deliberately unvalidated now - {@code spring.config.import}
+     * for {@code candidate-profile.yml} is {@code optional:}, so normal PostgreSQL runtime must
+     * never fail to bind this properties bean just because the file is absent. Required-field
+     * enforcement moved to {@code YamlCandidateProfileMigrationSource.loadSourceProfile()}, which
+     * only ever runs during explicit migration - see {@code YamlCandidateProfileMigrationSourceTest}.
+     */
     @Test
-    void binding_blankTargetRole_failsValidation() {
+    void binding_blankTargetRole_bindsSuccessfully_validationMovedToMigrationSource() {
         contextRunner
                 .withPropertyValues(
                         "candidate.target-role=",
                         "candidate.target-seniority=Senior",
                         "candidate.languages=English",
                         "candidate.experience-years=6")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(CandidateProfileProperties.class).targetRole()).isEmpty();
+                });
     }
 
     @Test
-    void binding_blankTargetSeniority_failsValidation() {
-        contextRunner
-                .withPropertyValues(
-                        "candidate.target-role=Senior Java Backend Developer",
-                        "candidate.target-seniority=",
-                        "candidate.languages=English",
-                        "candidate.experience-years=6")
-                .run(context -> assertThat(context).hasFailed());
-    }
-
-    @Test
-    void binding_negativeExperienceYears_failsValidation() {
-        contextRunner
-                .withPropertyValues(
-                        "candidate.target-role=Senior Java Backend Developer",
-                        "candidate.target-seniority=Senior",
-                        "candidate.languages=English",
-                        "candidate.experience-years=-1")
-                .run(context -> assertThat(context).hasFailed());
+    void binding_entirelyAbsentProperties_bindsSuccessfullyWithNullDefaults() {
+        // Simulates the "candidate-profile.yml missing, optional config import silently skipped"
+        // case - normal runtime must never fail to bind this bean just because of that.
+        contextRunner.run(context -> {
+            assertThat(context).hasNotFailed();
+            CandidateProfileProperties properties = context.getBean(CandidateProfileProperties.class);
+            assertThat(properties.targetRole()).isNull();
+            assertThat(properties.targetSeniority()).isNull();
+            assertThat(properties.skills()).isEmpty();
+            assertThat(properties.languages()).isEmpty();
+            assertThat(properties.experienceYears()).isZero();
+        });
     }
 
     @EnableConfigurationProperties(CandidateProfileProperties.class)

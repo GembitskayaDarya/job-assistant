@@ -21,6 +21,9 @@ import org.yaml.snakeyaml.Yaml;
  * {@code application.yml} - {@link ConfigDataApplicationContextInitializer} makes
  * {@link ApplicationContextRunner} process config data (imports, placeholders) the same way a
  * real {@code SpringApplication} startup would, without needing a database or the full app.
+ *
+ * <p>Sprint 9 Step 4: the import is {@code optional:} - {@code candidate-profile.yml} is now a
+ * migration-only source, never a normal-runtime requirement.
  */
 class CandidateProfileExternalConfigTest {
 
@@ -39,7 +42,9 @@ class CandidateProfileExternalConfigTest {
         assertThat(applicationYml).doesNotContainKey("candidate");
         Map<String, Object> spring = (Map<String, Object>) applicationYml.get("spring");
         Map<String, Object> config = (Map<String, Object>) spring.get("config");
-        assertThat(config.get("import").toString()).contains("CANDIDATE_PROFILE_PATH");
+        assertThat(config.get("import").toString())
+                .contains("CANDIDATE_PROFILE_PATH")
+                .startsWith("optional:");
     }
 
     @Test
@@ -88,10 +93,19 @@ class CandidateProfileExternalConfigTest {
                 });
     }
 
+    /**
+     * Sprint 9 Step 4: the import is {@code optional:}, so a missing file no longer fails
+     * context startup - {@link CandidateProfileProperties} simply binds with null/default
+     * fields. {@code YamlCandidateProfileMigrationSourceTest} covers the explicit-migration-time
+     * failure this replaces.
+     */
     @Test
-    void missingCandidateProfileFile_failsContextStartupFastInsteadOfProducingAFakeProfile() {
+    void missingCandidateProfileFile_doesNotFailContextStartup() {
         contextRunner.withPropertyValues("CANDIDATE_PROFILE_PATH=/nonexistent/candidate-profile-does-not-exist.yml")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(CandidateProfileProperties.class).targetRole()).isNull();
+                });
     }
 
     @EnableConfigurationProperties(CandidateProfileProperties.class)

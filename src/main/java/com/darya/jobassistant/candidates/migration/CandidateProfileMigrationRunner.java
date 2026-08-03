@@ -1,11 +1,10 @@
 package com.darya.jobassistant.candidates.migration;
 
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -17,12 +16,21 @@ import org.springframework.stereotype.Component;
  * convention in this codebase: this must never delay or be mistaken for normal application
  * startup).
  *
- * <p>This bean exists at all only when {@code candidate-profile.migration.mode} is present, which
- * is not the default ({@code matchIfMissing = false}); when disabled entirely, nothing here runs
- * or is even constructed, and normal startup performs no migration read or write. When present but
- * set to {@link CandidateProfileMigrationRunnerMode#OFF}, the bean exists but {@link #runMigration}
- * does nothing - both routes leave {@code ConfigurationCandidateProfileProvider} as the only active
- * Candidate Profile source, exactly as before this step.
+ * <p>Sprint 9 Step 4 correction: this bean exists only for {@code
+ * candidate-profile.migration.mode=DRY_RUN} or {@code =APPLY} (see {@link
+ * CandidateProfileMigrationActiveCondition}) - not for {@link CandidateProfileMigrationRunnerMode#OFF}
+ * and not when the property is absent. Both of those leave this bean entirely unconstructed, so
+ * {@link #runMigration}'s {@code case OFF} branch below is defensive/unreachable in practice
+ * rather than a real runtime path - {@code CandidateProfileMigrationProperties.mode()} can still
+ * type as {@code OFF} in isolated unit tests that build this bean directly without going through
+ * the condition. Either way, normal startup performs no migration read or write, and {@code
+ * PersistentCandidateProfileProvider} remains the only active runtime Candidate Profile source,
+ * unaffected by this class.
+ *
+ * <p>Sprint 9 Step 4: reads its source profile via {@link CandidateProfileMigrationSource} -
+ * {@code YamlCandidateProfileMigrationSource} - never via the runtime {@code
+ * CandidateProfileProvider}, so migration always compares the original YAML against PostgreSQL,
+ * never PostgreSQL against itself.
  *
  * <h2>DRY_RUN failures are logged and swallowed; APPLY failures are not</h2>
  *
@@ -43,11 +51,11 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(prefix = "candidate-profile.migration", name = "mode")
+@Conditional(CandidateProfileMigrationActiveCondition.class)
 public class CandidateProfileMigrationRunner {
 
     private final CandidateProfileMigrationUseCase migrationUseCase;
-    private final CandidateProfileProvider candidateProfileProvider;
+    private final CandidateProfileMigrationSource candidateProfileMigrationSource;
     private final CandidateProfileMigrationProperties properties;
 
     @EventListener(ApplicationReadyEvent.class)
@@ -61,7 +69,7 @@ public class CandidateProfileMigrationRunner {
 
     private void runDryRun() {
         try {
-            CandidateProfile source = candidateProfileProvider.getProfile();
+            CandidateProfile source = candidateProfileMigrationSource.loadSourceProfile();
             CandidateProfileMigrationResult result = migrationUseCase.dryRun(source, properties.profileKey());
             log.info("DRY RUN ONLY - no candidate profile rows were modified");
             logSummary(result);
@@ -73,7 +81,7 @@ public class CandidateProfileMigrationRunner {
     private void runApply() {
         CandidateProfileMigrationResult result;
         try {
-            CandidateProfile source = candidateProfileProvider.getProfile();
+            CandidateProfile source = candidateProfileMigrationSource.loadSourceProfile();
             result = migrationUseCase.apply(source, properties.profileKey());
         } catch (RuntimeException e) {
             log.error("Candidate profile migration APPLY failed and rolled back - no candidate profile rows were modified", e);

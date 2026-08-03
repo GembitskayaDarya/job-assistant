@@ -8,13 +8,14 @@ import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
 import com.darya.jobassistant.candidates.PreferenceImportance;
 import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.candidates.migration.CandidateProfileMigrationSourceException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class ConfigurationCandidateProfileProviderTest {
+class YamlCandidateProfileMigrationSourceTest {
 
     @Test
-    void getProfile_mapsEveryPropertyToCandidateProfile() {
+    void loadSourceProfile_mapsEveryPropertyToCandidateProfile() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
                 "Senior Java Backend Developer",
                 "Senior",
@@ -36,9 +37,9 @@ class ConfigurationCandidateProfileProviderTest {
                         PreferenceImportance.PREFERRED,
                         null));
 
-        ConfigurationCandidateProfileProvider provider = new ConfigurationCandidateProfileProvider(properties);
+        YamlCandidateProfileMigrationSource source = new YamlCandidateProfileMigrationSource(properties);
 
-        CandidateProfile profile = provider.getProfile();
+        CandidateProfile profile = source.loadSourceProfile();
 
         assertThat(profile.targetRole()).isEqualTo("Senior Java Backend Developer");
         assertThat(profile.targetSeniority()).isEqualTo("Senior");
@@ -65,7 +66,7 @@ class ConfigurationCandidateProfileProviderTest {
     }
 
     @Test
-    void getProfile_blankOptionalPreferenceText_becomesNull() {
+    void loadSourceProfile_blankOptionalPreferenceText_becomesNull() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
                 "Senior Java Backend Developer",
                 "Senior",
@@ -75,7 +76,7 @@ class ConfigurationCandidateProfileProviderTest {
                 new CandidateProfileProperties.PreferencesProperties(
                         "   ", "  ", null, List.of(), false, List.of(), null, "   ", null, "  "));
 
-        CandidateProfile profile = new ConfigurationCandidateProfileProvider(properties).getProfile();
+        CandidateProfile profile = new YamlCandidateProfileMigrationSource(properties).loadSourceProfile();
 
         CandidatePreferences preferences = profile.preferences();
         assertThat(preferences.currentCountry()).isNull();
@@ -85,11 +86,11 @@ class ConfigurationCandidateProfileProviderTest {
     }
 
     @Test
-    void getProfile_missingPreferences_defaultsToEmptyUnconfiguredPreferences() {
+    void loadSourceProfile_missingPreferences_defaultsToEmptyUnconfiguredPreferences() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
                 "Senior Java Backend Developer", "Senior", List.of(), List.of("English"), 6, null);
 
-        CandidateProfile profile = new ConfigurationCandidateProfileProvider(properties).getProfile();
+        CandidateProfile profile = new YamlCandidateProfileMigrationSource(properties).loadSourceProfile();
 
         assertThat(profile.preferences()).isNotNull();
         assertThat(profile.preferences().allowedWorkCountries()).isEmpty();
@@ -97,7 +98,7 @@ class ConfigurationCandidateProfileProviderTest {
     }
 
     @Test
-    void getProfile_returnsImmutableCollections() {
+    void loadSourceProfile_returnsImmutableCollections() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
                 "Senior Java Backend Developer",
                 "Senior",
@@ -107,9 +108,9 @@ class ConfigurationCandidateProfileProviderTest {
                 new CandidateProfileProperties.PreferencesProperties(
                         "Poland", "Remote", PreferenceImportance.STRONG, List.of("Poland"), false,
                         List.of("B2B"), PreferenceImportance.PREFERRED, "Product", PreferenceImportance.PREFERRED, null));
-        ConfigurationCandidateProfileProvider provider = new ConfigurationCandidateProfileProvider(properties);
+        YamlCandidateProfileMigrationSource source = new YamlCandidateProfileMigrationSource(properties);
 
-        CandidateProfile profile = provider.getProfile();
+        CandidateProfile profile = source.loadSourceProfile();
 
         assertThatThrownBy(() -> profile.skills().add(new CandidateSkill("Kotlin", SkillProficiency.BASIC, null)))
                 .isInstanceOf(UnsupportedOperationException.class);
@@ -118,5 +119,34 @@ class ConfigurationCandidateProfileProviderTest {
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> profile.preferences().preferredContractTypes().add("UoP"))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void loadSourceProfile_missingTargetRole_throwsMigrationSourceException() {
+        CandidateProfileProperties properties = new CandidateProfileProperties(
+                null, "Senior", List.of(), List.of("English"), 6, null);
+
+        assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
+                .isInstanceOf(CandidateProfileMigrationSourceException.class);
+    }
+
+    @Test
+    void loadSourceProfile_blankTargetSeniority_throwsMigrationSourceException() {
+        CandidateProfileProperties properties = new CandidateProfileProperties(
+                "Senior Java Backend Developer", "   ", List.of(), List.of("English"), 6, null);
+
+        assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
+                .isInstanceOf(CandidateProfileMigrationSourceException.class);
+    }
+
+    @Test
+    void loadSourceProfile_entirelyUnboundProperties_throwsMigrationSourceExceptionRatherThanEmptyProfile() {
+        // Simulates the "candidate-profile.yml missing, optional import silently skipped" case:
+        // every field left at its default/null.
+        CandidateProfileProperties properties = new CandidateProfileProperties(
+                null, null, null, null, 0, null);
+
+        assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
+                .isInstanceOf(CandidateProfileMigrationSourceException.class);
     }
 }

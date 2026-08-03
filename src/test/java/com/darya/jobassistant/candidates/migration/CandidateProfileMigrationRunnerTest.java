@@ -7,12 +7,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurationPackage;
@@ -22,10 +20,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Sprint 9 Step 3: proves {@link CandidateProfileMigrationRunner}'s activation rules without a
+ * Sprint 9 Step 3/4: proves {@link CandidateProfileMigrationRunner}'s activation rules without a
  * real database - {@link ApplicationContextRunner} builds a minimal context with mocked {@link
- * CandidateProfileMigrationUseCase}/{@link CandidateProfileProvider} beans, so this exercises
- * exactly the {@code @ConditionalOnProperty}/property-binding behavior in isolation.
+ * CandidateProfileMigrationUseCase}/{@link CandidateProfileMigrationSource} beans, so this
+ * exercises exactly the {@code @ConditionalOnProperty}/property-binding behavior in isolation.
  */
 class CandidateProfileMigrationRunnerTest {
 
@@ -37,13 +35,15 @@ class CandidateProfileMigrationRunnerTest {
         contextRunner.run(context -> assertThat(context).doesNotHaveBean(CandidateProfileMigrationRunner.class));
     }
 
+    /**
+     * Sprint 9 Step 4 correction: {@code OFF} no longer merely leaves the runner inert - the bean
+     * does not exist at all, matching {@link CandidateProfileMigrationActiveCondition}, exactly
+     * like the property being absent.
+     */
     @Test
-    void modeOff_runnerBeanExists_butCallsNoMigrationUseCaseMethod() {
-        contextRunner.withPropertyValues("candidate-profile.migration.mode=OFF").run(context -> {
-            assertThat(context).hasSingleBean(CandidateProfileMigrationRunner.class);
-            context.getBean(CandidateProfileMigrationRunner.class).runMigration();
-            verifyNoInteractions(context.getBean(CandidateProfileMigrationUseCase.class));
-        });
+    void modeOff_runnerBeanDoesNotExist() {
+        contextRunner.withPropertyValues("candidate-profile.migration.mode=OFF")
+                .run(context -> assertThat(context).doesNotHaveBean(CandidateProfileMigrationRunner.class));
     }
 
     @Test
@@ -98,11 +98,11 @@ class CandidateProfileMigrationRunnerTest {
         }
 
         @Bean
-        CandidateProfileProvider candidateProfileProvider() {
-            CandidateProfileProvider mockProvider = mock(CandidateProfileProvider.class);
+        CandidateProfileMigrationSource candidateProfileMigrationSource() {
+            CandidateProfileMigrationSource mockSource = mock(CandidateProfileMigrationSource.class);
             CandidatePreferences preferences = new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null);
-            when(mockProvider.getProfile()).thenReturn(new CandidateProfile("Backend Engineer", "Senior", List.of(), List.of(), 5, preferences));
-            return mockProvider;
+            when(mockSource.loadSourceProfile()).thenReturn(new CandidateProfile("Backend Engineer", "Senior", List.of(), List.of(), 5, preferences));
+            return mockSource;
         }
     }
 }

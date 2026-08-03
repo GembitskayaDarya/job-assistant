@@ -3,10 +3,13 @@ spring:
     name: job-assistant
 
   config:
-    # The complete candidate profile (target role, skills, preferences, ...) lives outside
-    # application source, so another user can supply their own without touching this file - see
-    # config/candidate-profile.example.yml. Startup fails fast if the resolved path is missing.
-    import: file:${CANDIDATE_PROFILE_PATH:./config/candidate-profile.yml}
+    # Sprint 9 Step 4: PostgreSQL is the only runtime Candidate Profile source now (see
+    # PersistentCandidateProfileProvider) - this file is read only by the explicit migration
+    # workflow (candidate-profile.migration.mode=DRY_RUN/APPLY), never by normal runtime. The
+    # import is "optional:" so normal startup never requires this file to exist or bind
+    # successfully; YamlCandidateProfileMigrationSource performs its own explicit validation when
+    # migration mode is actually active, and fails clearly there instead.
+    import: optional:file:${CANDIDATE_PROFILE_PATH:./config/candidate-profile.yml}
 
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:job_assistant}

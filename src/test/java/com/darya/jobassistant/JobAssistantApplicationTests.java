@@ -7,15 +7,13 @@ import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.candidates.migration.CandidateProfileMigrationRunner;
-import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
+import com.darya.jobassistant.candidates.migration.CandidateProfileMigrationSource;
+import com.darya.jobassistant.candidates.runtime.PersistentCandidateProfileProvider;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
+import org.springframework.beans.factory.annotation.Autowired;
 
 class JobAssistantApplicationTests extends AbstractIntegrationTest {
-
-    @Autowired
-    private CandidateProfileRepository candidateProfileRepository;
 
     @Autowired
     private CandidateProfileProvider candidateProfileProvider;
@@ -31,46 +29,47 @@ class JobAssistantApplicationTests extends AbstractIntegrationTest {
     }
 
     /**
-     * Sprint 9 Step 1 requirement: the application must start successfully once V16 has run, with
-     * {@code candidate_profile} (and its skill/language tables) present but empty - no profile is
-     * seeded anywhere, and {@code ConfigurationCandidateProfileProvider} (backed by {@code
-     * candidate-profile-test.yml}, see build.gradle's {@code CANDIDATE_PROFILE_PATH} override)
-     * remains the only source of the runtime {@link CandidateProfile} bean.
+     * Sprint 9 Step 4 requirement: with {@code candidate-profile.migration.mode} absent,
+     * normal-runtime startup validation ran successfully against the seeded "primary" profile
+     * (see {@code AbstractIntegrationTest}) - proven here by the context having loaded at all -
+     * and {@link CandidateProfileProvider} is the PostgreSQL-backed provider, resolving to the
+     * same profile {@link CandidateProfileRepositoryPort} exposes.
      */
     @Test
-    void contextLoads_withEmptyCandidateProfileTablesAndYamlProviderStillActive() {
-        assertThat(candidateProfileRepository.findAll()).isEmpty();
+    void contextLoads_withPersistentCandidateProfileProviderActiveAndSeededProfileValidated() {
+        assertThat(candidateProfileProvider).isInstanceOf(PersistentCandidateProfileProvider.class);
 
         CandidateProfile runtimeProfile = candidateProfileProvider.getProfile();
         assertThat(runtimeProfile).isNotNull();
         assertThat(runtimeProfile.targetRole()).isEqualTo("Senior Java Backend Engineer");
+
+        assertThat(candidateProfileRepositoryPort.findByProfileKey("primary")).isPresent();
     }
 
     /**
-     * Sprint 9 Step 2 requirement: {@link CandidateProfileRepositoryPort} (persistence access) and
-     * {@link CandidateProfileProvider} (the source AI vacancy analysis actually reads from) are
-     * different abstractions that both exist in the context without ambiguous injection or one
-     * displacing the other - registering the new adapter bean must not change which provider
-     * {@code JobAnalysisService} resolves.
+     * Sprint 9 Step 4 requirement: exactly one {@link CandidateProfileProvider} bean exists in
+     * the context, and {@link CandidateProfileRepositoryPort} (persistence access) remains a
+     * distinct abstraction it depends on - not an ambiguous second provider.
      */
     @Test
-    void contextLoads_withBothCandidateProfileProviderAndRepositoryPortRegisteredUnambiguously() {
+    void contextLoads_withExactlyOneCandidateProfileProviderBean() {
+        assertThat(applicationContext.getBeansOfType(CandidateProfileProvider.class)).hasSize(1);
         assertThat(candidateProfileRepositoryPort).isNotNull();
-        assertThat(candidateProfileProvider).isNotNull();
         assertThat(candidateProfileRepositoryPort).isNotSameAs(candidateProfileProvider);
     }
 
     /**
-     * Sprint 9 Step 3 requirement: with {@code candidate-profile.migration.mode} absent from both
-     * {@code application.yml} and the test configuration, {@link CandidateProfileMigrationRunner}
-     * must not even be constructed - proving, against the real application context (not just the
-     * isolated {@code ApplicationContextRunner} unit test), that normal startup performs no
-     * migration read or write and {@code ConfigurationCandidateProfileProvider} remains the only
-     * active Candidate Profile source.
+     * Sprint 9 Step 4 requirement: with {@code candidate-profile.migration.mode} absent from both
+     * {@code application.yml} and the test configuration, neither {@link
+     * CandidateProfileMigrationRunner} nor the YAML-backed {@link CandidateProfileMigrationSource}
+     * is even constructed - proving, against the real application context, that normal startup
+     * performs no migration read or write and never touches {@code candidate-profile.yml}.
      */
     @Test
-    void contextLoads_withMigrationPropertyAbsent_migrationRunnerBeanDoesNotExist() {
+    void contextLoads_withMigrationPropertyAbsent_migrationBeansDoNotExist() {
         assertThatExceptionOfType(NoSuchBeanDefinitionException.class)
                 .isThrownBy(() -> applicationContext.getBean(CandidateProfileMigrationRunner.class));
+        assertThatExceptionOfType(NoSuchBeanDefinitionException.class)
+                .isThrownBy(() -> applicationContext.getBean(CandidateProfileMigrationSource.class));
     }
 }
