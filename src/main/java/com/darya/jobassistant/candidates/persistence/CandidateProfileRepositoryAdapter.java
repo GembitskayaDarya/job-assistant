@@ -3,12 +3,15 @@ package com.darya.jobassistant.candidates.persistence;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileConcurrentModificationException;
+import com.darya.jobassistant.candidates.aggregate.CandidateProfilePreference;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.candidates.aggregate.CandidateSkill;
 import com.darya.jobassistant.candidates.entity.CandidateProfileEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileLanguageEntity;
+import com.darya.jobassistant.candidates.entity.CandidateProfilePreferenceEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileSkillEntity;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
+import com.darya.jobassistant.candidates.repository.CandidateProfilePreferenceRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileSkillRepository;
 import java.time.Clock;
@@ -20,25 +23,23 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * PostgreSQL/JPA adapter for {@link CandidateProfileRepositoryPort} - Sprint 9 Step 2. Not wired
- * into any runtime workflow: {@code ConfigurationCandidateProfileProvider} remains the active
- * source AI vacancy analysis reads from (see {@code CandidateProfileProvider}). This bean exists
- * purely as persistence access; nothing currently injects {@link CandidateProfileRepositoryPort}.
+ * PostgreSQL/JPA adapter for {@link CandidateProfileRepositoryPort} - Sprint 9 Step 2, extended by
+ * Step 3 with preferences. Not wired into any runtime workflow: {@code
+ * ConfigurationCandidateProfileProvider} remains the active source AI vacancy analysis reads from
+ * (see {@code CandidateProfileProvider}). This bean exists purely as persistence access; nothing
+ * currently injects {@link CandidateProfileRepositoryPort}.
  *
- * <p>Skills and languages are queried directly by {@code candidate_profile_id} rather than
- * through a collection on the parent - Step 1's entities are unidirectional {@code @ManyToOne}
- * (see {@code CandidateProfileEntity}'s javadoc), so there is no lazy parent-side collection that
- * could leak a proxy across this boundary.
+ * <p>Skills, languages, and preferences are queried directly by {@code candidate_profile_id}
+ * rather than through a collection on the parent - Step 1's entities are unidirectional {@code
+ * @ManyToOne} (see {@code CandidateProfileEntity}'s javadoc), so there is no lazy parent-side
+ * collection that could leak a proxy across this boundary.
  *
  * <p><b>Aggregate-level optimistic locking (Sprint 9 Step 2 correction):</b> an update always
  * performs {@link CandidateProfileRepository#updateIfVersionMatches}, an explicit, unconditional
  * version-checked write of every parent scalar field, regardless of whether any of them actually
- * changed. Skills and languages are part of this aggregate, so a save that changes only those must
- * still increment {@code version} and still be rejected when stale - relying on Hibernate's
- * ordinary scalar-field dirty checking would not guarantee either (an earlier version of this
- * adapter merged a detached entity instead, which only happened to increment the version because
- * it also - accidentally - left {@code updatedAt} unset, incidentally forcing Hibernate to always
- * consider the row dirty; that was never a deliberate guarantee and is not relied on here).
+ * changed. Skills, languages, and preferences are all part of this aggregate, so a save that
+ * changes only one of them must still increment {@code version} and still be rejected when stale -
+ * relying on Hibernate's ordinary scalar-field dirty checking would not guarantee either.
  */
 @Repository
 @RequiredArgsConstructor
@@ -47,6 +48,7 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
     private final CandidateProfileRepository candidateProfileRepository;
     private final CandidateProfileSkillRepository candidateProfileSkillRepository;
     private final CandidateProfileLanguageRepository candidateProfileLanguageRepository;
+    private final CandidateProfilePreferenceRepository candidateProfilePreferenceRepository;
     private final Clock clock;
 
     @Override
@@ -58,9 +60,10 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
     /**
      * Saves the parent first - see {@link #saveParent}; a {@code @Modifying} query executes
      * immediately when called, so a stale version is caught before any child row is touched,
-     * satisfying "a failed stale update does not modify skills or languages" - then fully replaces
-     * the skill and language sets. Everything runs inside this one transaction: a failure anywhere
-     * rolls back the parent update together with any child mutation already attempted.
+     * satisfying "a failed stale update does not modify skills, languages, or preferences" - then
+     * fully replaces the skill, language, and preference sets. Everything runs inside this one
+     * transaction: a failure anywhere rolls back the parent update together with any child
+     * mutation already attempted.
      */
     @Override
     @Transactional
@@ -68,6 +71,7 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
         CandidateProfileEntity savedParent = saveParent(profile);
         replaceSkills(savedParent, profile.skills());
         replaceLanguages(savedParent, profile.languages());
+        replacePreferences(savedParent, profile.preferences());
         return loadComplete(savedParent);
     }
 
@@ -96,6 +100,9 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
                 profile.remotePolicy(),
                 profile.salaryCurrency(),
                 profile.minimumSalary(),
+                profile.currentCountry(),
+                profile.relocationAllowed(),
+                profile.salaryExpectationNote(),
                 Instant.now(clock),
                 profile.version());
         if (updatedRows == 0) {
@@ -139,10 +146,23 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
         candidateProfileLanguageRepository.saveAll(toInsert);
     }
 
+    /** Same delete-then-insert strategy and flush-ordering rationale as {@link #replaceSkills}. */
+    private void replacePreferences(CandidateProfileEntity profile, List<CandidateProfilePreference> preferences) {
+        candidateProfilePreferenceRepository.deleteAll(
+                candidateProfilePreferenceRepository.findByCandidateProfileId(profile.getId()));
+        candidateProfilePreferenceRepository.flush();
+        List<CandidateProfilePreferenceEntity> toInsert = preferences.stream()
+                .map(preference -> CandidateProfilePersistenceMapper.toPreferenceEntity(preference, profile))
+                .toList();
+        candidateProfilePreferenceRepository.saveAll(toInsert);
+    }
+
     private CandidateProfileAggregate loadComplete(CandidateProfileEntity entity) {
         List<CandidateProfileSkillEntity> skills = candidateProfileSkillRepository.findByCandidateProfileId(entity.getId());
         List<CandidateProfileLanguageEntity> languages = candidateProfileLanguageRepository.findByCandidateProfileId(entity.getId());
-        return CandidateProfilePersistenceMapper.toDomain(entity, skills, languages);
+        List<CandidateProfilePreferenceEntity> preferences =
+                candidateProfilePreferenceRepository.findByCandidateProfileIdOrderByPriorityOrderAscIdAsc(entity.getId());
+        return CandidateProfilePersistenceMapper.toDomain(entity, skills, languages, preferences);
     }
 
     private CandidateProfileConcurrentModificationException concurrentModification(CandidateProfileAggregate profile) {

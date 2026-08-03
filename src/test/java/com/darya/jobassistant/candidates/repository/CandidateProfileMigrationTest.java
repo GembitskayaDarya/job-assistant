@@ -136,6 +136,94 @@ class CandidateProfileMigrationTest {
         }
     }
 
+    // ---- V18: candidate_profile_preference.priority_order (Sprint 9 Step 3 correction) ----
+
+    @Test
+    void v18_priorityOrder_rejectsNegativeValue() throws Exception {
+        migrateTo("18");
+        UUID profileId = insertProfile();
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            SQLException failure = assertThrows(SQLException.class, () -> statement.execute("""
+                    INSERT INTO candidate_profile_preference (id, candidate_profile_id, preference_type, preference_value, importance, priority_order)
+                    VALUES ('%s', '%s', 'CONTRACT_TYPE', 'B2B', 'PREFERRED', -1)
+                    """.formatted(UUID.randomUUID(), profileId)));
+            assertThat(failure.getMessage()).contains("chk_candidate_profile_preference_priority_order_non_negative");
+        }
+    }
+
+    @Test
+    void v18_priorityMatchesType_rejectsPriorityOrderOnNonOrderSignificantType() throws Exception {
+        migrateTo("18");
+        UUID profileId = insertProfile();
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            SQLException failure = assertThrows(SQLException.class, () -> statement.execute("""
+                    INSERT INTO candidate_profile_preference (id, candidate_profile_id, preference_type, preference_value, importance, priority_order)
+                    VALUES ('%s', '%s', 'ALLOWED_WORK_COUNTRY', 'Poland', NULL, 0)
+                    """.formatted(UUID.randomUUID(), profileId)));
+            assertThat(failure.getMessage()).contains("chk_candidate_profile_preference_priority_matches_type");
+        }
+    }
+
+    @Test
+    void v18_priorityMatchesType_rejectsOrderSignificantTypeWithoutPriorityOrder() throws Exception {
+        migrateTo("18");
+        UUID profileId = insertProfile();
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            SQLException failure = assertThrows(SQLException.class, () -> statement.execute("""
+                    INSERT INTO candidate_profile_preference (id, candidate_profile_id, preference_type, preference_value, importance, priority_order)
+                    VALUES ('%s', '%s', 'CONTRACT_TYPE', 'B2B', 'PREFERRED', NULL)
+                    """.formatted(UUID.randomUUID(), profileId)));
+            assertThat(failure.getMessage()).contains("chk_candidate_profile_preference_priority_matches_type");
+        }
+    }
+
+    @Test
+    void v18_uniquePriorityOrder_rejectsDuplicateWithinSameProfileAndType() throws Exception {
+        migrateTo("18");
+        UUID profileId = insertProfile();
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    INSERT INTO candidate_profile_preference (id, candidate_profile_id, preference_type, preference_value, importance, priority_order)
+                    VALUES ('%s', '%s', 'CONTRACT_TYPE', 'B2B', 'PREFERRED', 0)
+                    """.formatted(UUID.randomUUID(), profileId));
+            SQLException failure = assertThrows(SQLException.class, () -> statement.execute("""
+                    INSERT INTO candidate_profile_preference (id, candidate_profile_id, preference_type, preference_value, importance, priority_order)
+                    VALUES ('%s', '%s', 'CONTRACT_TYPE', 'Full-time', 'PREFERRED', 0)
+                    """.formatted(UUID.randomUUID(), profileId)));
+            assertThat(failure.getMessage()).contains("uk_candidate_profile_preference_profile_type_priority");
+        }
+    }
+
+    /** Standard SQL/PostgreSQL treats every NULL as distinct in a unique constraint - many rows of a non-order-significant type must not collide. */
+    @Test
+    void v18_multipleNullPriorityOrders_forSameProfileAndType_areAllAllowed() throws Exception {
+        migrateTo("18");
+        UUID profileId = insertProfile();
+
+        try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    INSERT INTO candidate_profile_preference (id, candidate_profile_id, preference_type, preference_value, importance, priority_order)
+                    VALUES ('%s', '%s', 'ALLOWED_WORK_COUNTRY', 'Poland', NULL, NULL)
+                    """.formatted(UUID.randomUUID(), profileId));
+            statement.execute("""
+                    INSERT INTO candidate_profile_preference (id, candidate_profile_id, preference_type, preference_value, importance, priority_order)
+                    VALUES ('%s', '%s', 'ALLOWED_WORK_COUNTRY', 'Germany', NULL, NULL)
+                    """.formatted(UUID.randomUUID(), profileId));
+        }
+
+        try (Connection connection = jdbcConnection();
+                Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(
+                        "SELECT COUNT(*) FROM candidate_profile_preference WHERE candidate_profile_id = '%s'".formatted(profileId))) {
+            assertThat(resultSet.next()).isTrue();
+            assertThat(resultSet.getLong(1)).isEqualTo(2L);
+        }
+    }
+
     private UUID insertProfile() throws Exception {
         UUID profileId = UUID.randomUUID();
         try (Connection connection = jdbcConnection(); Statement statement = connection.createStatement()) {

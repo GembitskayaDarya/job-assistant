@@ -45,6 +45,10 @@ public class CandidateProfileSkillEntity extends BaseEntity {
     @Column(length = 100)
     private String category;
 
+    /** Free-text, e.g. "10+ years commercial use" - added Step 3, not read by AI vacancy analysis. */
+    @Column(length = 500)
+    private String note;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private SkillProficiency proficiency;

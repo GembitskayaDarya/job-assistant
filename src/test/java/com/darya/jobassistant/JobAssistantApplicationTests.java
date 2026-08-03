@@ -1,13 +1,16 @@
 package com.darya.jobassistant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
+import com.darya.jobassistant.candidates.migration.CandidateProfileMigrationRunner;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 
 class JobAssistantApplicationTests extends AbstractIntegrationTest {
 
@@ -19,6 +22,9 @@ class JobAssistantApplicationTests extends AbstractIntegrationTest {
 
     @Autowired
     private CandidateProfileRepositoryPort candidateProfileRepositoryPort;
+
+    @Autowired
+    private org.springframework.context.ApplicationContext applicationContext;
 
     @Test
     void contextLoads() {
@@ -52,5 +58,19 @@ class JobAssistantApplicationTests extends AbstractIntegrationTest {
         assertThat(candidateProfileRepositoryPort).isNotNull();
         assertThat(candidateProfileProvider).isNotNull();
         assertThat(candidateProfileRepositoryPort).isNotSameAs(candidateProfileProvider);
+    }
+
+    /**
+     * Sprint 9 Step 3 requirement: with {@code candidate-profile.migration.mode} absent from both
+     * {@code application.yml} and the test configuration, {@link CandidateProfileMigrationRunner}
+     * must not even be constructed - proving, against the real application context (not just the
+     * isolated {@code ApplicationContextRunner} unit test), that normal startup performs no
+     * migration read or write and {@code ConfigurationCandidateProfileProvider} remains the only
+     * active Candidate Profile source.
+     */
+    @Test
+    void contextLoads_withMigrationPropertyAbsent_migrationRunnerBeanDoesNotExist() {
+        assertThatExceptionOfType(NoSuchBeanDefinitionException.class)
+                .isThrownBy(() -> applicationContext.getBean(CandidateProfileMigrationRunner.class));
     }
 }

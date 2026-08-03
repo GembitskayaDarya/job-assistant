@@ -12,21 +12,22 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 
 /**
- * Sprint 9 Step 1 persistence foundation for Candidate Profile (V16) - additive and currently
- * unused: {@code ConfigurationCandidateProfileProvider} remains the active runtime source of
- * {@code com.darya.jobassistant.candidates.CandidateProfile}, and nothing reads or writes this
- * entity yet.
+ * Sprint 9 Step 1 persistence foundation for Candidate Profile (V16), extended by Step 3 (V17)
+ * with {@link #currentCountry}/{@link #relocationAllowed}/{@link #salaryExpectationNote} - still
+ * additive and currently unused: {@code ConfigurationCandidateProfileProvider} remains the active
+ * runtime source of {@code com.darya.jobassistant.candidates.CandidateProfile}.
  *
  * <p>{@link #profileKey} is the stable, unique business key later steps will look profiles up by
  * (e.g. {@code "primary"}) - {@code id} stays a plain generated surrogate, never hardcoded or
  * treated as the "active profile" marker.
  *
- * <p>{@link CandidateProfileSkillEntity} and {@link CandidateProfileLanguageEntity} reference this
- * entity via a unidirectional {@code @ManyToOne} (no owning collection here), matching how every
- * other parent/child pair in this codebase is modeled (e.g. {@code Vacancy}/{@code
- * JobAnalysisEntity}, {@code Vacancy}/{@code VacancyRecommendationTaskEntity}): the database's
- * {@code ON DELETE CASCADE} (see V16) is solely responsible for removing child rows when a profile
- * is deleted, never JPA-level cascade/orphan-removal.
+ * <p>{@link CandidateProfileSkillEntity}, {@link CandidateProfileLanguageEntity}, and {@link
+ * CandidateProfilePreferenceEntity} reference this entity via a unidirectional {@code @ManyToOne}
+ * (no owning collection here), matching how every other parent/child pair in this codebase is
+ * modeled (e.g. {@code Vacancy}/{@code JobAnalysisEntity}, {@code Vacancy}/{@code
+ * VacancyRecommendationTaskEntity}): the database's {@code ON DELETE CASCADE} (see V16/V17) is
+ * solely responsible for removing child rows when a profile is deleted, never JPA-level
+ * cascade/orphan-removal.
  */
 @Entity
 @Table(name = "candidate_profile")
@@ -65,6 +66,15 @@ public class CandidateProfileEntity extends BaseEntity {
 
     @Column(name = "minimum_salary", precision = 12, scale = 2)
     private BigDecimal minimumSalary;
+
+    @Column(name = "current_country", length = 100)
+    private String currentCountry;
+
+    @Column(name = "relocation_allowed", nullable = false)
+    private boolean relocationAllowed;
+
+    @Column(name = "salary_expectation_note", length = 500)
+    private String salaryExpectationNote;
 
     @Version
     @Column(nullable = false)

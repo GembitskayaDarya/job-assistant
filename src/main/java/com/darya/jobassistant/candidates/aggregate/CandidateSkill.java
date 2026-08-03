@@ -7,13 +7,17 @@ import com.darya.jobassistant.candidates.SkillProficiency;
  * (in {@code candidates.aggregate}, not the top-level {@code candidates} package) deliberately
  * collides in simple name with the existing YAML-oriented {@code candidates.CandidateSkill}: the
  * two represent the same real-world concept from two different, not-yet-reconciled sources - see
- * {@link CandidateProfileAggregate}'s javadoc for why they are not merged yet. This type has no
- * {@code note} field (Step 1's schema has none) and an additional optional {@code category}
- * (Step 1's schema has one); the YAML type has the reverse.
+ * {@link CandidateProfileAggregate}'s javadoc for why they are not merged yet.
+ *
+ * <p>{@code note} (added Sprint 9 Step 3, backed by {@code candidate_profile_skill.note}) exists
+ * purely so the YAML-to-aggregate migration never silently discards {@code
+ * com.darya.jobassistant.candidates.CandidateSkill#note} - it is not read by AI vacancy analysis
+ * ({@code JobAnalysisService.formatSkills} only ever reads {@code name}/{@code proficiency}).
  */
 public record CandidateSkill(
         String name,
         String category,
+        String note,
         SkillProficiency proficiency
 ) {
     public CandidateSkill {
@@ -25,6 +29,7 @@ public record CandidateSkill(
             throw new IllegalArgumentException("Candidate profile skill proficiency must not be null");
         }
         category = trimToNull(category);
+        note = trimToNull(note);
     }
 
     private static String trimToNull(String value) {

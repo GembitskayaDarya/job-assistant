@@ -61,6 +61,9 @@ public interface CandidateProfileRepository extends JpaRepository<CandidateProfi
                 c.remotePolicy = :remotePolicy,
                 c.salaryCurrency = :salaryCurrency,
                 c.minimumSalary = :minimumSalary,
+                c.currentCountry = :currentCountry,
+                c.relocationAllowed = :relocationAllowed,
+                c.salaryExpectationNote = :salaryExpectationNote,
                 c.updatedAt = :updatedAt,
                 c.version = c.version + 1
             WHERE c.id = :id AND c.version = :expectedVersion
@@ -77,6 +80,9 @@ public interface CandidateProfileRepository extends JpaRepository<CandidateProfi
             @Param("remotePolicy") String remotePolicy,
             @Param("salaryCurrency") String salaryCurrency,
             @Param("minimumSalary") BigDecimal minimumSalary,
+            @Param("currentCountry") String currentCountry,
+            @Param("relocationAllowed") boolean relocationAllowed,
+            @Param("salaryExpectationNote") String salaryExpectationNote,
             @Param("updatedAt") Instant updatedAt,
             @Param("expectedVersion") long expectedVersion);
 }

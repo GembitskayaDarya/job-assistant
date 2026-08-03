@@ -203,13 +203,12 @@ switching anything at runtime:
       = current analysis-oriented projection JobAnalysisService actually reads from today,
         sourced from config/candidate-profile.yml via ConfigurationCandidateProfileProvider
 
-  future assembler (not implemented yet)
+  CandidateProfileAnalysisAssembler (Sprint 9 Step 3)
       CandidateProfileAggregate -> CandidateProfile
   ```
 
-  Building that assembler, and switching `JobAnalysisService` to consume it, is later Sprint 9
-  work — this step does not persist weighted preferences until a proper schema/mapping for them
-  is designed.
+  Switching `JobAnalysisService` to consume the assembler's output instead of YAML is later
+  Sprint 9 work.
 - `CandidateProfileRepositoryPort` (`findByProfileKey`, `save`) is the one repository port for the
   whole aggregate — skills and languages are parts of the Candidate Profile, not separate ports.
   Every save of an *existing* aggregate performs a deliberate, unconditional version-checked
@@ -225,6 +224,50 @@ switching anything at runtime:
 - This adapter is a registered Spring bean but is **not** wired into `JobAnalysisService` or any
   other runtime workflow — `ConfigurationCandidateProfileProvider` remains the only source AI
   vacancy analysis reads from. Provider switching and YAML data migration are later Sprint 9 work.
+
+Sprint 9 Step 3 added an explicit, idempotent, **opt-in only** migration of the real YAML profile
+into PostgreSQL, still without switching the runtime provider:
+
+- `V17__extend_candidate_profile_preferences.sql` adds `candidate_profile.current_country`/
+  `relocation_allowed`/`salary_expectation_note`, `candidate_profile_skill.note`, and a new
+  `candidate_profile_preference` child table (work arrangement, allowed work countries, contract
+  types, company type — each with an importance where the source model has one) so every field
+  `CandidatePreferences` carries has a lossless PostgreSQL home. V16 is unchanged. Two Step 1 flat
+  columns (`preferred_company_type`, `remote_policy`) are deliberately left unpopulated by this
+  migration — the new preference rows are the lossless, importance-aware source of truth for those
+  two concepts now, and `CandidateProfileAggregate`'s constructor rejects an aggregate that tries
+  to set both, so they can never silently disagree.
+- `CandidateProfileYamlImportMapper` (`CandidateProfile` → `CandidateProfileAggregate`) and
+  `CandidateProfileAnalysisAssembler` (the reverse) are separate, framework-free, stateless
+  classes — not one ambiguous bidirectional mapper. Language names (`"English"`) are normalized to
+  ISO codes (`en`) through a small explicit lookup table; an unrecognized name fails validation
+  rather than being silently dropped.
+- `CandidateProfileMigrationUseCase` (`candidates.migration`) runs `DRY_RUN` (read-only, zero
+  writes, ever) or `APPLY` (one atomic transaction: create-if-absent, reload, assemble back to the
+  analysis shape, and verify that round-trip is semantically identical to the original YAML before
+  committing — a mismatch rolls back everything). Statuses: `WOULD_CREATE`/`WOULD_NO_OP`/
+  `WOULD_CONFLICT` for `DRY_RUN`, `CREATED`/`NO_OP`/`CONFLICT` for `APPLY`, `VALIDATION_FAILED` for
+  either. **`APPLY` never overwrites an existing, different destination profile** — it reports
+  `CONFLICT` and leaves the database untouched. Comparison ignores database ids, timestamps,
+  persistence version, and any ordering that carries no business meaning.
+- `CandidateProfileMigrationRunner` is disabled by default and only runs once, right after startup
+  finishes (never delaying or blocking it):
+
+  ```bash
+  # Report only - prints what an APPLY would do, writes nothing:
+  CANDIDATE_PROFILE_MIGRATION_MODE=DRY_RUN ./gradlew bootRun
+
+  # Actually create the "primary" PostgreSQL profile from your current YAML file:
+  CANDIDATE_PROFILE_MIGRATION_MODE=APPLY ./gradlew bootRun
+  ```
+
+  (or set `candidate-profile.migration.mode: DRY_RUN`/`APPLY` directly in your environment
+  config). Leaving the property unset, or set to `OFF`, keeps the runner bean from doing anything
+  — `OFF` is the default and requires no configuration at all.
+- **Rollback**: if the application is rolled back after a successful `APPLY`, nothing needs to be
+  undone — the previous version keeps using YAML exactly as before, and the imported PostgreSQL
+  rows simply sit unused until a later cutover. No destructive database rollback is required or
+  performed automatically.
 
 ### Default startup
 
