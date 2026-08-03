@@ -343,6 +343,45 @@ CANDIDATE_PROFILE_MIGRATION_MODE=APPLY ./gradlew bootRun
 Useful for keeping your profile entirely outside the repository, or migrating from multiple
 source files. Has no effect outside migration mode.
 
+### Career History (persistence foundation)
+
+Sprint 9 Step 5 added an additive PostgreSQL schema for detailed Career History (companies,
+positions, position-level responsibilities/achievements, projects, and project-level
+responsibilities/achievements/technologies - migration `V19__create_career_history.sql`; entities
+under `com.darya.jobassistant.careerhistory.entity`, internal repositories under
+`com.darya.jobassistant.careerhistory.repository`). This is a persistence foundation only:
+
+- Career History is a **separate aggregate** from Candidate Profile, associated one-to-one and
+  optional: a Candidate Profile may have zero or one Career History (`career_history` has a
+  `UNIQUE` constraint on `candidate_profile_id`), and a Career History cannot exist without a
+  Candidate Profile (`ON DELETE CASCADE`, matching the same cascade convention used throughout
+  `candidate_profile`'s own child tables). Candidate Profile's existing JPA model is untouched -
+  no bidirectional collection was added to it.
+- **Nothing reads or writes these tables yet.** There is no `CareerHistoryRepositoryPort`, no
+  application service, no Telegram command, no REST endpoint, and no import/migration runner -
+  all later Sprint 9 work. No row is seeded anywhere; the application starts exactly as before
+  with Career History entirely absent.
+- `CandidateProfileStartupValidator`, `PersistentCandidateProfileProvider`, and
+  `JobAnalysisService` are all unmodified by this step - AI vacancy-match analysis does not use
+  Career History data yet, and Candidate Profile remains the only mandatory candidate data source.
+- Ordering (positions, projects, and every bullet/technology child) is explicit `display_order`
+  business data, never physical row order - the database enforces uniqueness per parent but not
+  contiguity (`0, 1, 2, ...` may have gaps).
+- Every relationship in the ownership chain (`candidate_profile → career_history → career_company
+  → career_position → {responsibility, achievement, career_project → {responsibility, achievement,
+  technology}}`) is unidirectional `@ManyToOne` (root → Candidate Profile is `@OneToOne`, its real
+  cardinality) with database-level `ON DELETE CASCADE` - no JPA-level cascade or parent-side
+  collection, matching `CandidateProfileEntity`'s established convention.
+- `career_history.version` is the only real optimistic-locking token added at this step. A
+  child-only change does not yet increment it - that aggregate-level guarantee (following
+  `CandidateProfileRepositoryAdapter`'s pattern) is Step 6 work, once a
+  `CareerHistoryRepositoryPort`/adapter exists.
+- All test data is fictional (`Example Systems`, `Demo Backend Engineer`, `Billing Platform`, ...)
+  - no real employer, client, project, or salary appears anywhere in the codebase or tests.
+
+Domain model, `CareerHistoryRepositoryPort`, and the import workflow are Step 6+ work. Manually
+filling in real Career History data is intentionally postponed until the end of Sprint 9.
+
 ## How to run
 
 ### Prerequisites

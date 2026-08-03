@@ -9,6 +9,7 @@ import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPor
 import com.darya.jobassistant.candidates.migration.CandidateProfileMigrationRunner;
 import com.darya.jobassistant.candidates.migration.CandidateProfileMigrationSource;
 import com.darya.jobassistant.candidates.runtime.PersistentCandidateProfileProvider;
+import com.darya.jobassistant.careerhistory.repository.CareerHistoryRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,9 @@ class JobAssistantApplicationTests extends AbstractIntegrationTest {
 
     @Autowired
     private CandidateProfileRepositoryPort candidateProfileRepositoryPort;
+
+    @Autowired
+    private CareerHistoryRepository careerHistoryRepository;
 
     @Autowired
     private org.springframework.context.ApplicationContext applicationContext;
@@ -71,5 +75,19 @@ class JobAssistantApplicationTests extends AbstractIntegrationTest {
                 .isThrownBy(() -> applicationContext.getBean(CandidateProfileMigrationRunner.class));
         assertThatExceptionOfType(NoSuchBeanDefinitionException.class)
                 .isThrownBy(() -> applicationContext.getBean(CandidateProfileMigrationSource.class));
+    }
+
+    /**
+     * Sprint 9 Step 5 requirements 36-39, folded in here rather than kept as a separate {@code
+     * CareerHistoryRuntimeCompatibilityTest} (Step 5 correction): that class had byte-for-byte
+     * identical Spring configuration to this one, so it added a second, entirely redundant full
+     * application context/container lifecycle for no additional coverage - this class already
+     * proves the context starts normally with a valid, seeded Candidate Profile (see {@code
+     * AbstractIntegrationTest}), which is exactly the "starts normally with Career History absent"
+     * condition, since nothing here seeds or requires one.
+     */
+    @Test
+    void contextLoads_withCareerHistoryAbsent_noRowIsAutomaticallyCreated() {
+        assertThat(careerHistoryRepository.findAll()).isEmpty();
     }
 }

@@ -18,12 +18,15 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Sprint 9 Step 4 correction requirement 4: proves the test-only Candidate Profile seed
- * ({@code src/test/resources/db/testdata/V900__seed_test_primary_candidate_profile.sql}) never
- * reaches production Flyway locations. Deliberately does not extend {@code AbstractIntegrationTest}
- * (whose {@code spring.flyway.locations} override adds {@code classpath:db/testdata}) - this test
- * relies on the plain default from {@code application.yml} ({@code classpath:db/migration} only),
- * exactly what a real deployment uses.
+ * Sprint 9 Step 4 correction requirement 4 (extended by Step 5 requirements 40-42, and by Step 5's
+ * correction requirement 7-8 for V20): proves the test-only Candidate Profile seed ({@code
+ * src/test/resources/db/testdata/V900__seed_test_primary_candidate_profile.sql}) never reaches
+ * production Flyway locations, and that the complete migration chain - now through V20's
+ * career_company.display_order - applies cleanly on a fresh database with no Career History data
+ * inserted. Deliberately does not extend {@code AbstractIntegrationTest} (whose {@code
+ * spring.flyway.locations} override adds {@code classpath:db/testdata}) - this test relies on the
+ * plain default from {@code application.yml} ({@code classpath:db/migration} only), exactly what
+ * a real deployment uses.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -38,7 +41,7 @@ class CandidateProfileMigrationLocationsIsolationTest {
     private DataSource dataSource;
 
     @Test
-    void productionFlywayLocations_applyV16ThroughV18_withoutTheTestOnlySeed() throws Exception {
+    void productionFlywayLocations_applyTheFullChainThroughV20_withoutTheTestOnlySeed() throws Exception {
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement();
              ResultSet resultSet = statement.executeQuery(
@@ -47,7 +50,7 @@ class CandidateProfileMigrationLocationsIsolationTest {
             while (resultSet.next()) {
                 appliedVersions.add(resultSet.getString("version"));
             }
-            assertThat(appliedVersions).contains("16", "17", "18");
+            assertThat(appliedVersions).contains("16", "17", "18", "19", "20");
             assertThat(appliedVersions).doesNotContain("900");
         }
 
@@ -56,6 +59,21 @@ class CandidateProfileMigrationLocationsIsolationTest {
              ResultSet resultSet = statement.executeQuery("SELECT count(*) FROM candidate_profile")) {
             resultSet.next();
             // No profile is seeded in production Flyway locations - this table stays empty.
+            assertThat(resultSet.getInt(1)).isZero();
+        }
+
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT count(*) FROM career_history")) {
+            resultSet.next();
+            // Requirement 41: no Career History data is inserted by production migrations either.
+            assertThat(resultSet.getInt(1)).isZero();
+        }
+
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT count(*) FROM career_company")) {
+            resultSet.next();
             assertThat(resultSet.getInt(1)).isZero();
         }
     }
