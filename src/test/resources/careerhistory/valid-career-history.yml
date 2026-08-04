@@ -1,0 +1,44 @@
+schemaVersion: 1
+candidateProfileKey: primary
+expectedVersion:
+companies:
+  - key: example-systems
+    name: Example Systems
+    website: https://example-systems.example.com
+    industry: Fintech
+    location: Berlin, Germany
+    description: A fictional payments company used only in tests.
+    displayOrder: 0
+    positions:
+      - key: backend-engineer
+        title: Demo Backend Engineer
+        employmentType: Full-time
+        location: Berlin, Germany
+        workArrangement: Remote
+        startDate: 2021-03-01
+        endDate:
+        currentRole: true
+        description: Fictional role used only in tests.
+        displayOrder: 0
+        responsibilities:
+          - text: Designed fictional backend services.
+            displayOrder: 0
+        achievements:
+          - text: Improved a fictional metric by 40%.
+            displayOrder: 0
+        projects:
+          - key: billing-platform
+            name: Billing Platform
+            description: A fictional billing platform.
+            startDate: 2021-06-01
+            endDate:
+            displayOrder: 0
+            responsibilities: []
+            achievements: []
+            technologies:
+              - name: Java
+                category: Language
+                displayOrder: 0
+              - name: PostgreSQL
+                category: Database
+                displayOrder: 1

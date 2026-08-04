@@ -395,7 +395,106 @@ aggregate and repository adapter on top of that schema:
 - All test data is fictional (`Example Systems`, `Demo Backend Engineer`, `Billing Platform`, ...)
   - no real employer, client, project, or salary appears anywhere in the codebase or tests.
 
-The import workflow, and manually filling in real Career History data, remain later Sprint 9 work.
+#### Import workflow (Sprint 9 Step 7)
+
+Career History can be populated from an external YAML file via an explicit, off-by-default import
+workflow, split by dependency direction into three layers - not a single "framework-free package":
+
+```text
+Framework-free domain/import components (com.darya.jobassistant.careerhistory.importing):
+- models (CareerHistoryDiff, CareerHistoryImportMode/Status/Result)
+- ports (CareerHistoryImportSource interface)
+- source DTOs (careerhistory.importing.source - CareerHistoryImportDocument and its children)
+- validation (CareerHistoryImportValidator, CareerHistoryImportConstraints)
+- mapping (CareerHistoryImportMapper, CareerHistoryImportIdGenerator)
+- semantic comparison (CareerHistorySemanticComparator)
+- fingerprint and diff (CareerHistoryFingerprint)
+- result/exception types (CareerHistoryImportParityException,
+  CareerHistoryImportCandidateProfileNotFoundException, CareerHistoryImportSourceException,
+  CareerHistoryImportValidationException)
+
+Spring-coupled application service (also com.darya.jobassistant.careerhistory.importing):
+- CareerHistoryImportUseCase - uses Spring's TransactionTemplate/PlatformTransactionManager
+  directly for explicit transaction boundaries, matching CandidateProfileMigrationUseCase's
+  convention. Not framework-free in the strictest sense, but never a web/event/
+  component-scanning Spring adapter type either - see CareerHistoryImportingBoundaryArchitectureTest,
+  which enforces this exact allowlisted boundary.
+
+Spring startup adapter (com.darya.jobassistant.careerhistory.config):
+- CareerHistoryImportRunner - an ApplicationRunner (ordered via StartupOrder.CAREER_HISTORY_IMPORT,
+  strictly after CandidateProfileStartupValidator's StartupOrder.CANDIDATE_PROFILE_VALIDATION),
+  plus every other Spring adapter in this workflow: typed properties (CareerHistoryImportProperties),
+  the DRY_RUN/APPLY activation condition (CareerHistoryImportActiveCondition), the YAML source
+  adapter (YamlCareerHistoryImportSource), and the startup exclusivity check
+  (CareerHistoryStartupExclusivityValidator).
+```
+
+- **Modes**: `career-history.import.mode` is `OFF` (default - no source/runner bean exists, no
+  file is ever read), `DRY_RUN` (plans and reports, never writes), or `APPLY` (writes when safe).
+  Same positive-match `@Conditional` pattern as Candidate Profile migration - the source and
+  runner beans exist only for `DRY_RUN`/`APPLY`, never for `OFF` or an absent property, and an
+  unrecognized value fails configuration binding immediately.
+- **Source file**: `career-history.import.source` (a Spring `Resource` location, e.g.
+  `file:./config/career-history.yml`), parsed with a dedicated, strict Jackson YAML mapper -
+  unknown fields, duplicate keys, and malformed YAML all fail parsing outright, and the file is
+  read into a bounded buffer capped by `career-history.import.max-file-size-bytes` (default 5 MiB)
+  before parsing is attempted. `config/career-history.yml` is gitignored and never committed; only
+  the fictional `config/examples/career-history-import.example.yml` template is tracked - copy it
+  to get started (see that file's header comment).
+- **Stable import keys**: every company/position/project carries an explicit `key`
+  (`[a-z0-9][a-z0-9._-]*`, max 100 chars, unique among its siblings) - identity for import
+  purposes, never a display value. Responsibilities/achievements/technologies have no `key`; their
+  identity is derived from their parent's key path plus explicit `displayOrder` (technologies also
+  fold in their case-normalized name). Renaming a company/position/project without changing its
+  `key` preserves its database id across a re-import; changing the `key` creates a new one.
+- **Validation**: every field is checked against the actual V19/V20 database column
+  lengths/constraints (`CareerHistoryImportConstraints` mirrors them exactly - one source of
+  truth) before any domain object is built, collecting every independent violation it finds into
+  one `CareerHistoryImportValidationException` with safe, path-addressed messages (e.g.
+  `companies[0].positions[1].title: length must be <= 255`) - never full field values.
+- **Decision matrix**, based on comparing the source's SHA-256 semantic fingerprint
+  (`CareerHistoryFingerprint` - ignores ids/version/timestamps, so a fresh reload of unchanged data
+  always fingerprints identically) against the current destination:
+
+  | Destination           | DRY_RUN         | APPLY      |
+  |------------------------|-----------------|------------|
+  | Absent, no `expectedVersion` | `WOULD_CREATE`  | `CREATED`  |
+  | Absent, `expectedVersion` set | `WOULD_CONFLICT` | `CONFLICT` |
+  | Exists, semantically equal | `WOULD_NO_OP`   | `NO_OP` (no write) |
+  | Exists, differs, `expectedVersion` matches current version | `WOULD_UPDATE`  | `UPDATED`  |
+  | Exists, differs, `expectedVersion` missing/stale | `WOULD_CONFLICT` | `CONFLICT` (no write) |
+
+  To update an existing Career History: run `DRY_RUN` first, read the reported
+  `resultingVersion`/current destination version from its result/log line, set that value as
+  `expectedVersion` in the source YAML, then run `APPLY`.
+- **Transactions and parity**: `DRY_RUN` runs read-only; `APPLY` runs in one
+  `PROPAGATION_REQUIRES_NEW`/`REPEATABLE_READ` transaction - resolve the candidate profile, load
+  the destination, decide, save only when required, reload (the port's own `save` already returns
+  a fresh post-save read), and verify the reloaded graph's fingerprint matches the proposed source
+  fingerprint before committing. A mismatch throws `CareerHistoryImportParityException`, which
+  rolls the whole transaction back.
+- **Concurrency**: a losing concurrent create/update attempt never retries inside its own failed
+  transaction (this codebase never reuses a transaction after a constraint violation) - it catches
+  only the two focused, already-framework-free race exceptions
+  (`CareerHistoryAlreadyExistsException`, `CareerHistoryConcurrentModificationException`) and
+  resolves the outcome in a brand-new read-only transaction: `NO_OP` if the winner's result already
+  matches the loser's intended content, `CONFLICT` otherwise.
+- **Privacy**: the runner logs only mode/status/fingerprints/version numbers/diff *counts* - never
+  full company/position/project/bullet/technology content, and never the raw source document.
+
+```bash
+# Safe DRY_RUN, every other optional/external component explicitly disabled:
+TELEGRAM_ENABLED=false \
+JOB_MONITORING_ENABLED=false \
+JOBSOURCE_INGESTION_ENABLED=false \
+CANDIDATE_PROFILE_MIGRATION_MODE=OFF \
+CAREER_HISTORY_IMPORT_MODE=DRY_RUN \
+CAREER_HISTORY_IMPORT_SOURCE=file:./config/career-history.yml \
+./gradlew bootRun
+```
+
+Manually filling in real Career History data remains the final Sprint 9 step. Career History is
+not yet consumed by AI vacancy-match analysis (`JobAnalysisService` is unmodified).
 
 ## How to run
 
@@ -484,6 +583,9 @@ directly):
 | `CANDIDATE_PROFILE_PATH`         | `./config/candidate-profile.yml` | Path to the candidate profile YAML file - migration-only, see [Candidate profile](#candidate-profile) |
 | `CANDIDATE_PROFILE_MIGRATION_MODE` | *(unset, i.e. `OFF`)* | `DRY_RUN`/`APPLY` runs the explicit one-time YAML→PostgreSQL migration on startup; unset/`OFF` runs normal PostgreSQL runtime |
 | `CANDIDATE_PROFILE_RUNTIME_PROFILE_KEY` | `primary`      | Business key `PersistentCandidateProfileProvider` looks the runtime profile up by |
+| `CAREER_HISTORY_IMPORT_MODE`     | `OFF`           | `DRY_RUN`/`APPLY` runs the explicit Career History import on startup; `OFF` (default) reads no source file, see [Career History](#career-history) |
+| `CAREER_HISTORY_IMPORT_SOURCE`   | `file:./config/career-history.yml` | Spring `Resource` location of the import YAML - import-only |
+| `CAREER_HISTORY_IMPORT_MAX_FILE_SIZE_BYTES` | `5242880` (5 MiB) | Maximum import source file size before it is rejected |
 | `DB_HOST`                        | `localhost`     | PostgreSQL host                                   |
 | `DB_PORT`                        | `5432`          | PostgreSQL port                                   |
 | `DB_NAME`                        | `job_assistant` | Database name                                     |

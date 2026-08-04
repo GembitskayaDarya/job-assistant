@@ -1,0 +1,98 @@
+# Career History import source - EXAMPLE / TEMPLATE ONLY.
+#
+# Every value below is fictional (Example Systems, Zenith Robotics, Demo Backend Engineer, ...) -
+# this file is tracked in git and must stay that way. Your real Career History belongs in
+# config/career-history.yml instead (see .gitignore - that exact path is ignored; this example
+# file is explicitly re-included so it stays tracked).
+#
+# Usage:
+#   cp config/examples/career-history-import.example.yml config/career-history.yml
+#   # edit config/career-history.yml with your own real career data
+#   CAREER_HISTORY_IMPORT_MODE=DRY_RUN CAREER_HISTORY_IMPORT_SOURCE=file:./config/career-history.yml ./gradlew bootRun
+#
+# See README.md's "Career History import" section for the full DRY_RUN/APPLY workflow, the
+# expected-version update rule, and what each field means.
+
+schemaVersion: 1
+
+# Must match an existing candidate_profile.profile_key row - import never creates one automatically.
+candidateProfileKey: primary
+
+# Leave unset (or omit entirely) for a first import (create). Set it to the version reported by a
+# prior DRY_RUN/APPLY result when you intend to update an existing Career History - see README.md.
+expectedVersion:
+
+companies:
+  - key: example-systems
+    name: Example Systems
+    website: https://example-systems.example.com
+    industry: Fintech
+    location: Berlin, Germany
+    description: A fictional payments infrastructure company, used only to illustrate this file's shape.
+    displayOrder: 0
+    positions:
+      - key: backend-engineer
+        title: Demo Backend Engineer
+        employmentType: Full-time
+        location: Berlin, Germany (Remote)
+        workArrangement: Remote
+        startDate: 2021-03-01
+        endDate:
+        currentRole: true
+        description: Fictional role illustrating the position-level fields this import format supports.
+        displayOrder: 0
+        responsibilities:
+          - text: Designed and maintained fictional backend services for a demo payments platform.
+            displayOrder: 0
+          - text: Collaborated with a fictional product team on a demo API roadmap.
+            displayOrder: 1
+        achievements:
+          - text: Reduced a fictional demo pipeline's processing time by 40%.
+            displayOrder: 0
+        projects:
+          - key: billing-platform
+            name: Billing Platform
+            description: A fictional internal billing platform rewrite, used only as a template example.
+            startDate: 2021-06-01
+            endDate: 2022-12-01
+            displayOrder: 0
+            responsibilities:
+              - text: Implemented a fictional idempotent billing pipeline.
+                displayOrder: 0
+            achievements:
+              - text: Cut fictional billing reconciliation errors by half.
+                displayOrder: 0
+            technologies:
+              - name: Java
+                category: Language
+                displayOrder: 0
+              - name: PostgreSQL
+                category: Database
+                displayOrder: 1
+              - name: Kafka
+                category: Messaging
+                displayOrder: 2
+
+  - key: zenith-robotics
+    name: Zenith Robotics
+    website:
+    industry: Robotics
+    location: Warsaw, Poland
+    description: A second fictional company, illustrating an earlier, already-ended position.
+    displayOrder: 1
+    positions:
+      - key: platform-engineer
+        title: Demo Platform Engineer
+        employmentType: Full-time
+        location: Warsaw, Poland
+        workArrangement: Hybrid
+        startDate: 2018-09-01
+        endDate: 2021-02-15
+        currentRole: false
+        description: Fictional earlier role at a second fictional company.
+        displayOrder: 0
+        responsibilities:
+          - text: Operated a fictional demo deployment platform.
+            displayOrder: 0
+        achievements: []
+        projects: []

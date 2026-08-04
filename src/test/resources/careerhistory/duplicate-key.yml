@@ -1,0 +1,12 @@
+schemaVersion: 1
+candidateProfileKey: primary
+companies:
+  - key: example-systems
+    name: Example Systems
+    displayOrder: 0
+    positions: []
+  - key: zenith-robotics
+    name: Zenith Robotics
+    displayOrder: 1
+    positions: []
+    positions: []

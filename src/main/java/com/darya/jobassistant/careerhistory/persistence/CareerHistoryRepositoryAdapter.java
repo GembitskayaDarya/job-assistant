@@ -32,6 +32,7 @@ import com.darya.jobassistant.careerhistory.repository.CareerProjectRepository;
 import com.darya.jobassistant.careerhistory.repository.CareerProjectResponsibilityRepository;
 import com.darya.jobassistant.careerhistory.repository.CareerProjectTechnologyRepository;
 import jakarta.persistence.EntityManager;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -40,6 +41,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -138,18 +140,64 @@ public class CareerHistoryRepositoryAdapter implements CareerHistoryRepositoryPo
         }
     }
 
+    /** PostgreSQL's SQLSTATE for {@code serialization_failure} - see {@link #isSerializationFailure}. */
+    private static final String SERIALIZATION_FAILURE_SQLSTATE = "40001";
+
     /**
      * Explicit, unconditional version-checked write of the root row - always via {@link
      * CareerHistoryRepository#updateVersionIfMatches}, never Hibernate's own dirty checking. A
      * stale {@code expectedVersion} fails here, before {@link #deleteExistingGraph} ever runs.
+     *
+     * <p>Sprint 9 Step 7 correction: two transactions racing to update the exact same row at the
+     * exact same starting version do not always resolve as "0 rows updated" - under {@code
+     * REPEATABLE_READ}, PostgreSQL itself can reject the second transaction's {@code UPDATE}
+     * outright with a {@code 40001 serialization_failure} ("could not serialize access due to
+     * concurrent update") once the first transaction commits its own conflicting change to that
+     * row first. This is exactly the same "another transaction changed this row first" condition
+     * the {@code updatedRows == 0} branch already reports, so it is translated identically -
+     * <em>only</em> when the SQLSTATE is confirmed to be {@code 40001}.
+     *
+     * <p>The translation is deliberately narrow and SQLSTATE-based, not exception-type-based:
+     * against this exact stack (Hibernate 6.6 + this project's pinned PostgreSQL driver), Hibernate's
+     * own {@code SQLStateConversionDelegate} maps the {@code 40001} serialization failure to
+     * {@code org.hibernate.exception.LockAcquisitionException}, which Spring's {@code
+     * HibernateJpaDialect} in turn converts to {@link org.springframework.dao.CannotAcquireLockException}
+     * - the exact same Spring exception <em>class</em> a genuine PostgreSQL lock-timeout/
+     * lock-not-available failure (SQLSTATE {@code 55P03}) would also surface as. Catching by
+     * exception type alone would therefore either miss the real serialization race or
+     * misclassify an unrelated lock timeout as one; only the underlying SQLSTATE, read from the
+     * deepest {@link SQLException} via {@link DataAccessException#getMostSpecificCause()} (the
+     * same idiom {@link #isCandidateProfileConflict} already uses for the analogous constraint-name
+     * check), reliably distinguishes them. Never matched by exception message text.
      */
     private CareerHistoryEntity updateRoot(CareerHistoryAggregate careerHistory) {
-        int updatedRows = careerHistoryRepository.updateVersionIfMatches(
-                careerHistory.id(), careerHistory.candidateProfileId(), Instant.now(clock), careerHistory.version());
+        int updatedRows;
+        try {
+            updatedRows = careerHistoryRepository.updateVersionIfMatches(
+                    careerHistory.id(), careerHistory.candidateProfileId(), Instant.now(clock), careerHistory.version());
+        } catch (DataAccessException e) {
+            if (!isSerializationFailure(e)) {
+                throw e;
+            }
+            throw concurrentModification(careerHistory);
+        }
         if (updatedRows == 0) {
             throw concurrentModification(careerHistory);
         }
         return careerHistoryRepository.findById(careerHistory.id()).orElseThrow(() -> concurrentModification(careerHistory));
+    }
+
+    /**
+     * {@code true} only when {@code exception}'s deepest cause is a {@link SQLException} whose
+     * {@link SQLException#getSQLState()} is exactly {@value #SERIALIZATION_FAILURE_SQLSTATE} - a
+     * lock timeout ({@code 55P03}), a deadlock ({@code 40P01}), or any {@link DataAccessException}
+     * with no {@link SQLException} cause at all (e.g. a connection-level failure) all return
+     * {@code false} here and are left to propagate unchanged from {@link #updateRoot}.
+     */
+    private boolean isSerializationFailure(DataAccessException exception) {
+        Throwable mostSpecificCause = exception.getMostSpecificCause();
+        return mostSpecificCause instanceof SQLException sqlException
+                && SERIALIZATION_FAILURE_SQLSTATE.equals(sqlException.getSQLState());
     }
 
     /**

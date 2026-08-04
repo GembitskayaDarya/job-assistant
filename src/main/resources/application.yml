@@ -177,6 +177,17 @@ vacancy-canonical-url-backfill:
   mode: ${VACANCY_CANONICAL_URL_BACKFILL_MODE:DRY_RUN}
   batch-size: ${VACANCY_CANONICAL_URL_BACKFILL_BATCH_SIZE:500}
 
+# Sprint 9 Step 7: explicit, off-by-default Career History import workflow. See
+# YamlCareerHistoryImportSource/CareerHistoryImportRunner - both beans exist only for
+# mode=DRY_RUN/APPLY (CareerHistoryImportActiveCondition), never for the OFF default, so normal
+# runtime never reads career-history.yml. That file holds real personal data and must never be
+# committed - see .gitignore and config/examples/career-history-import.example.yml.
+career-history:
+  import:
+    mode: ${CAREER_HISTORY_IMPORT_MODE:OFF}
+    source: ${CAREER_HISTORY_IMPORT_SOURCE:file:./config/career-history.yml}
+    max-file-size-bytes: ${CAREER_HISTORY_IMPORT_MAX_FILE_SIZE_BYTES:5242880}
+
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}

@@ -1,12 +1,12 @@
 package com.darya.jobassistant.candidates.runtime;
 
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.config.StartupOrder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -34,11 +34,14 @@ import org.springframework.stereotype.Component;
  *
  * <h2>Ordering</h2>
  *
- * {@code @Order(Ordered.HIGHEST_PRECEDENCE)}: this is the only {@code ApplicationRunner}/{@code
- * CommandLineRunner} bean in the application (see the class-level search performed for this
- * correction), so there is no real ordering conflict to resolve - the explicit order simply
- * documents the intent that Candidate Profile validation must run before any startup runner added
- * later, rather than relying on Spring's unspecified default ordering among same-precedence beans.
+ * {@code @Order(}{@link StartupOrder#CANDIDATE_PROFILE_VALIDATION}{@code )}: Sprint 9 Step 7's
+ * final correction introduced {@link StartupOrder} as the single shared source of truth for
+ * {@code ApplicationRunner} ordering across the whole application, once a second such runner
+ * ({@code CareerHistoryImportRunner}) existed. Candidate Profile validation must always run first
+ * - a Career History import targeting a candidate profile that turned out not to exist would never
+ * be meaningful - so this class is pinned to {@link StartupOrder#CANDIDATE_PROFILE_VALIDATION}
+ * ({@link org.springframework.core.Ordered#HIGHEST_PRECEDENCE}), the lowest (highest-priority)
+ * value any startup runner in this application uses.
  *
  * <h2>Disabled during explicit migration</h2>
  *
@@ -50,7 +53,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(StartupOrder.CANDIDATE_PROFILE_VALIDATION)
 @ConditionalOnProperty(prefix = "candidate-profile.migration", name = "mode", havingValue = "OFF", matchIfMissing = true)
 public class CandidateProfileStartupValidator implements ApplicationRunner {
 

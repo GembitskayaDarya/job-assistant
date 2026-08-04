@@ -44,6 +44,11 @@ dependencies {
     implementation 'org.flywaydb:flyway-core'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 
+    // Career History import source (Sprint 9 Step 7) - strict YAML parsing via Jackson, the
+    // project-standard JSON/object mapper already brought in transitively by every Spring Boot
+    // starter here. Version resolved by the Spring Boot BOM, matching every other Jackson module.
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml'
+
     implementation 'org.telegram:telegrambots-springboot-longpolling-starter:10.1.0'
     implementation 'org.telegram:telegrambots-client:10.1.0'
 
