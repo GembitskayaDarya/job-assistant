@@ -343,13 +343,15 @@ CANDIDATE_PROFILE_MIGRATION_MODE=APPLY ./gradlew bootRun
 Useful for keeping your profile entirely outside the repository, or migrating from multiple
 source files. Has no effect outside migration mode.
 
-### Career History (persistence foundation)
+### Career History
 
 Sprint 9 Step 5 added an additive PostgreSQL schema for detailed Career History (companies,
 positions, position-level responsibilities/achievements, projects, and project-level
-responsibilities/achievements/technologies - migration `V19__create_career_history.sql`; entities
-under `com.darya.jobassistant.careerhistory.entity`, internal repositories under
-`com.darya.jobassistant.careerhistory.repository`). This is a persistence foundation only:
+responsibilities/achievements/technologies - migrations `V19__create_career_history.sql`/
+`V20__add_career_company_display_order.sql`; JPA entities under
+`com.darya.jobassistant.careerhistory.entity`, internal repositories under
+`com.darya.jobassistant.careerhistory.repository`). Sprint 9 Step 6 added the clean domain
+aggregate and repository adapter on top of that schema:
 
 - Career History is a **separate aggregate** from Candidate Profile, associated one-to-one and
   optional: a Candidate Profile may have zero or one Career History (`career_history` has a
@@ -357,30 +359,43 @@ under `com.darya.jobassistant.careerhistory.entity`, internal repositories under
   Candidate Profile (`ON DELETE CASCADE`, matching the same cascade convention used throughout
   `candidate_profile`'s own child tables). Candidate Profile's existing JPA model is untouched -
   no bidirectional collection was added to it.
-- **Nothing reads or writes these tables yet.** There is no `CareerHistoryRepositoryPort`, no
-  application service, no Telegram command, no REST endpoint, and no import/migration runner -
-  all later Sprint 9 work. No row is seeded anywhere; the application starts exactly as before
-  with Career History entirely absent.
+- `com.darya.jobassistant.careerhistory.aggregate` is the framework-free domain model
+  (`CareerHistoryAggregate`, `CareerCompany`, `CareerPosition`, `CareerProject`,
+  `CareerResponsibility`, `CareerAchievement`, `CareerTechnology`) - immutable records, no Spring/
+  JPA imports, every collection defensively copied, sorted by `display_order`, and validated
+  (blank text, negative order, duplicate name/order, position/project date consistency) before an
+  invalid aggregate can even be constructed.
+- **`CareerHistoryRepositoryPort`** (`findByCandidateProfileId`, `save`) is the one repository
+  port for the whole aggregate - companies, positions, projects, bullets, and technologies are all
+  parts of Career History, not separate ports, matching `CandidateProfileRepositoryPort`'s
+  convention. `CareerHistoryRepositoryAdapter` (`com.darya.jobassistant.careerhistory.persistence`)
+  implements it against the nine Step 5 JPA repositories.
+- **Loading** is level-based: one query per graph level (root, companies, positions, position
+  bullets, projects, project bullets/technologies - nine total), never one query per company/
+  position/project, so the query count stays bounded by graph levels regardless of graph size.
+- **Saving** always replaces the complete graph: the root is created or version-checked first (a
+  stale version fails before any child row is touched), the entire existing company graph is then
+  deleted (database `ON DELETE CASCADE` removes every descendant) and flushed, and the full
+  supplied graph is inserted fresh. Existing child ids the caller preserves are kept; new children
+  (null id) receive a generated one - done via hand-written native `INSERT`s rather than normal
+  JPA `persist`/`merge`, because Hibernate's `GenerationType.UUID` generator unconditionally
+  overwrites any id already set on the entity, which is incompatible with preserving one across a
+  delete-then-reinsert replace.
+- **Every `save` increments the root version exactly once** - including a save that only changes
+  one nested company, position, project, responsibility, achievement, or technology and nothing
+  else - via an explicit, unconditional `UPDATE ... WHERE version = :expectedVersion` (never
+  Hibernate dirty checking), matching `CandidateProfileRepositoryAdapter`'s pattern. A stale
+  version throws the framework-free `CareerHistoryConcurrentModificationException` before any
+  existing child row is deleted, so a losing concurrent writer can never destroy data a winning
+  writer already committed.
 - `CandidateProfileStartupValidator`, `PersistentCandidateProfileProvider`, and
-  `JobAnalysisService` are all unmodified by this step - AI vacancy-match analysis does not use
-  Career History data yet, and Candidate Profile remains the only mandatory candidate data source.
-- Ordering (positions, projects, and every bullet/technology child) is explicit `display_order`
-  business data, never physical row order - the database enforces uniqueness per parent but not
-  contiguity (`0, 1, 2, ...` may have gaps).
-- Every relationship in the ownership chain (`candidate_profile → career_history → career_company
-  → career_position → {responsibility, achievement, career_project → {responsibility, achievement,
-  technology}}`) is unidirectional `@ManyToOne` (root → Candidate Profile is `@OneToOne`, its real
-  cardinality) with database-level `ON DELETE CASCADE` - no JPA-level cascade or parent-side
-  collection, matching `CandidateProfileEntity`'s established convention.
-- `career_history.version` is the only real optimistic-locking token added at this step. A
-  child-only change does not yet increment it - that aggregate-level guarantee (following
-  `CandidateProfileRepositoryAdapter`'s pattern) is Step 6 work, once a
-  `CareerHistoryRepositoryPort`/adapter exists.
+  `JobAnalysisService` remain unmodified - AI vacancy-match analysis does not use Career History
+  data yet, Candidate Profile remains the only mandatory candidate data source, and no Career
+  History row is ever seeded or auto-created.
 - All test data is fictional (`Example Systems`, `Demo Backend Engineer`, `Billing Platform`, ...)
   - no real employer, client, project, or salary appears anywhere in the codebase or tests.
 
-Domain model, `CareerHistoryRepositoryPort`, and the import workflow are Step 6+ work. Manually
-filling in real Career History data is intentionally postponed until the end of Sprint 9.
+The import workflow, and manually filling in real Career History data, remain later Sprint 9 work.
 
 ## How to run
 
