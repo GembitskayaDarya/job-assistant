@@ -188,6 +188,23 @@ career-history:
     source: ${CAREER_HISTORY_IMPORT_SOURCE:file:./config/career-history.yml}
     max-file-size-bytes: ${CAREER_HISTORY_IMPORT_MAX_FILE_SIZE_BYTES:5242880}
 
+# Sprint 9 Step 8: deterministic bounds for CandidateContextForAnalysisSelector - the hard cap on
+# how much Career History evidence (positions/projects/bullets/technologies, each field length,
+# and the total rendered size) can ever be folded into a JobAnalysisService prompt. Defaults are
+# safe for normal runtime without any override; see CandidateContextAnalysisProperties for the
+# validated range each field allows.
+candidate-context:
+  analysis:
+    max-positions: ${CANDIDATE_CONTEXT_MAX_POSITIONS:4}
+    max-projects: ${CANDIDATE_CONTEXT_MAX_PROJECTS:6}
+    max-position-responsibilities: ${CANDIDATE_CONTEXT_MAX_POSITION_RESPONSIBILITIES:4}
+    max-position-achievements: ${CANDIDATE_CONTEXT_MAX_POSITION_ACHIEVEMENTS:4}
+    max-project-responsibilities: ${CANDIDATE_CONTEXT_MAX_PROJECT_RESPONSIBILITIES:4}
+    max-project-achievements: ${CANDIDATE_CONTEXT_MAX_PROJECT_ACHIEVEMENTS:4}
+    max-technologies-per-project: ${CANDIDATE_CONTEXT_MAX_TECHNOLOGIES_PER_PROJECT:12}
+    max-field-characters: ${CANDIDATE_CONTEXT_MAX_FIELD_CHARACTERS:1200}
+    max-total-characters: ${CANDIDATE_CONTEXT_MAX_TOTAL_CHARACTERS:12000}
+
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}

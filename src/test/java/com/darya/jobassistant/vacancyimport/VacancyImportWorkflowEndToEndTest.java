@@ -18,8 +18,11 @@ import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.port.JobAnalysisAiPort;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
 import com.darya.jobassistant.candidates.CandidatePreferences;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextAnalysisProperties;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.candidates.CandidateSkill;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.companies.entity.Company;
@@ -117,7 +120,7 @@ class VacancyImportWorkflowEndToEndTest {
     private JobAnalysisAiPort jobAnalysisAiPort;
 
     @Mock
-    private CandidateProfileProvider candidateProfileProvider;
+    private CandidateContextProvider candidateContextProvider;
 
     @Mock
     private PlatformTransactionManager transactionManager;
@@ -148,9 +151,11 @@ class VacancyImportWorkflowEndToEndTest {
         VacancyCreationService vacancyCreationService =
                 new VacancyCreationService(vacancyRepository, companyService);
         JobAnalysisService jobAnalysisService = new JobAnalysisService(jobAnalysisAiPort);
+        CandidateContextForAnalysisSelector candidateContextForAnalysisSelector =
+                new CandidateContextForAnalysisSelector(new CandidateContextAnalysisProperties(4, 6, 4, 4, 4, 4, 12, 1200, 12000));
         AnalyzeVacancyService analyzeVacancyService = new AnalyzeVacancyService(
-                vacancyQueryService, vacancyJobOfferMapper, candidateProfileProvider, jobAnalysisService,
-                jobAnalysisRepository, CLOCK, new JobAnalysisProperties(Duration.ofMinutes(2)), transactionManager);
+                vacancyQueryService, vacancyJobOfferMapper, candidateContextProvider, candidateContextForAnalysisSelector,
+                jobAnalysisService, jobAnalysisRepository, CLOCK, new JobAnalysisProperties(Duration.ofMinutes(2)), transactionManager);
 
         reviewService = new VacancyImportReviewService(
                 sessionRepository, draftRepository, vacancyRepository, vacancyCreationService,
@@ -249,7 +254,9 @@ class VacancyImportWorkflowEndToEndTest {
                 6,
                 new CandidatePreferences(
                         null, "Remote Europe", null, List.of(), false, List.of(), null, "Product company", null, null));
-        lenient().when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        CandidateContextSnapshot candidateContext =
+                new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, profile, Optional.empty());
+        lenient().when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         JobAnalysis analysis = new JobAnalysis(
                 88, List.of("Strong Java and Kafka match"), List.of(), List.of(), List.of(),
                 "6 years vs. no stated requirement.", "Remote preference matches.", "Great fit");

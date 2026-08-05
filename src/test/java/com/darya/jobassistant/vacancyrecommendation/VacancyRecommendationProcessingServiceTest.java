@@ -17,8 +17,13 @@ import com.darya.jobassistant.ai.exception.JobAnalysisException;
 import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextSelectionMetadata;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -86,7 +91,10 @@ class VacancyRecommendationProcessingServiceTest {
     private VacancyJobOfferMapper vacancyJobOfferMapper;
 
     @Mock
-    private CandidateProfileProvider candidateProfileProvider;
+    private CandidateContextProvider candidateContextProvider;
+
+    @Mock
+    private CandidateContextForAnalysisSelector candidateContextForAnalysisSelector;
 
     @Mock
     private JobAnalysisService jobAnalysisService;
@@ -106,11 +114,16 @@ class VacancyRecommendationProcessingServiceTest {
     @Mock
     private TransactionStatus transactionStatus;
 
+    private final CandidateContextForAnalysis analysisContext = new CandidateContextForAnalysis(
+            mock(CandidateProfile.class), CareerHistoryAvailability.NOT_PROVIDED, List.of(),
+            CandidateContextSelectionMetadata.empty(CareerHistoryAvailability.NOT_PROVIDED, null));
+
     private VacancyRecommendationProcessingService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+        lenient().when(candidateContextForAnalysisSelector.select(any(), any())).thenReturn(analysisContext);
         RecommendationPolicyProperties policyProperties = new RecommendationPolicyProperties(MINIMUM_SCORE);
         VacancyRecommendationProperties properties = new VacancyRecommendationProperties(
                 true, RECIPIENT_CHAT_ID,
@@ -120,8 +133,9 @@ class VacancyRecommendationProcessingServiceTest {
                         false, Duration.ofMinutes(10), Duration.ofMinutes(1), Duration.ofHours(1), Duration.ofSeconds(10)));
         service = new VacancyRecommendationProcessingService(
                 taskRepository, vacancyRepository, jobAnalysisRepository, vacancyJobOfferMapper,
-                candidateProfileProvider, jobAnalysisService, jobNotificationFactory, jobNotificationPort,
-                notificationDeliveryRepository, policyProperties, properties, CLOCK, transactionManager);
+                candidateContextProvider, candidateContextForAnalysisSelector, jobAnalysisService,
+                jobNotificationFactory, jobNotificationPort, notificationDeliveryRepository, policyProperties,
+                properties, CLOCK, transactionManager);
     }
 
     // --- Claim / batch shape -------------------------------------------------------------------
@@ -284,9 +298,10 @@ class VacancyRecommendationProcessingServiceTest {
         JobOffer jobOffer = jobOffer();
         when(vacancyJobOfferMapper.toJobOffer(any(Vacancy.class))).thenReturn(jobOffer);
         CandidateProfile profile = mock(CandidateProfile.class);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         JobAnalysis analysis = analysis(85);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(vacancyId, analysis, NOW)).thenReturn(true);
         givenSuccessfulNotificationDelivery(vacancyId);
         when(taskRepository.completeTask(eq(claimedTask.getId()), any(), eq(VacancyRecommendationTaskOutcome.NOTIFIED), any()))
@@ -296,7 +311,7 @@ class VacancyRecommendationProcessingServiceTest {
 
         assertThat(result.analysisAttempts()).isEqualTo(1);
         assertThat(result.notifiedTasks()).isEqualTo(1);
-        verify(jobAnalysisService, times(1)).analyze(profile, jobOffer);
+        verify(jobAnalysisService, times(1)).analyze(analysisContext, jobOffer);
     }
 
     @Test
@@ -309,7 +324,7 @@ class VacancyRecommendationProcessingServiceTest {
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer());
-        when(candidateProfileProvider.getProfile()).thenReturn(mock(CandidateProfile.class));
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContextSnapshot(mock(CandidateProfile.class)));
         JobAnalysis analysis = analysis(40); // below MINIMUM_SCORE (70)
         when(jobAnalysisService.analyze(any(), any())).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(vacancyId, analysis, NOW)).thenReturn(true);
@@ -332,7 +347,7 @@ class VacancyRecommendationProcessingServiceTest {
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer());
-        when(candidateProfileProvider.getProfile()).thenReturn(mock(CandidateProfile.class));
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContextSnapshot(mock(CandidateProfile.class)));
         JobAnalysis analysis = analysis(90);
         when(jobAnalysisService.analyze(any(), any())).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(vacancyId, analysis, NOW)).thenReturn(true);
@@ -747,8 +762,9 @@ class VacancyRecommendationProcessingServiceTest {
                         false, Duration.ofMinutes(10), Duration.ofMinutes(1), Duration.ofHours(1), Duration.ofSeconds(10)));
         return new VacancyRecommendationProcessingService(
                 taskRepository, vacancyRepository, jobAnalysisRepository, vacancyJobOfferMapper,
-                candidateProfileProvider, jobAnalysisService, jobNotificationFactory, jobNotificationPort,
-                notificationDeliveryRepository, policyProperties, properties, CLOCK, transactionManager);
+                candidateContextProvider, candidateContextForAnalysisSelector, jobAnalysisService,
+                jobNotificationFactory, jobNotificationPort, notificationDeliveryRepository, policyProperties,
+                properties, CLOCK, transactionManager);
     }
 
     @Test
@@ -813,7 +829,7 @@ class VacancyRecommendationProcessingServiceTest {
         Vacancy vacancy = vacancy(vacancyId);
         when(vacancyRepository.findByIdWithCompany(vacancyId)).thenReturn(Optional.of(vacancy));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer());
-        when(candidateProfileProvider.getProfile()).thenReturn(mock(CandidateProfile.class));
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContextSnapshot(mock(CandidateProfile.class)));
     }
 
     private void givenSuccessfulNotificationDelivery(UUID vacancyId) {
@@ -896,6 +912,10 @@ class VacancyRecommendationProcessingServiceTest {
 
     private JobOffer jobOffer() {
         return new JobOffer("job-1", "Backend Engineer", "Acme Corp", "Remote", null, "desc", "https://example.com/job", "remoteok");
+    }
+
+    private CandidateContextSnapshot candidateContextSnapshot(CandidateProfile profile) {
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, profile, Optional.empty());
     }
 
     private JobAnalysis analysis(int score) {

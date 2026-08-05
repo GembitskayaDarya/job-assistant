@@ -10,8 +10,10 @@ import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
-import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.exception.VacancyNotFoundException;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -58,7 +60,8 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
 
     private final VacancyQueryService vacancyQueryService;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
-    private final CandidateProfileProvider candidateProfileProvider;
+    private final CandidateContextProvider candidateContextProvider;
+    private final CandidateContextForAnalysisSelector candidateContextForAnalysisSelector;
     private final JobAnalysisService jobAnalysisService;
     private final JobAnalysisRepository jobAnalysisRepository;
     private final Clock clock;
@@ -68,7 +71,8 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
     public AnalyzeVacancyService(
             VacancyQueryService vacancyQueryService,
             VacancyJobOfferMapper vacancyJobOfferMapper,
-            CandidateProfileProvider candidateProfileProvider,
+            CandidateContextProvider candidateContextProvider,
+            CandidateContextForAnalysisSelector candidateContextForAnalysisSelector,
             JobAnalysisService jobAnalysisService,
             JobAnalysisRepository jobAnalysisRepository,
             Clock clock,
@@ -76,7 +80,8 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
             PlatformTransactionManager transactionManager) {
         this.vacancyQueryService = vacancyQueryService;
         this.vacancyJobOfferMapper = vacancyJobOfferMapper;
-        this.candidateProfileProvider = candidateProfileProvider;
+        this.candidateContextProvider = candidateContextProvider;
+        this.candidateContextForAnalysisSelector = candidateContextForAnalysisSelector;
         this.jobAnalysisService = jobAnalysisService;
         this.jobAnalysisRepository = jobAnalysisRepository;
         this.clock = clock;
@@ -173,10 +178,11 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
      * Transaction B below.
      */
     private AnalyzeVacancyResult runNewAnalysis(UUID vacancyId, JobOffer jobOffer) {
-        CandidateProfile profile = candidateProfileProvider.getProfile();
+        CandidateContextSnapshot candidateContext = candidateContextProvider.loadCurrentContext();
+        CandidateContextForAnalysis analysisContext = candidateContextForAnalysisSelector.select(candidateContext, jobOffer);
         JobAnalysis analysis;
         try {
-            analysis = jobAnalysisService.analyze(profile, jobOffer);
+            analysis = jobAnalysisService.analyze(analysisContext, jobOffer);
         } catch (JobAnalysisException e) {
             log.warn("Vacancy analysis failed for vacancy {}", vacancyId, e);
             newTransaction.executeWithoutResult(status -> jobAnalysisRepository.releaseClaim(vacancyId));
@@ -198,10 +204,11 @@ public class AnalyzeVacancyService implements AnalyzeVacancyUseCase {
      * version and its origin are exactly as they were before this attempt started.
      */
     private AnalyzeVacancyResult runReanalysis(UUID vacancyId, JobOffer jobOffer, Instant claimedAt) {
-        CandidateProfile profile = candidateProfileProvider.getProfile();
+        CandidateContextSnapshot candidateContext = candidateContextProvider.loadCurrentContext();
+        CandidateContextForAnalysis analysisContext = candidateContextForAnalysisSelector.select(candidateContext, jobOffer);
         JobAnalysis analysis;
         try {
-            analysis = jobAnalysisService.analyze(profile, jobOffer);
+            analysis = jobAnalysisService.analyze(analysisContext, jobOffer);
         } catch (JobAnalysisException e) {
             log.warn("Vacancy reanalysis failed for vacancy {}", vacancyId, e);
             newTransaction.executeWithoutResult(status -> jobAnalysisRepository.releaseReanalysisClaim(vacancyId, claimedAt));

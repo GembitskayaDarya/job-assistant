@@ -4,7 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.notifier.JobNotificationFactory;
 import com.darya.jobassistant.integrations.notifier.JobNotificationPort;
@@ -125,8 +126,13 @@ class VacancyRecommendationProcessingServiceActivationTest {
         }
 
         @Bean
-        CandidateProfileProvider candidateProfileProvider() {
-            return mock(CandidateProfileProvider.class);
+        CandidateContextProvider candidateContextProvider() {
+            return mock(CandidateContextProvider.class);
+        }
+
+        @Bean
+        CandidateContextForAnalysisSelector candidateContextForAnalysisSelector() {
+            return mock(CandidateContextForAnalysisSelector.class);
         }
 
         @Bean

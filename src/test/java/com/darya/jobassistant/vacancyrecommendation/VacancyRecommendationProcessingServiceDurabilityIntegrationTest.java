@@ -14,8 +14,11 @@ import com.darya.jobassistant.ai.entity.JobAnalysisEntity;
 import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextAnalysisProperties;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
@@ -38,6 +41,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -268,12 +272,17 @@ class VacancyRecommendationProcessingServiceDurabilityIntegrationTest {
                         5, 3, Duration.ofMinutes(20), Duration.ofMinutes(10), Duration.ofHours(2)),
                 new VacancyRecommendationProperties.Scheduler(
                         false, Duration.ofMinutes(10), Duration.ofMinutes(1), Duration.ofHours(1), Duration.ofSeconds(10)));
-        CandidateProfileProvider candidateProfileProvider = mock(CandidateProfileProvider.class);
-        lenient().when(candidateProfileProvider.getProfile()).thenReturn(mock(CandidateProfile.class));
+        CandidateContextProvider candidateContextProvider = mock(CandidateContextProvider.class);
+        CandidateContextSnapshot candidateContext =
+                new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, mock(CandidateProfile.class), Optional.empty());
+        lenient().when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        CandidateContextForAnalysisSelector candidateContextForAnalysisSelector =
+                new CandidateContextForAnalysisSelector(new CandidateContextAnalysisProperties(4, 6, 4, 4, 4, 4, 12, 1200, 12000));
         return new VacancyRecommendationProcessingService(
                 taskRepository, vacancyRepository, jobAnalysisRepository, new VacancyJobOfferMapper(),
-                candidateProfileProvider, jobAnalysisService, new JobNotificationFactory(), jobNotificationPort,
-                notificationDeliveryRepository, policyProperties, properties, CLOCK, transactionManager);
+                candidateContextProvider, candidateContextForAnalysisSelector, jobAnalysisService,
+                new JobNotificationFactory(), jobNotificationPort, notificationDeliveryRepository, policyProperties,
+                properties, CLOCK, transactionManager);
     }
 
     private JobAnalysis analysis(int score) {

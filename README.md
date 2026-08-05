@@ -388,10 +388,10 @@ aggregate and repository adapter on top of that schema:
   version throws the framework-free `CareerHistoryConcurrentModificationException` before any
   existing child row is deleted, so a losing concurrent writer can never destroy data a winning
   writer already committed.
-- `CandidateProfileStartupValidator`, `PersistentCandidateProfileProvider`, and
-  `JobAnalysisService` remain unmodified - AI vacancy-match analysis does not use Career History
-  data yet, Candidate Profile remains the only mandatory candidate data source, and no Career
-  History row is ever seeded or auto-created.
+- `CandidateProfileStartupValidator` and `PersistentCandidateProfileProvider` remain unmodified -
+  Candidate Profile remains the only mandatory candidate data source, and no Career History row is
+  ever seeded or auto-created. AI vacancy-match analysis now optionally draws on Career History
+  evidence - see [Candidate Context](#candidate-context-sprint-9-step-8) below.
 - All test data is fictional (`Example Systems`, `Demo Backend Engineer`, `Billing Platform`, ...)
   - no real employer, client, project, or salary appears anywhere in the codebase or tests.
 
@@ -493,8 +493,80 @@ CAREER_HISTORY_IMPORT_SOURCE=file:./config/career-history.yml \
 ./gradlew bootRun
 ```
 
-Manually filling in real Career History data remains the final Sprint 9 step. Career History is
-not yet consumed by AI vacancy-match analysis (`JobAnalysisService` is unmodified).
+Manually filling in real Career History data remains the final Sprint 9 step (Step 9). Career
+History is now optionally consumed by AI vacancy-match analysis, bounded and deterministically
+selected per vacancy - see the next section.
+
+### Candidate Context (Sprint 9 Step 8)
+
+Vacancy analysis (`JobAnalysisService`) previously read only the flat `CandidateProfile`. It now
+reads a **Candidate Context Snapshot** - Candidate Profile plus optional Career History, loaded
+together - and folds a small, deterministically-selected slice of Career History evidence into
+the prompt when one exists, without ever sending the full Career History unbounded.
+
+- **`CandidateContextSnapshot`** (`com.darya.jobassistant.candidatecontext`) - a framework-free,
+  immutable record: candidate profile id/key/version, the existing analysis-oriented
+  `CandidateProfile`, and an `Optional<CareerHistoryAggregate>`. Derives a three-state
+  `CareerHistoryAvailability` (`NOT_PROVIDED` / `EMPTY` / `AVAILABLE`) from whether Career History
+  exists and has any companies. Never exposes a JPA entity.
+- **`CandidateContextProvider`** - one port, `loadCurrentContext()`, implemented by
+  `PersistentCandidateContextProvider` (`candidatecontext.runtime`). Reads
+  `CandidateProfileRepositoryPort` and `CareerHistoryRepositoryPort` inside a single
+  `readOnly = true, REPEATABLE_READ` transaction, so both reads observe one consistent database
+  snapshot - the same isolation-level convention `VacancyCanonicalUrlAuditService` already uses.
+  The transaction closes before the method returns; the AI call a caller makes afterward never
+  runs inside one. This is a **separate use case** from `CandidateProfileProvider`, which is
+  unmodified and remains the startup-validation path (`CandidateProfileStartupValidator`) plus any
+  other non-analysis consumer (e.g. `JobDiscoveryService`'s query planning).
+- **Deterministic relevance selection** (`candidatecontext.analysis.CandidateContextForAnalysisSelector`)
+  turns a snapshot plus the vacancy being analyzed into a bounded `CandidateContextForAnalysis` -
+  no AI call, no database access. Every position and project gets a transparent, weighted score
+  (highest to lowest priority: exact technology-name match, position-title/project-name match,
+  distinct token overlap in descriptions/bullets), ranked by
+  `score desc, then displayOrder asc` - the same comparator doubles as the "every score is zero"
+  fallback, since it degenerates to pure `displayOrder` ordering with no special-case code. Text is
+  normalized with NFKC + `Locale.ROOT` lowercasing, never the JVM default locale.
+- **Character budget** (`candidate-context.analysis.*`, see below) caps position/project/bullet/
+  technology counts, each individual field's length (cut with a trailing `[truncated]` marker,
+  surrogate-pair-safe, mirroring `VacancyExtractionContentPreparer`'s existing convention), and the
+  total rendered size - enforced as a greedy fill in relevance order that stops the instant the
+  next item would exceed the budget, never a build-then-trim pass. Selection metadata (available/
+  selected/omitted counts, rendered character count, whether truncation occurred) is safe to log;
+  it never contains company, project, or bullet text.
+- **Prompt structure** (`JobAnalysisService`) - `SYSTEM RULES` / `CANDIDATE PROFILE` /
+  `CAREER HISTORY AVAILABILITY` / `SELECTED CAREER EVIDENCE` (only when non-empty) / `VACANCY` /
+  `ANALYSIS INSTRUCTIONS`. The system prompt states that candidate and vacancy content are
+  untrusted data, instructs the model to ignore any instructions embedded inside them, and to
+  treat Career History strictly as evidence - never invent employers/projects/technologies, never
+  convert a vacancy requirement into candidate experience, and state plainly when evidence is
+  unavailable. When Career History is `NOT_PROVIDED` or `EMPTY`, the prompt says so explicitly
+  instead of silently omitting the section. `JobAnalysisAiPort` itself is unchanged - it already
+  only accepts two rendered prompt strings, so it was already incapable of receiving unbounded
+  Career History content.
+- **All three analysis callers were switched** - `AnalyzeVacancyService` (`/analyze` + guided
+  import), `JobMonitoringService`, and `VacancyRecommendationProcessingService` all now resolve a
+  `CandidateContextProvider` instead of `CandidateProfileProvider` before calling
+  `JobAnalysisService.analyze`, since all three call the same shared prompt-building method.
+- **Configuration** (defaults shown, all validated positive on startup):
+
+  ```yaml
+  candidate-context:
+    analysis:
+      max-positions: 4
+      max-projects: 6
+      max-position-responsibilities: 4
+      max-position-achievements: 4
+      max-project-responsibilities: 4
+      max-project-achievements: 4
+      max-technologies-per-project: 12
+      max-field-characters: 1200
+      max-total-characters: 12000
+  ```
+
+- **Still not implemented**: CV generation, cover-letter generation, and the interview assistant
+  remain future Sprint work; no second AI call is made for relevance selection (selection is
+  entirely local/deterministic); `JobAnalysisModelVersion.CURRENT` was deliberately **not** bumped
+  for this change, so no existing completed analysis is automatically reanalyzed.
 
 ## How to run
 

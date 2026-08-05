@@ -3,8 +3,10 @@ package com.darya.jobassistant.monitoring;
 import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
-import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.integrations.jobsource.JobSourceException;
@@ -39,7 +41,7 @@ import org.springframework.stereotype.Service;
 /**
  * Orchestrates one monitoring run:
  * <pre>
- * load profile once -&gt; ingest -&gt; analyze + persist each new vacancy -&gt; query durable backlog
+ * load candidate context once -&gt; ingest -&gt; analyze + persist each new vacancy -&gt; query durable backlog
  * -&gt; reserve -&gt; send -&gt; mark SENT/FAILED
  * </pre>
  * Deliberately not {@code @Transactional}: it makes external AI and Telegram calls, and must
@@ -62,7 +64,8 @@ public class JobMonitoringService implements JobMonitoringUseCase {
     private final List<JobSourcePort> jobSources;
     private final VacancyIngestionService vacancyIngestionService;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
-    private final CandidateProfileProvider candidateProfileProvider;
+    private final CandidateContextProvider candidateContextProvider;
+    private final CandidateContextForAnalysisSelector candidateContextForAnalysisSelector;
     private final JobAnalysisService jobAnalysisService;
     private final JobAnalysisRepository jobAnalysisRepository;
     private final JobNotificationCandidateQueryPort jobNotificationCandidateQueryPort;
@@ -73,12 +76,12 @@ public class JobMonitoringService implements JobMonitoringUseCase {
 
     @Override
     public JobMonitoringResult monitor(JobMonitoringCommand command) {
-        CandidateProfile profile = loadProfile();
+        CandidateContextSnapshot candidateContext = loadCandidateContext();
 
         VacancyIngestionResult ingestionResult = ingestForKeyword(command.keyword());
         List<Vacancy> newVacancies = ingestionResult.persistedVacancies();
 
-        AnalysisOutcome analysisOutcome = analyzeAndPersistAll(newVacancies, profile);
+        AnalysisOutcome analysisOutcome = analyzeAndPersistAll(newVacancies, candidateContext);
 
         List<JobNotificationCandidate> candidates = jobNotificationCandidateQueryPort.findCandidates(
                 command.recipientChatId(), command.minScore(), command.maxNotifications());
@@ -100,9 +103,9 @@ public class JobMonitoringService implements JobMonitoringUseCase {
         return result;
     }
 
-    private CandidateProfile loadProfile() {
+    private CandidateContextSnapshot loadCandidateContext() {
         try {
-            return candidateProfileProvider.getProfile();
+            return candidateContextProvider.loadCurrentContext();
         } catch (RuntimeException e) {
             throw new JobMonitoringException("Unable to load candidate profile for job monitoring", e);
         }
@@ -155,7 +158,7 @@ public class JobMonitoringService implements JobMonitoringUseCase {
      * monitoring from taking ownership of a vacancy a user already analyzed themselves. Skipped
      * vacancies count toward neither {@code analyzedCount} nor {@code failedCount}.
      */
-    private AnalysisOutcome analyzeAndPersistAll(List<Vacancy> newVacancies, CandidateProfile profile) {
+    private AnalysisOutcome analyzeAndPersistAll(List<Vacancy> newVacancies, CandidateContextSnapshot candidateContext) {
         int analyzedCount = 0;
         int failedCount = 0;
         for (Vacancy vacancy : newVacancies) {
@@ -164,7 +167,8 @@ public class JobMonitoringService implements JobMonitoringUseCase {
             }
             try {
                 JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
-                JobAnalysis analysis = jobAnalysisService.analyze(profile, jobOffer);
+                CandidateContextForAnalysis analysisContext = candidateContextForAnalysisSelector.select(candidateContext, jobOffer);
+                JobAnalysis analysis = jobAnalysisService.analyze(analysisContext, jobOffer);
                 jobAnalysisRepository.persist(vacancy.getId(), analysis, AnalysisOrigin.MONITORING);
                 analyzedCount++;
             } catch (RuntimeException e) {

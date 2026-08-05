@@ -20,9 +20,14 @@ import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextSelectionMetadata;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.candidates.CandidateSkill;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
@@ -74,7 +79,9 @@ class JobMonitoringServiceTest {
     @Mock
     private VacancyJobOfferMapper vacancyJobOfferMapper;
     @Mock
-    private CandidateProfileProvider candidateProfileProvider;
+    private CandidateContextProvider candidateContextProvider;
+    @Mock
+    private CandidateContextForAnalysisSelector candidateContextForAnalysisSelector;
     @Mock
     private JobAnalysisService jobAnalysisService;
     @Mock
@@ -96,33 +103,40 @@ class JobMonitoringServiceTest {
             List.of("English"),
             5,
             new CandidatePreferences(null, "Remote", null, List.of(), false, List.of(), null, "Product", null, null));
+    private final CandidateContextSnapshot candidateContext =
+            new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, profile, Optional.empty());
+    private final CandidateContextForAnalysis analysisContext = new CandidateContextForAnalysis(
+            profile, CareerHistoryAvailability.NOT_PROVIDED, List.of(),
+            CandidateContextSelectionMetadata.empty(CareerHistoryAvailability.NOT_PROVIDED, null));
 
     private JobMonitoringService service;
 
     @BeforeEach
     void setUp() {
         service = new JobMonitoringService(
-                List.of(), vacancyIngestionService, vacancyJobOfferMapper, candidateProfileProvider,
-                jobAnalysisService, jobAnalysisRepository, jobNotificationCandidateQueryPort,
-                jobNotificationFactory, jobNotificationPort, notificationDeliveryRepository, clock);
+                List.of(), vacancyIngestionService, vacancyJobOfferMapper, candidateContextProvider,
+                candidateContextForAnalysisSelector, jobAnalysisService, jobAnalysisRepository,
+                jobNotificationCandidateQueryPort, jobNotificationFactory, jobNotificationPort,
+                notificationDeliveryRepository, clock);
+        when(candidateContextForAnalysisSelector.select(any(), any())).thenReturn(analysisContext);
     }
 
     // A. Candidate profile is loaded exactly once
     @Test
     void monitor_loadsCandidateProfileExactlyOnce() {
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
         service.monitor(command(50, 5));
 
-        verify(candidateProfileProvider, times(1)).getProfile();
+        verify(candidateContextProvider, times(1)).loadCurrentContext();
     }
 
     // B. Profile failure prevents ingestion and propagates safely
     @Test
     void monitor_profileLoadingFails_preventsIngestionAndPropagatesSafely() {
-        when(candidateProfileProvider.getProfile()).thenThrow(new IllegalStateException("profile config missing"));
+        when(candidateContextProvider.loadCurrentContext()).thenThrow(new IllegalStateException("profile config missing"));
 
         assertThatThrownBy(() -> service.monitor(command(50, 5)))
                 .isInstanceOf(JobMonitoringException.class)
@@ -135,7 +149,7 @@ class JobMonitoringServiceTest {
     // C. Empty ingestion still queries the notification backlog
     @Test
     void monitor_emptyIngestion_stillQueriesNotificationBacklog() {
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
@@ -152,7 +166,7 @@ class JobMonitoringServiceTest {
         Vacancy backlogVacancy = vacancy();
         JobAnalysis analysis = analysis(90);
         JobNotificationCandidate candidate = candidateFor(backlogVacancy, analysis);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         stubSuccessfulSend(backlogVacancy, analysis);
@@ -172,19 +186,19 @@ class JobMonitoringServiceTest {
         Vacancy second = vacancy();
         JobOffer firstOffer = offer("1");
         JobOffer secondOffer = offer("2");
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(first, second), 0));
         when(vacancyJobOfferMapper.toJobOffer(first)).thenReturn(firstOffer);
         when(vacancyJobOfferMapper.toJobOffer(second)).thenReturn(secondOffer);
-        when(jobAnalysisService.analyze(profile, firstOffer)).thenReturn(analysis(10));
-        when(jobAnalysisService.analyze(profile, secondOffer)).thenReturn(analysis(20));
+        when(jobAnalysisService.analyze(analysisContext, firstOffer)).thenReturn(analysis(10));
+        when(jobAnalysisService.analyze(analysisContext, secondOffer)).thenReturn(analysis(20));
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
         service.monitor(command(50, 5));
 
         InOrder inOrder = inOrder(jobAnalysisService);
-        inOrder.verify(jobAnalysisService).analyze(profile, firstOffer);
-        inOrder.verify(jobAnalysisService).analyze(profile, secondOffer);
+        inOrder.verify(jobAnalysisService).analyze(analysisContext, firstOffer);
+        inOrder.verify(jobAnalysisService).analyze(analysisContext, secondOffer);
     }
 
     // E2. A vacancy that already has a completed MANUAL analysis at the current version is
@@ -193,7 +207,7 @@ class JobMonitoringServiceTest {
     void monitor_vacancyWithExistingCurrentVersionManualAnalysis_skipsWithoutCallingAi() {
         Vacancy vacancy = vacancy();
         JobOffer offer = offer("1");
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
         when(jobAnalysisRepository.findByVacancyId(vacancy.getId()))
@@ -214,7 +228,7 @@ class JobMonitoringServiceTest {
     void monitor_vacancyWithExistingStaleVersionManualAnalysis_skipsWithoutCallingAi() {
         Vacancy vacancy = vacancy();
         JobOffer offer = offer("1");
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
         when(jobAnalysisRepository.findByVacancyId(vacancy.getId()))
@@ -233,7 +247,7 @@ class JobMonitoringServiceTest {
     void monitor_vacancyWithExistingLegacyAnalysis_skipsWithoutCallingAi() {
         Vacancy vacancy = vacancy();
         JobOffer offer = offer("1");
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
         when(jobAnalysisRepository.findByVacancyId(vacancy.getId()))
@@ -253,10 +267,10 @@ class JobMonitoringServiceTest {
         Vacancy vacancy = vacancy();
         JobOffer offer = offer("1");
         JobAnalysis analysis = analysis(80);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(jobAnalysisService.analyze(analysisContext, offer)).thenReturn(analysis);
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
         JobMonitoringResult result = service.monitor(command(50, 5));
@@ -274,12 +288,12 @@ class JobMonitoringServiceTest {
         JobOffer failingOffer = offer("1");
         JobOffer succeedingOffer = offer("2");
         JobAnalysis okAnalysis = analysis(20);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(failing, succeeding), 0));
         when(vacancyJobOfferMapper.toJobOffer(failing)).thenReturn(failingOffer);
         when(vacancyJobOfferMapper.toJobOffer(succeeding)).thenReturn(succeedingOffer);
-        when(jobAnalysisService.analyze(profile, failingOffer)).thenThrow(new JobAnalysisException("boom"));
-        when(jobAnalysisService.analyze(profile, succeedingOffer)).thenReturn(okAnalysis);
+        when(jobAnalysisService.analyze(analysisContext, failingOffer)).thenThrow(new JobAnalysisException("boom"));
+        when(jobAnalysisService.analyze(analysisContext, succeedingOffer)).thenReturn(okAnalysis);
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
         JobMonitoringResult result = service.monitor(command(50, 5));
@@ -299,12 +313,12 @@ class JobMonitoringServiceTest {
         JobOffer succeedingOffer = offer("2");
         JobAnalysis failingAnalysis = analysis(70);
         JobAnalysis okAnalysis = analysis(20);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(2, List.of(failing, succeeding), 0));
         when(vacancyJobOfferMapper.toJobOffer(failing)).thenReturn(failingOffer);
         when(vacancyJobOfferMapper.toJobOffer(succeeding)).thenReturn(succeedingOffer);
-        when(jobAnalysisService.analyze(profile, failingOffer)).thenReturn(failingAnalysis);
-        when(jobAnalysisService.analyze(profile, succeedingOffer)).thenReturn(okAnalysis);
+        when(jobAnalysisService.analyze(analysisContext, failingOffer)).thenReturn(failingAnalysis);
+        when(jobAnalysisService.analyze(analysisContext, succeedingOffer)).thenReturn(okAnalysis);
         when(jobAnalysisRepository.persist(failing.getId(), failingAnalysis, AnalysisOrigin.MONITORING))
                 .thenThrow(new RuntimeException("db down"));
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
@@ -322,10 +336,10 @@ class JobMonitoringServiceTest {
         Vacancy vacancy = vacancy();
         JobOffer offer = offer("1");
         JobAnalysis analysis = analysis(80);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(new VacancyIngestionResult(1, List.of(vacancy), 0));
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(offer);
-        when(jobAnalysisService.analyze(profile, offer)).thenReturn(analysis);
+        when(jobAnalysisService.analyze(analysisContext, offer)).thenReturn(analysis);
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
         service.monitor(command(50, 5));
@@ -338,7 +352,7 @@ class JobMonitoringServiceTest {
     // J. Backlog query receives recipientChatId, minimumScore, and maxNotifications
     @Test
     void monitor_backlogQuery_receivesRecipientMinimumScoreAndMaxNotifications() {
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of());
 
@@ -358,7 +372,7 @@ class JobMonitoringServiceTest {
         JobAnalysis a3 = analysis(85);
         List<JobNotificationCandidate> candidates =
                 List.of(candidateFor(v1, a1), candidateFor(v2, a2), candidateFor(v3, a3));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(candidates);
         stubSuccessfulSend(v1, a1);
@@ -382,7 +396,7 @@ class JobMonitoringServiceTest {
         JobAnalysis thirdAnalysis = analysis(80);
         List<JobNotificationCandidate> candidates = List.of(
                 candidateFor(first, firstAnalysis), candidateFor(second, secondAnalysis), candidateFor(third, thirdAnalysis));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(candidates);
         stubSuccessfulSend(first, firstAnalysis);
@@ -403,7 +417,7 @@ class JobMonitoringServiceTest {
         Vacancy vacancy = vacancy();
         JobAnalysis analysis = analysis(90);
         JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         stubSuccessfulSend(vacancy, analysis);
@@ -421,7 +435,7 @@ class JobMonitoringServiceTest {
         Vacancy vacancy = vacancy();
         JobAnalysis analysis = analysis(90);
         JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID))
@@ -444,7 +458,7 @@ class JobMonitoringServiceTest {
         JobNotificationCandidate c1 = candidateFor(v1, a1);
         JobNotificationCandidate c2 = candidateFor(v2, a2);
         JobNotification n1 = notification();
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(c1, c2));
         when(jobNotificationFactory.create(v1, a1, RECIPIENT_CHAT_ID)).thenReturn(n1);
@@ -466,7 +480,7 @@ class JobMonitoringServiceTest {
         Vacancy vacancy = vacancy();
         JobAnalysis analysis = analysis(90);
         JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         NotificationDelivery pending = stubSuccessfulSend(vacancy, analysis);
@@ -490,7 +504,7 @@ class JobMonitoringServiceTest {
         JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         JobNotification notification = notification();
         NotificationDelivery pending = pendingDelivery(vacancy.getId());
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
@@ -521,7 +535,7 @@ class JobMonitoringServiceTest {
         JobNotification notification = notification();
         NotificationDelivery pending = pendingDelivery(vacancy.getId());
         String rawProviderMessage = "raw provider response: rate limit exceeded for chat 12345";
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
@@ -548,7 +562,7 @@ class JobMonitoringServiceTest {
         JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         JobNotification notification = notification();
         NotificationDelivery pending = pendingDelivery(vacancy.getId());
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
@@ -573,7 +587,7 @@ class JobMonitoringServiceTest {
         JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         JobNotification notification = notification();
         NotificationDelivery pending = pendingDelivery(vacancy.getId());
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
@@ -599,7 +613,7 @@ class JobMonitoringServiceTest {
         JobNotificationCandidate candidate = candidateFor(vacancy, analysis);
         JobNotification notification = notification();
         NotificationDelivery pending = pendingDelivery(vacancy.getId());
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(List.of(candidate));
         when(jobNotificationFactory.create(vacancy, analysis, RECIPIENT_CHAT_ID)).thenReturn(notification);
@@ -627,7 +641,7 @@ class JobMonitoringServiceTest {
         JobAnalysis a1 = analysis(95);
         JobAnalysis a2 = analysis(90);
         List<JobNotificationCandidate> candidates = List.of(candidateFor(v1, a1), candidateFor(v2, a2));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any())).thenReturn(VacancyIngestionResult.empty());
         when(jobNotificationCandidateQueryPort.findCandidates(any(), anyInt(), anyInt())).thenReturn(candidates);
         stubSuccessfulSend(v1, a1);
@@ -647,7 +661,7 @@ class JobMonitoringServiceTest {
         JobOffer offer1 = offer("1");
         JobOffer offer2 = offer("2");
         JobOffer offer3 = offer("3");
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         when(vacancyIngestionService.ingest(any()))
                 .thenReturn(new VacancyIngestionResult(5, List.of(analyzeOk, analyzeFail, analyzeOk2), 0));
         when(vacancyJobOfferMapper.toJobOffer(analyzeOk)).thenReturn(offer1);
@@ -655,9 +669,9 @@ class JobMonitoringServiceTest {
         when(vacancyJobOfferMapper.toJobOffer(analyzeOk2)).thenReturn(offer3);
         JobAnalysis analysis1 = analysis(40);
         JobAnalysis analysis3 = analysis(45);
-        when(jobAnalysisService.analyze(profile, offer1)).thenReturn(analysis1);
-        when(jobAnalysisService.analyze(profile, offer2)).thenThrow(new JobAnalysisException("boom"));
-        when(jobAnalysisService.analyze(profile, offer3)).thenReturn(analysis3);
+        when(jobAnalysisService.analyze(analysisContext, offer1)).thenReturn(analysis1);
+        when(jobAnalysisService.analyze(analysisContext, offer2)).thenThrow(new JobAnalysisException("boom"));
+        when(jobAnalysisService.analyze(analysisContext, offer3)).thenReturn(analysis3);
 
         Vacancy sendOk = vacancy();
         Vacancy sendFail = vacancy();

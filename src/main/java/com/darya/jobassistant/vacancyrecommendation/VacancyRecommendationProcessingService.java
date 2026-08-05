@@ -7,8 +7,10 @@ import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.model.PersistedJobAnalysis;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
-import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import com.darya.jobassistant.integrations.notifier.CompactVacancyRecommendation;
@@ -88,7 +90,8 @@ public class VacancyRecommendationProcessingService {
     private final VacancyRepository vacancyRepository;
     private final JobAnalysisRepository jobAnalysisRepository;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
-    private final CandidateProfileProvider candidateProfileProvider;
+    private final CandidateContextProvider candidateContextProvider;
+    private final CandidateContextForAnalysisSelector candidateContextForAnalysisSelector;
     private final JobAnalysisService jobAnalysisService;
     private final JobNotificationFactory jobNotificationFactory;
     private final JobNotificationPort jobNotificationPort;
@@ -104,7 +107,8 @@ public class VacancyRecommendationProcessingService {
             VacancyRepository vacancyRepository,
             JobAnalysisRepository jobAnalysisRepository,
             VacancyJobOfferMapper vacancyJobOfferMapper,
-            CandidateProfileProvider candidateProfileProvider,
+            CandidateContextProvider candidateContextProvider,
+            CandidateContextForAnalysisSelector candidateContextForAnalysisSelector,
             JobAnalysisService jobAnalysisService,
             JobNotificationFactory jobNotificationFactory,
             JobNotificationPort jobNotificationPort,
@@ -117,7 +121,8 @@ public class VacancyRecommendationProcessingService {
         this.vacancyRepository = vacancyRepository;
         this.jobAnalysisRepository = jobAnalysisRepository;
         this.vacancyJobOfferMapper = vacancyJobOfferMapper;
-        this.candidateProfileProvider = candidateProfileProvider;
+        this.candidateContextProvider = candidateContextProvider;
+        this.candidateContextForAnalysisSelector = candidateContextForAnalysisSelector;
         this.jobAnalysisService = jobAnalysisService;
         this.jobNotificationFactory = jobNotificationFactory;
         this.jobNotificationPort = jobNotificationPort;
@@ -255,11 +260,12 @@ public class VacancyRecommendationProcessingService {
         acc.analysisAttempts++;
         Vacancy vacancy = loadVacancyOrThrow(vacancyId);
         JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
-        CandidateProfile profile = candidateProfileProvider.getProfile();
+        CandidateContextSnapshot candidateContext = candidateContextProvider.loadCurrentContext();
+        CandidateContextForAnalysis analysisContext = candidateContextForAnalysisSelector.select(candidateContext, jobOffer);
 
         JobAnalysis analysis;
         try {
-            analysis = jobAnalysisService.analyze(profile, jobOffer);
+            analysis = jobAnalysisService.analyze(analysisContext, jobOffer);
         } catch (JobAnalysisException e) {
             newTransaction.executeWithoutResult(status -> jobAnalysisRepository.releaseClaim(vacancyId));
             return new AnalysisAttempt.Failed(classifyAnalysisFailure(e));

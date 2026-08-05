@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -18,9 +19,14 @@ import com.darya.jobassistant.ai.model.AnalysisOrigin;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.ai.model.JobAnalysisModelVersion;
 import com.darya.jobassistant.ai.repository.JobAnalysisRepository;
+import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
+import com.darya.jobassistant.candidatecontext.analysis.CandidateContextSelectionMetadata;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.candidates.CandidateSkill;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.exception.VacancyNotFoundException;
@@ -61,7 +67,10 @@ class AnalyzeVacancyServiceTest {
     private VacancyJobOfferMapper vacancyJobOfferMapper;
 
     @Mock
-    private CandidateProfileProvider candidateProfileProvider;
+    private CandidateContextProvider candidateContextProvider;
+
+    @Mock
+    private CandidateContextForAnalysisSelector candidateContextForAnalysisSelector;
 
     @Mock
     private JobAnalysisService jobAnalysisService;
@@ -75,6 +84,10 @@ class AnalyzeVacancyServiceTest {
     @Mock
     private TransactionStatus transactionStatus;
 
+    private final CandidateContextForAnalysis analysisContext = new CandidateContextForAnalysis(
+            candidateProfile(), CareerHistoryAvailability.NOT_PROVIDED, List.of(),
+            CandidateContextSelectionMetadata.empty(CareerHistoryAvailability.NOT_PROVIDED, null));
+
     private AnalyzeVacancyService service;
 
     @BeforeEach
@@ -82,12 +95,14 @@ class AnalyzeVacancyServiceTest {
         service = new AnalyzeVacancyService(
                 vacancyQueryService,
                 vacancyJobOfferMapper,
-                candidateProfileProvider,
+                candidateContextProvider,
+                candidateContextForAnalysisSelector,
                 jobAnalysisService,
                 jobAnalysisRepository,
                 CLOCK,
                 new JobAnalysisProperties(STALE_AFTER),
                 transactionManager);
+        lenient().when(candidateContextForAnalysisSelector.select(any(), any())).thenReturn(analysisContext);
     }
 
     @Test
@@ -113,12 +128,12 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(analysis);
         // First call: nothing exists yet, so a fresh claim is taken and AI is called once.
         when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), eq(AnalysisOrigin.MANUAL), any()))
                 .thenReturn(Optional.of(inProgressEntity()));
@@ -145,19 +160,19 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
         when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
 
         AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
 
         assertThat(result).isEqualTo(new AnalyzeVacancyResult.Available(jobOffer, analysis, true));
-        verify(jobAnalysisService).analyze(profile, jobOffer);
+        verify(jobAnalysisService).analyze(analysisContext, jobOffer);
         verify(jobAnalysisRepository).completeClaim(VACANCY_ID, analysis, NOW);
     }
 
@@ -176,13 +191,13 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
         when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         RuntimeException providerFailure = new RuntimeException("HTTP 429 - insufficient_quota");
-        when(jobAnalysisService.analyze(profile, jobOffer))
+        when(jobAnalysisService.analyze(analysisContext, jobOffer))
                 .thenThrow(new JobAnalysisException("Failed to obtain job analysis from AI provider", providerFailure));
 
         AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
@@ -252,7 +267,7 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
@@ -260,15 +275,15 @@ class AnalyzeVacancyServiceTest {
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(inProgressEntity()));
         Instant staleThreshold = NOW.minus(STALE_AFTER);
         when(jobAnalysisRepository.reclaimStaleClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(true);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
 
         AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
 
         assertThat(result).isEqualTo(new AnalyzeVacancyResult.Available(jobOffer, analysis, true));
         verify(jobAnalysisRepository).reclaimStaleClaim(VACANCY_ID, NOW, staleThreshold);
-        verify(jobAnalysisService).analyze(profile, jobOffer);
+        verify(jobAnalysisService).analyze(analysisContext, jobOffer);
     }
 
     @Test
@@ -276,13 +291,13 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
         when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
 
         service.analyze(VACANCY_ID);
@@ -291,7 +306,7 @@ class AnalyzeVacancyServiceTest {
         // opens - never a transaction wrapping the AI call itself.
         InOrder order = inOrder(transactionManager, jobAnalysisService);
         order.verify(transactionManager).getTransaction(any(TransactionDefinition.class));
-        order.verify(jobAnalysisService).analyze(profile, jobOffer);
+        order.verify(jobAnalysisService).analyze(analysisContext, jobOffer);
         order.verify(transactionManager).getTransaction(any(TransactionDefinition.class));
     }
 
@@ -300,7 +315,7 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         JobAnalysis oldAnalysis = jobAnalysis();
         JobAnalysis newAnalysis = new JobAnalysis(
                 90, List.of("Even stronger match"), List.of(), List.of(), List.of(),
@@ -312,14 +327,14 @@ class AnalyzeVacancyServiceTest {
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(outdated));
         Instant staleThreshold = NOW.minus(STALE_AFTER);
         when(jobAnalysisRepository.attemptReanalysisClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(true);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(newAnalysis);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(newAnalysis);
         when(jobAnalysisRepository.completeReanalysis(VACANCY_ID, newAnalysis, NOW, NOW)).thenReturn(true);
 
         AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
 
         assertThat(result).isEqualTo(new AnalyzeVacancyResult.Available(jobOffer, newAnalysis, true));
-        verify(jobAnalysisService).analyze(profile, jobOffer);
+        verify(jobAnalysisService).analyze(analysisContext, jobOffer);
         verify(jobAnalysisRepository).completeReanalysis(VACANCY_ID, newAnalysis, NOW, NOW);
         verify(jobAnalysisRepository, never()).completeClaim(any(), any(), any());
     }
@@ -329,7 +344,7 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         JobAnalysis oldAnalysis = jobAnalysis();
         JobAnalysisEntity outdated = completedEntity(oldAnalysis, 1, AnalysisOrigin.MONITORING);
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
@@ -338,9 +353,9 @@ class AnalyzeVacancyServiceTest {
         when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(outdated));
         Instant staleThreshold = NOW.minus(STALE_AFTER);
         when(jobAnalysisRepository.attemptReanalysisClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(true);
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         RuntimeException providerFailure = new RuntimeException("HTTP 429 - insufficient_quota");
-        when(jobAnalysisService.analyze(profile, jobOffer))
+        when(jobAnalysisService.analyze(analysisContext, jobOffer))
                 .thenThrow(new JobAnalysisException("Failed to obtain job analysis from AI provider", providerFailure));
 
         AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
@@ -380,13 +395,13 @@ class AnalyzeVacancyServiceTest {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
         Vacancy vacancy = vacancy();
         JobOffer jobOffer = jobOffer();
-        CandidateProfile profile = candidateProfile();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
         JobAnalysis analysis = jobAnalysis();
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
         when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
         when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.of(inProgressEntity()));
-        when(candidateProfileProvider.getProfile()).thenReturn(profile);
-        when(jobAnalysisService.analyze(profile, jobOffer)).thenReturn(analysis);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(analysis);
         when(jobAnalysisRepository.completeClaim(VACANCY_ID, analysis, NOW)).thenReturn(true);
 
         service.analyze(VACANCY_ID);
@@ -446,6 +461,10 @@ class AnalyzeVacancyServiceTest {
     private JobOffer jobOffer() {
         return new JobOffer(
                 VACANCY_ID.toString(), "Backend Engineer", "Acme Corp", null, "100000 USD", "desc", "https://example.com/job", "remoteok");
+    }
+
+    private CandidateContextSnapshot candidateContextSnapshot() {
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, candidateProfile(), Optional.empty());
     }
 
     private CandidateProfile candidateProfile() {
