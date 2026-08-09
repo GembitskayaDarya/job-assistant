@@ -101,7 +101,6 @@ public final class CareerHistoryImportValidator {
             List<CareerPositionImportEntry> positions, String companyPath, List<CareerHistoryImportViolation> violations) {
         Set<String> keys = new HashSet<>();
         Set<Integer> displayOrders = new HashSet<>();
-        Set<String> projectNames = new HashSet<>();
         for (int i = 0; i < positions.size(); i++) {
             CareerPositionImportEntry position = positions.get(i);
             String path = companyPath + ".positions[" + i + "]";
@@ -134,11 +133,6 @@ public final class CareerHistoryImportValidator {
                 violations.add(violation(path + ".projects", "REQUIRED", "projects must not be null (use an empty list instead)"));
             } else {
                 validateProjects(position.projects(), path, position.startDate(), position.endDate(), violations);
-                for (CareerProjectImportEntry project : position.projects()) {
-                    if (project.name() != null && !project.name().isBlank() && !projectNames.add(project.name())) {
-                        violations.add(violation(path + ".projects", "DUPLICATE_NAME", "Duplicate project name within one position"));
-                    }
-                }
             }
         }
     }
@@ -148,12 +142,16 @@ public final class CareerHistoryImportValidator {
             List<CareerHistoryImportViolation> violations) {
         Set<String> keys = new HashSet<>();
         Set<Integer> displayOrders = new HashSet<>();
+        Set<String> names = new HashSet<>();
         for (int i = 0; i < projects.size(); i++) {
             CareerProjectImportEntry project = projects.get(i);
             String path = positionPath + ".projects[" + i + "]";
             validateKey(project.key(), path, keys, violations);
             validateRequiredText(project.name(), path + ".name", CareerHistoryImportConstraints.PROJECT_NAME_MAX_LENGTH, violations);
             validateDisplayOrder(project.displayOrder(), path + ".displayOrder", displayOrders, violations);
+            if (project.name() != null && !project.name().isBlank() && !names.add(project.name())) {
+                violations.add(violation(path + ".name", "DUPLICATE_NAME", "Duplicate project name within one position"));
+            }
 
             if (project.startDate() != null && project.endDate() != null && project.endDate().isBefore(project.startDate())) {
                 violations.add(violation(path + ".endDate", "INVALID_VALUE", "endDate must not precede startDate"));

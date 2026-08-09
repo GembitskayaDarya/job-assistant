@@ -135,7 +135,7 @@ the core web flow. Database schema is version-controlled with Flyway migrations
 candidate profile used for AI vacancy matching — target role/seniority, experience, skills with
 proficiency, languages, and work preferences — is read from the `candidate_profile` table (and
 its skill/language/preference child tables) by `PersistentCandidateProfileProvider`, the only
-`CandidateProfileProvider` bean in the application. `config/candidate-profile.yml` is now a
+`CandidateProfileProvider` bean in the application. `config/private/candidate-profile.yml` is now a
 **migration-only** input: it is read exclusively by the explicit migration workflow described
 below, never by normal runtime, and there is no YAML fallback of any kind.
 
@@ -151,8 +151,8 @@ cp config/candidate-profile.example.yml config/candidate-profile.yml
 CANDIDATE_PROFILE_MIGRATION_MODE=APPLY ./gradlew bootRun
 ```
 
-`config/candidate-profile.yml` is listed in `.gitignore`, so your personal data is never
-committed — only `config/candidate-profile.example.yml` (a generic template) is tracked. It is
+`config/private/candidate-profile.yml` is listed in `.gitignore`, so your personal data is never
+committed — only `config/examples/candidate-profile.example.yml` (a generic template) is tracked. It is
 not a secret-management mechanism, just a place to keep personal profile data out of the source
 tree, and only `APPLY` (or `DRY_RUN`) ever reads it — see `spring.config.import` in
 `application.yml`, which is `optional:` for exactly this reason.
@@ -175,7 +175,7 @@ Sprint 9 Step 1 added an additive PostgreSQL schema for Candidate Profile, skill
 at the time - see [Runtime source of truth](#runtime-source-of-truth) below for where the runtime
 provider actually ended up (Sprint 9 Step 4):
 
-- Originally, `ConfigurationCandidateProfileProvider` (reading `config/candidate-profile.yml`)
+- Originally, `ConfigurationCandidateProfileProvider` (reading `config/private/candidate-profile.yml`)
   remained the only runtime source of the Candidate Profile used for AI vacancy matching, and the
   new tables were not read or written by any workflow. Step 4 cut the runtime provider over to
   PostgreSQL and removed `ConfigurationCandidateProfileProvider` entirely.
@@ -298,7 +298,7 @@ with no YAML fallback.**
   active whenever `candidate-profile.migration.mode` is absent or `OFF` (normal runtime), and
   automatically disabled during `DRY_RUN`/`APPLY` so migration can still run against a database
   that does not have the profile yet.
-- `config/candidate-profile.yml` and `CandidateProfileProperties` are migration-only now -
+- `config/private/candidate-profile.yml` and `CandidateProfileProperties` are migration-only now -
   `YamlCandidateProfileMigrationSource` (implementing `CandidateProfileMigrationSource`, not
   `CandidateProfileProvider`) is the only reader, and only exists as a bean for
   `candidate-profile.migration.mode=DRY_RUN`/`APPLY` (Sprint 9 Step 4 correction - not merely
@@ -306,7 +306,7 @@ with no YAML fallback.**
   absent). `CandidateProfileMigrationRunner` shares the same condition.
   - **YAML isolation guarantee, precisely stated**: `spring.config.import` for that file stays
     `optional:`, which is a guarantee about *binding never failing*, not about *the file never
-    being read*. If `config/candidate-profile.yml` physically exists on disk, Spring's Config Data
+    being read*. If `config/private/candidate-profile.yml` physically exists on disk, Spring's Config Data
     machinery will still read and bind it into `CandidateProfileProperties` regardless of
     migration mode - that part of Spring Boot's own startup sequence has no awareness of this
     application's migration-mode condition. What *is* guaranteed: in normal runtime, nothing ever
@@ -493,9 +493,14 @@ CAREER_HISTORY_IMPORT_SOURCE=file:./config/career-history.yml \
 ./gradlew bootRun
 ```
 
-Manually filling in real Career History data remains the final Sprint 9 step (Step 9). Career
-History is now optionally consumed by AI vacancy-match analysis, bounded and deterministically
-selected per vacancy - see the next section.
+Sprint 9 Step 9 completed this rollout: real Career History data has been imported (`APPLY` ->
+`CREATED`) and verified end-to-end - `PersistentCandidateContextProvider` reports
+`careerHistoryAvailability = AVAILABLE` for the configured candidate profile. Career History is
+optionally consumed by AI vacancy-match analysis, bounded and deterministically selected per
+vacancy - see the next section. `config/career-history.yml` and `config/private/` remain
+gitignored; PostgreSQL, not the YAML file, is the source of truth once `APPLY` has run - the
+import workflow above exists for migration/re-import only, and normal runtime keeps
+`career-history.import.mode` `OFF`/absent.
 
 ### Candidate Context (Sprint 9 Step 8)
 
@@ -565,8 +570,18 @@ the prompt when one exists, without ever sending the full Career History unbound
 
 - **Still not implemented**: CV generation, cover-letter generation, and the interview assistant
   remain future Sprint work; no second AI call is made for relevance selection (selection is
-  entirely local/deterministic); `JobAnalysisModelVersion.CURRENT` was deliberately **not** bumped
-  for this change, so no existing completed analysis is automatically reanalyzed.
+  entirely local/deterministic).
+- **Model version rollout**: `JobAnalysisModelVersion.CURRENT` was deliberately held at `2` until
+  real Career History existed and had been verified, then bumped to `3` as its own Sprint 9 Step 9
+  action once that prerequisite was met, followed by one controlled real-AI smoke test (a single
+  `/analyze`-equivalent call against one existing vacancy) confirming the enriched prompt behaves
+  as expected. Bumping the constant performs no database write and calls no AI by itself - it only
+  changes which already-`COMPLETED` rows the existing reanalysis-claim mechanism in
+  `AnalyzeVacancyService` (`acquireForCompletedRow`) treats as stale. `JobMonitoringService` and
+  `VacancyRecommendationProcessingService` deliberately reuse any existing analysis regardless of
+  its `analysisVersion` and never trigger reanalysis themselves - only a manual `/analyze` (or the
+  guided-import "Analyze" callback) can upgrade an outdated row, one vacancy at a time, so no bulk
+  reanalysis or AI spend ever happens as a side effect of the version bump.
 
 ## How to run
 
@@ -652,7 +667,7 @@ directly):
 
 | Variable                        | Default        | Description                                     |
 |----------------------------------|-----------------|---------------------------------------------------|
-| `CANDIDATE_PROFILE_PATH`         | `./config/candidate-profile.yml` | Path to the candidate profile YAML file - migration-only, see [Candidate profile](#candidate-profile) |
+| `CANDIDATE_PROFILE_PATH`         | `config/private/candidate-profile.yml` | Path to the candidate profile YAML file - migration-only, see [Candidate profile](#candidate-profile) |
 | `CANDIDATE_PROFILE_MIGRATION_MODE` | *(unset, i.e. `OFF`)* | `DRY_RUN`/`APPLY` runs the explicit one-time YAML→PostgreSQL migration on startup; unset/`OFF` runs normal PostgreSQL runtime |
 | `CANDIDATE_PROFILE_RUNTIME_PROFILE_KEY` | `primary`      | Business key `PersistentCandidateProfileProvider` looks the runtime profile up by |
 | `CAREER_HISTORY_IMPORT_MODE`     | `OFF`           | `DRY_RUN`/`APPLY` runs the explicit Career History import on startup; `OFF` (default) reads no source file, see [Career History](#career-history) |
@@ -746,6 +761,30 @@ _Not yet available — add screenshots here as the project matures:_
       (models exist, no endpoints yet)
 - [ ] Pagination and filtering on `GET /api/applications`
 - [ ] Scheduled reminders for upcoming interviews via the `scheduler` package
+- [ ] Automated stale-analysis reprocessing policy — `JobMonitoringService` and
+      `VacancyRecommendationProcessingService` currently reuse any existing analysis regardless of
+      `analysisVersion` by design (see [Model version rollout](#candidate-context-sprint-9-step-8));
+      define an explicit, budget-bounded policy (cost budget, max analyses per run/day, target
+      model version, retry behavior, notification behavior, observability) before any automated
+      workflow is allowed to reanalyze stale rows on its own
+- [ ] AI usage/cost observability — `SpringAiJobAnalysisAdapter` calls `ChatClient...entity(...)`
+      directly and discards response metadata, so prompt/completion/total token usage and
+      estimated cost are not currently captured anywhere; design this without persisting prompts
+      or private Career History content
+- [ ] Candidate Context fingerprint — `JobAnalysisModelVersion.CURRENT` is the only signal that
+      marks a completed analysis stale today; consider also fingerprinting/versioning the actual
+      candidate context (profile + selected Career History) used to produce an analysis, so a
+      candidate-data change can independently invalidate it without waiting for a model-version bump
+- [ ] Shared analysis orchestration — `AnalyzeVacancyService`, `JobMonitoringService`, and
+      `VacancyRecommendationProcessingService` each independently implement the same
+      `CandidateContextProvider.loadCurrentContext()` → `CandidateContextForAnalysisSelector.select()`
+      → `JobAnalysisService.analyze()` sequence; consider one shared application-level orchestration
+      component so the bounded-context invariant can't be bypassed by a future caller written
+      without noticing the pattern
+- [ ] Candidate Context selector tuning — current limits (`candidate-context.analysis.*`, see above)
+      were sized before any real Career History existed; revisit them with real usage evidence
+      (e.g. the Sprint 9 Step 9 smoke test selected 4/4 positions and 5/5 projects at ~5000 of the
+      12000-character budget) once more real vacancies have been analyzed - not an immediate change
 
 ## License
 

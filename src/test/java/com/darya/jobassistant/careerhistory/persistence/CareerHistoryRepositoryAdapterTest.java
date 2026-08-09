@@ -235,6 +235,49 @@ class CareerHistoryRepositoryAdapterTest {
         assertThat(statistics.getQueryExecutionCount()).isLessThanOrEqualTo(9);
     }
 
+    /**
+     * Proves the import-validator fix's persistence side: two positions at the same company, each
+     * with a project of the same name (the real "same continuous project, position title changed"
+     * scenario), both persist as distinct rows under {@code uk_career_project_position_id_name}
+     * (scoped to {@code career_position_id}, not {@code career_company_id}), reload correctly, and
+     * keep distinct ids under their own owning position.
+     */
+    @Test
+    void twoPositionsInSameCompany_canEachPersistAProjectWithTheSameName() {
+        UUID profileId = candidateProfile("same-project-name-" + UUID.randomUUID()).getId();
+        CareerProject projectInPositionA = new CareerProject(null, "Shared Platform", null, null, null, 0, List.of(), List.of(), List.of());
+        CareerProject projectInPositionB = new CareerProject(null, "Shared Platform", null, null, null, 0, List.of(), List.of(), List.of());
+        CareerPosition positionA = new CareerPosition(null, "Senior Backend Engineer", null, null, null,
+                LocalDate.of(2020, 1, 1), LocalDate.of(2022, 1, 1), false, null, 0, List.of(), List.of(), List.of(projectInPositionA));
+        CareerPosition positionB = new CareerPosition(null, "Component Lead", null, null, null,
+                LocalDate.of(2022, 1, 1), null, true, null, 1, List.of(), List.of(), List.of(projectInPositionB));
+        CareerCompany company = new CareerCompany(null, "Example Systems", null, null, null, null, 0, List.of(positionA, positionB));
+
+        CareerHistoryAggregate saved = adapter().save(new CareerHistoryAggregate(null, profileId, List.of(company), 0L));
+
+        CareerPosition savedPositionA = saved.companies().get(0).positions().get(0);
+        CareerPosition savedPositionB = saved.companies().get(0).positions().get(1);
+        UUID projectIdA = savedPositionA.projects().get(0).id();
+        UUID projectIdB = savedPositionB.projects().get(0).id();
+        assertThat(projectIdA).isNotNull();
+        assertThat(projectIdB).isNotNull();
+        assertThat(projectIdA).isNotEqualTo(projectIdB);
+
+        entityManager.flush();
+        entityManager.clear();
+        CareerHistoryAggregate reloaded = adapter().findByCandidateProfileId(profileId).orElseThrow();
+        CareerPosition reloadedPositionA = reloaded.companies().get(0).positions().get(0);
+        CareerPosition reloadedPositionB = reloaded.companies().get(0).positions().get(1);
+        assertThat(reloadedPositionA.title()).isEqualTo("Senior Backend Engineer");
+        assertThat(reloadedPositionB.title()).isEqualTo("Component Lead");
+        assertThat(reloadedPositionA.projects()).extracting(CareerProject::name).containsExactly("Shared Platform");
+        assertThat(reloadedPositionB.projects()).extracting(CareerProject::name).containsExactly("Shared Platform");
+        assertThat(reloadedPositionA.projects().get(0).id()).isEqualTo(projectIdA);
+        assertThat(reloadedPositionB.projects().get(0).id()).isEqualTo(projectIdB);
+        assertThat(careerProjectRepository.findAllByCareerPositionIdOrderByDisplayOrderAsc(reloadedPositionA.id())).hasSize(1);
+        assertThat(careerProjectRepository.findAllByCareerPositionIdOrderByDisplayOrderAsc(reloadedPositionB.id())).hasSize(1);
+    }
+
     // ==================== 13-18. Child-only updates increment root version ====================
 
     @Test

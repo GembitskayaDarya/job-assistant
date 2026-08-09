@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
+import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
+import com.darya.jobassistant.careerhistory.aggregate.CareerProject;
 import com.darya.jobassistant.careerhistory.importing.source.CareerAchievementImportEntry;
 import com.darya.jobassistant.careerhistory.importing.source.CareerCompanyImportEntry;
 import com.darya.jobassistant.careerhistory.importing.source.CareerHistoryImportDocument;
@@ -13,6 +16,7 @@ import com.darya.jobassistant.careerhistory.importing.source.CareerResponsibilit
 import com.darya.jobassistant.careerhistory.importing.source.CareerTechnologyImportEntry;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class CareerHistoryImportValidatorTest {
@@ -141,6 +145,68 @@ class CareerHistoryImportValidatorTest {
                 .isInstanceOf(CareerHistoryImportValidationException.class)
                 .satisfies(e -> assertThat(((CareerHistoryImportValidationException) e).violations())
                         .anySatisfy(v -> assertThat(v.violationType()).isEqualTo("DUPLICATE_KEY")));
+    }
+
+    @Test
+    void duplicateProjectNameWithinPosition_isRejected() {
+        CareerProjectImportEntry first = validProjectWithName("core-platform-a", "Core Platform", 0);
+        CareerProjectImportEntry second = validProjectWithName("core-platform-b", "Core Platform", 1);
+        CareerPositionImportEntry position = new CareerPositionImportEntry(
+                "backend", "Demo Backend Engineer", null, null, null, LocalDate.of(2021, 1, 1), null, true, null, 0,
+                List.of(), List.of(), List.of(first, second));
+        CareerCompanyImportEntry company = new CareerCompanyImportEntry(
+                "example-systems", "Example Systems", null, null, null, null, 0, List.of(position));
+        CareerHistoryImportDocument document = new CareerHistoryImportDocument(1, "primary", null, List.of(company));
+
+        CareerHistoryImportValidationException exception = catchValidationException(document);
+        assertThat(exception.violations()).anySatisfy(v -> {
+            assertThat(v.violationType()).isEqualTo("DUPLICATE_NAME");
+            assertThat(v.path()).isEqualTo("companies[0].positions[0].projects[1].name");
+        });
+    }
+
+    @Test
+    void sameProjectName_acrossDifferentPositionsOfSameCompany_isAllowed() {
+        CareerProjectImportEntry projectInPositionA = validProjectWithName("shared-platform", "Shared Platform", 0);
+        CareerProjectImportEntry projectInPositionB = validProjectWithName("shared-platform", "Shared Platform", 0);
+        CareerPositionImportEntry positionA = new CareerPositionImportEntry(
+                "position-a", "Position A", null, null, null, LocalDate.of(2019, 1, 1), LocalDate.of(2021, 1, 1), false, null, 0,
+                List.of(), List.of(), List.of(projectInPositionA));
+        CareerPositionImportEntry positionB = new CareerPositionImportEntry(
+                "position-b", "Position B", null, null, null, LocalDate.of(2021, 1, 1), null, true, null, 1,
+                List.of(), List.of(), List.of(projectInPositionB));
+        CareerCompanyImportEntry company = new CareerCompanyImportEntry(
+                "example-systems", "Example Systems", null, null, null, null, 0, List.of(positionA, positionB));
+        CareerHistoryImportDocument document = new CareerHistoryImportDocument(1, "primary", null, List.of(company));
+
+        assertThatCode(() -> CareerHistoryImportValidator.validate(document)).doesNotThrowAnyException();
+    }
+
+    /**
+     * Regression test for the role-transition shape that motivated this fix: a candidate stays on
+     * the same continuous project while their position title changes (e.g. Senior Backend
+     * Engineer -> Component Lead) at the same company. Fictional data - see {@code
+     * roleTransitionDocument()}.
+     */
+    @Test
+    void sameProjectName_acrossRoleTransitionAtSameCompany_isAllowed() {
+        assertThatCode(() -> CareerHistoryImportValidator.validate(roleTransitionDocument())).doesNotThrowAnyException();
+    }
+
+    @Test
+    void validatorAcceptedDocument_withSameProjectNameAcrossPositions_mapsToAggregateWithoutViolatingDomainInvariants() {
+        CareerHistoryImportDocument document = roleTransitionDocument();
+        CareerHistoryImportValidator.validate(document);
+
+        CareerHistoryAggregate aggregate = CareerHistoryImportMapper.toAggregate(document, UUID.randomUUID(), null);
+
+        CareerCompany company = aggregate.companies().get(0);
+        assertThat(company.positions()).hasSize(2);
+        CareerProject firstProject = company.positions().get(0).projects().get(0);
+        CareerProject secondProject = company.positions().get(1).projects().get(0);
+        assertThat(firstProject.name()).isEqualTo("Core Platform");
+        assertThat(secondProject.name()).isEqualTo("Core Platform");
+        assertThat(firstProject.id()).isNotEqualTo(secondProject.id());
     }
 
     @Test
@@ -332,6 +398,27 @@ class CareerHistoryImportValidatorTest {
 
     private CareerProjectImportEntry validProject(String key, int displayOrder) {
         return new CareerProjectImportEntry(key, "Billing Platform", null, null, null, displayOrder, List.of(), List.of(), List.of());
+    }
+
+    private CareerProjectImportEntry validProjectWithName(String key, String name, int displayOrder) {
+        return new CareerProjectImportEntry(key, name, null, null, null, displayOrder, List.of(), List.of(), List.of());
+    }
+
+    /** Fictional data mirroring the real role-transition shape: same project, same company, two successive positions. */
+    private CareerHistoryImportDocument roleTransitionDocument() {
+        CareerProjectImportEntry projectAsSeniorEngineer = validProjectWithName("core-platform", "Core Platform", 0);
+        CareerProjectImportEntry projectAsComponentLead = validProjectWithName("core-platform", "Core Platform", 0);
+        CareerPositionImportEntry seniorEngineer = new CareerPositionImportEntry(
+                "senior-backend-engineer", "Senior Backend Engineer", null, null, null,
+                LocalDate.of(2023, 2, 1), LocalDate.of(2026, 2, 28), false, null, 0,
+                List.of(), List.of(), List.of(projectAsSeniorEngineer));
+        CareerPositionImportEntry componentLead = new CareerPositionImportEntry(
+                "component-lead", "Component Lead", null, null, null,
+                LocalDate.of(2026, 2, 1), null, true, null, 1,
+                List.of(), List.of(), List.of(projectAsComponentLead));
+        CareerCompanyImportEntry company = new CareerCompanyImportEntry(
+                "zenith-robotics", "Zenith Robotics", null, null, null, null, 1, List.of(seniorEngineer, componentLead));
+        return new CareerHistoryImportDocument(1, "primary", null, List.of(company));
     }
 
     private CareerPositionImportEntry withDisplayOrder(CareerPositionImportEntry position, int displayOrder) {

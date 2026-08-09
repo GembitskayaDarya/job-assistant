@@ -31,12 +31,15 @@ logs/
 !.env.example
 
 ### Candidate profile (personal data) ###
-config/candidate-profile.yml
-!config/candidate-profile.example.yml
+config/private/candidate-profile.yml
+!config/examples/candidate-profile.example.yml
 
 ### Career history import source (personal data - Sprint 9 Step 7) ###
 config/career-history.yml
 !config/examples/career-history-import.example.yml
+
+### Career history private draft workspace (personal data - Sprint 9 Step 9 Task 1) ###
+/config/private/
 
 ### Database backups (local pg_dump snapshots - never committed) ###
 *.dump

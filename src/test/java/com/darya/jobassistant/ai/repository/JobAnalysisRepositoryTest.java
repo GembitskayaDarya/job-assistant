@@ -267,6 +267,115 @@ class JobAnalysisRepositoryTest {
         }
     }
 
+    /** Sprint 9 Step 9 scenario C: brand-new rows, via both entry points, are stamped at {@link JobAnalysisModelVersion#CURRENT}. */
+    @Test
+    void newlyCreatedRows_useCurrentModelVersion() {
+        UUID claimedVacancyId = persistVacancy().getId();
+        Optional<JobAnalysisEntity> claimed = jobAnalysisRepository.claimIfAbsent(claimedVacancyId, NOW, AnalysisOrigin.MANUAL, NOW);
+        UUID persistedVacancyId = persistVacancy().getId();
+        PersistedJobAnalysis persisted = jobAnalysisRepository.persist(persistedVacancyId, analysis(), AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(claimed).isPresent();
+        assertThat(claimed.get().getAnalysisVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+        assertThat(persisted.analysisVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+        JobAnalysisEntity reloadedPersisted = jobAnalysisRepository.findByVacancyId(persistedVacancyId).orElseThrow();
+        assertThat(reloadedPersisted.getAnalysisVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+    }
+
+    /**
+     * Sprint 9 Step 9 scenario A: a real, pre-existing {@code analysisVersion=2} row (exactly the
+     * shape production data was left in before this sprint's {@code CURRENT} bump to 3) is
+     * eligible for reanalysis.
+     */
+    @Test
+    void attemptReanalysisClaim_version2CompletedRow_isEligibleWhenCurrentIsThree() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), 2, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        entityManager.clear();
+
+        boolean claimed = jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(claimed).isTrue();
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getReanalysisTargetVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+        assertThat(reloaded.getAnalysisVersion()).isEqualTo(2);
+    }
+
+    /**
+     * Sprint 9 Step 9 scenario D: a successful reanalysis of a real {@code analysisVersion=2} row
+     * upgrades it to {@link JobAnalysisModelVersion#CURRENT} (3) via exactly one row update - the
+     * same atomic {@code completeReanalysisIfClaimOwned} statement every other reanalysis uses.
+     */
+    @Test
+    void completeReanalysis_version2Row_upgradesToCurrentModelVersionThree() {
+        UUID vacancyId = persistVacancy().getId();
+        persistCompletedAnalysis(vacancyId, analysis(), 2, AnalysisOrigin.MONITORING);
+        entityManager.flush();
+        jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1));
+        entityManager.flush();
+        entityManager.clear();
+        JobAnalysis newAnalysis = new JobAnalysis(
+                92, List.of("Even stronger match"), List.of(), List.of(), List.of(),
+                "6 years vs. 5+ requested - requirement met.", "Remote preference matches.", "Great match");
+
+        boolean applied = jobAnalysisRepository.completeReanalysis(vacancyId, newAnalysis, NOW, NOW.plusSeconds(10));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(applied).isTrue();
+        JobAnalysisEntity reloaded = jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow();
+        assertThat(reloaded.getAnalysisVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT).isEqualTo(3);
+        assertThat(reloaded.getAnalysisOrigin()).isEqualTo(AnalysisOrigin.MANUAL);
+        assertThat(JobAnalysisRepository.toDomain(reloaded).analysis()).isEqualTo(newAnalysis);
+    }
+
+    /**
+     * Sprint 9 Step 9 scenario E: the existing exactly-one-winner concurrency guarantee, exercised
+     * against the real production shape (existing analysis at version 2, {@code CURRENT}=3) rather
+     * than the generic version-1 fixture above.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void attemptReanalysisClaim_concurrentCallsForVersion2Row_exactlyOneWinsWhenCurrentIsThree() throws Exception {
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+        UUID vacancyId = transactionTemplate.execute(status -> {
+            UUID id = persistVacancy().getId();
+            persistCompletedAnalysis(id, analysis(), 2, AnalysisOrigin.MONITORING);
+            return id;
+        });
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            List<Future<Boolean>> futures = new ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                futures.add(executor.submit(() -> {
+                    barrier.await();
+                    return transactionTemplate.execute(
+                            status -> jobAnalysisRepository.attemptReanalysisClaim(vacancyId, NOW, NOW.minusSeconds(1)));
+                }));
+            }
+
+            List<Boolean> results = new ArrayList<>();
+            for (Future<Boolean> future : futures) {
+                results.add(future.get(10, TimeUnit.SECONDS));
+            }
+
+            long winners = results.stream().filter(Boolean::booleanValue).count();
+            assertThat(winners).isEqualTo(1);
+            JobAnalysisEntity reloaded = transactionTemplate.execute(
+                    status -> jobAnalysisRepository.findByVacancyId(vacancyId).orElseThrow());
+            assertThat(reloaded.getAnalysisVersion()).isEqualTo(2);
+            assertThat(reloaded.getReanalysisTargetVersion()).isEqualTo(JobAnalysisModelVersion.CURRENT);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
     @Test
     void attemptReanalysisClaim_outdatedCompletedRow_claimsSuccessfullyAndPreservesOldContent() {
         UUID vacancyId = persistVacancy().getId();

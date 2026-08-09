@@ -339,6 +339,71 @@ class AnalyzeVacancyServiceTest {
         verify(jobAnalysisRepository, never()).completeClaim(any(), any(), any());
     }
 
+    /**
+     * Sprint 9 Step 9 scenario A/D: a real, pre-existing {@code analysisVersion=2} row (exactly the
+     * shape production data was left in before this sprint's {@code CURRENT} bump) is eligible for
+     * reanalysis and, on a successful mocked AI call, upgrades via exactly one {@code
+     * completeReanalysis} call - never a second write, never {@code completeClaim}.
+     */
+    @Test
+    void analyze_existingVersion2CompletedAnalysis_isEligibleForReanalysisAndUpgradesOnSuccess() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        Vacancy vacancy = vacancy();
+        JobOffer jobOffer = jobOffer();
+        CandidateContextSnapshot candidateContext = candidateContextSnapshot();
+        JobAnalysis oldAnalysis = jobAnalysis();
+        JobAnalysis newAnalysis = new JobAnalysis(
+                90, List.of("Even stronger match"), List.of(), List.of(), List.of(),
+                "6 years vs. 5+ requested - requirement met.", "Remote preference matches.", "Great match");
+        JobAnalysisEntity existingV2 = completedEntity(oldAnalysis, 2, AnalysisOrigin.MONITORING);
+        when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(existingV2));
+        Instant staleThreshold = NOW.minus(STALE_AFTER);
+        when(jobAnalysisRepository.attemptReanalysisClaim(VACANCY_ID, NOW, staleThreshold)).thenReturn(true);
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
+        when(jobAnalysisService.analyze(analysisContext, jobOffer)).thenReturn(newAnalysis);
+        when(jobAnalysisRepository.completeReanalysis(VACANCY_ID, newAnalysis, NOW, NOW)).thenReturn(true);
+
+        AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
+
+        assertThat(result).isEqualTo(new AnalyzeVacancyResult.Available(jobOffer, newAnalysis, true));
+        verify(jobAnalysisRepository).attemptReanalysisClaim(VACANCY_ID, NOW, staleThreshold);
+        verify(jobAnalysisService).analyze(analysisContext, jobOffer);
+        // Exactly one replacement write - the repository's own completeReanalysis default method
+        // is what stamps the persisted row at JobAnalysisModelVersion.CURRENT (3); see
+        // JobAnalysisRepositoryTest for that persisted-version proof against a real database.
+        verify(jobAnalysisRepository).completeReanalysis(VACANCY_ID, newAnalysis, NOW, NOW);
+        verify(jobAnalysisRepository, never()).completeClaim(any(), any(), any());
+    }
+
+    /**
+     * Sprint 9 Step 9 scenario B: a row already at {@code JobAnalysisModelVersion.CURRENT} (3) is
+     * never reanalyzed solely because of its version - mirrors {@code
+     * analyze_currentVersionAnalysis_repeatedManualCallsPerformOnlyOneAiCallTotal} but states the
+     * literal current version explicitly for this sprint's regression scenario.
+     */
+    @Test
+    void analyze_existingVersion3CompletedAnalysis_remainsCurrent_isNotReanalyzed() {
+        when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);
+        Vacancy vacancy = vacancy();
+        JobOffer jobOffer = jobOffer();
+        JobAnalysis analysis = jobAnalysis();
+        JobAnalysisEntity existingV3 = completedEntity(analysis, 3, AnalysisOrigin.MANUAL);
+        when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(jobOffer);
+        when(jobAnalysisRepository.claimIfAbsent(eq(VACANCY_ID), any(), any(), any())).thenReturn(Optional.empty());
+        when(jobAnalysisRepository.findByVacancyId(VACANCY_ID)).thenReturn(Optional.of(existingV3));
+
+        AnalyzeVacancyResult result = service.analyze(VACANCY_ID);
+
+        assertThat(result).isEqualTo(new AnalyzeVacancyResult.Available(jobOffer, analysis, false));
+        verify(jobAnalysisRepository, never()).attemptReanalysisClaim(any(), any(), any());
+        verify(jobAnalysisService, never()).analyze(any(), any());
+        verify(jobAnalysisRepository).markManuallyReviewedIfAbsent(eq(VACANCY_ID), any());
+    }
+
     @Test
     void analyze_reanalysisProviderFailure_releasesReanalysisClaimAndLeavesOldResultUntouched() {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transactionStatus);

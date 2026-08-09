@@ -9,28 +9,26 @@ package com.darya.jobassistant.ai.model;
  * environment property for it.
  *
  * <p>Analyses persisted before this versioning concept existed are treated as legacy version 1;
- * {@link #CURRENT} starts at 2 to leave that value free for them.
+ * {@link #CURRENT} started at 2 to leave that value free for them.
  *
- * <h2>Sprint 9 Step 9 rollout note</h2>
+ * <h2>Sprint 9 Step 9: bumped from 2 to 3</h2>
  *
  * Sprint 9 Step 8 integrated optional Career History evidence into the prompt but deliberately
- * left {@link #CURRENT} at {@code 2} - no real Career History exists yet, so there is nothing for
- * the enriched prompt to evaluate, and bumping this would trigger automatic reanalysis (via the
- * existing reanalysis-claim mechanism in {@code AnalyzeVacancyService}) of every already-completed
- * vacancy for no benefit. Once real Career History has been imported and manually verified (Step
- * 9), bump {@link #CURRENT} from {@code 2} to {@code 3} as its own deliberate step:
- *
- * <ol>
- *   <li>bump {@code CURRENT} from 2 to 3;
- *   <li>run one controlled smoke analysis ({@code /analyze} against a single known vacancy) to
- *       confirm the enriched prompt behaves as expected against real data;
- *   <li>allow the existing reanalysis-claim mechanism to upgrade older analyses over time - no new
- *       invalidation mechanism is needed for this.
- * </ol>
+ * left {@link #CURRENT} at {@code 2} until real Career History had actually been imported and
+ * manually verified - bumping earlier would have triggered automatic reanalysis (via the existing
+ * reanalysis-claim mechanism in {@code AnalyzeVacancyService}) of every already-completed vacancy
+ * for no benefit, since there was nothing yet for the enriched prompt to evaluate. That
+ * prerequisite is now complete, so {@link #CURRENT} moves to {@code 3}. This change alone performs
+ * no database write and calls no AI: it only changes the eligibility test {@code
+ * AnalyzeVacancyService#acquireForCompletedRow} applies to already-{@code COMPLETED} rows.
+ * Existing {@code analysisVersion=2} rows stay exactly as they are - {@code 2}, with their
+ * original content - until each is individually reanalyzed through the normal {@code /analyze}
+ * workflow, one vacancy at a time, exactly as the reanalysis-claim mechanism already does for any
+ * other outdated version.
  */
 public final class JobAnalysisModelVersion {
 
-    public static final int CURRENT = 2;
+    public static final int CURRENT = 3;
 
     private JobAnalysisModelVersion() {
     }
