@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
@@ -37,17 +38,34 @@ class AiIntegrationBoundaryArchitectureTest {
     private static final String BOUNDARY_PACKAGE = "com.darya.jobassistant.integrations.ai.openai";
 
     /**
-     * The full Career History aggregate graph - every type under this package is forbidden here,
-     * since only the bounded {@code candidatecontext.analysis.SelectedCareer*} projection may be
-     * used to build a prompt.
+     * The full Career History and Candidate Profile aggregate graphs - every type under either
+     * package is forbidden here, since only the bounded {@code candidatecontext.analysis.SelectedCareer*}/
+     * {@code candidatecontext.applicationmaterials.model.SelectedCareer*} projections (and the
+     * shared, already-bounded {@code candidates.CandidateProfile}) may be used to build a prompt.
+     * {@code candidates.aggregate.*} was added in Sprint 10 Step 3 alongside {@link
+     * SpringAiApplicationMaterialsAdapter} - it was never referenced by the pre-existing analysis/
+     * extraction adapters either, so adding it here only closes a gap, it does not weaken anything
+     * those adapters relied on.
      */
-    private static final String FORBIDDEN_CAREER_HISTORY_AGGREGATE_PACKAGE_PREFIX =
-            "com.darya.jobassistant.careerhistory.aggregate.";
+    private static final Set<String> FORBIDDEN_AGGREGATE_PACKAGE_PREFIXES = Set.of(
+            "com.darya.jobassistant.careerhistory.aggregate.",
+            "com.darya.jobassistant.candidates.aggregate.");
+
+    /**
+     * Persistence/JPA entities - added in Sprint 10 Step 3: {@link SpringAiApplicationMaterialsAdapter}
+     * must build its prompt entirely from the already-bounded {@code
+     * CandidateContextForApplicationMaterials}/{@code JobOffer}, never a {@code Vacancy}/{@code
+     * ApplicationMaterialGenerationEntity} JPA entity.
+     */
+    private static final Set<String> FORBIDDEN_PERSISTENCE_PACKAGE_PREFIXES = Set.of(
+            "jakarta.persistence.",
+            "org.springframework.data.jpa.");
 
     /**
      * The raw Candidate Context snapshot - carries an unbounded {@code Optional<CareerHistoryAggregate>}
-     * and must never reach this package either; selection into {@code CandidateContextForAnalysis}
-     * is the caller's responsibility, not {@code JobAnalysisService}'s.
+     * and must never reach this package either; selection into {@code CandidateContextForAnalysis}/
+     * {@code CandidateContextForApplicationMaterials} is the caller's responsibility, never this
+     * package's adapters'.
      */
     private static final String FORBIDDEN_CANDIDATE_CONTEXT_SNAPSHOT_TYPE =
             "com.darya.jobassistant.candidatecontext.CandidateContextSnapshot";
@@ -99,10 +117,17 @@ class AiIntegrationBoundaryArchitectureTest {
 
     private void checkReference(Class<?> owner, String memberDescription, Class<?> referencedType, List<String> violations) {
         String referencedName = referencedType.isArray() ? referencedType.componentType().getName() : referencedType.getName();
-        if (referencedName.startsWith(FORBIDDEN_CAREER_HISTORY_AGGREGATE_PACKAGE_PREFIX)) {
-            violations.add(owner.getName() + " " + memberDescription + " references forbidden Career History aggregate type "
-                    + referencedName);
-            return;
+        for (String forbiddenPrefix : FORBIDDEN_AGGREGATE_PACKAGE_PREFIXES) {
+            if (referencedName.startsWith(forbiddenPrefix)) {
+                violations.add(owner.getName() + " " + memberDescription + " references forbidden aggregate type " + referencedName);
+                return;
+            }
+        }
+        for (String forbiddenPrefix : FORBIDDEN_PERSISTENCE_PACKAGE_PREFIXES) {
+            if (referencedName.startsWith(forbiddenPrefix)) {
+                violations.add(owner.getName() + " " + memberDescription + " references forbidden persistence type " + referencedName);
+                return;
+            }
         }
         if (referencedName.equals(FORBIDDEN_CANDIDATE_CONTEXT_SNAPSHOT_TYPE)) {
             violations.add(owner.getName() + " " + memberDescription + " references forbidden raw snapshot type " + referencedName);

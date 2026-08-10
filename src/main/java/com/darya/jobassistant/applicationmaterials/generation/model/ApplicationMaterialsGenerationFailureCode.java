@@ -1,0 +1,28 @@
+package com.darya.jobassistant.applicationmaterials.generation.model;
+
+/**
+ * Sprint 10 Step 3: small, safe failure codes for {@link
+ * com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGeneration#failureCode()}
+ * - the stable {@link #name()} string is what actually gets persisted (V21's {@code failure_code}
+ * column has no CHECK constraint on its allowed values, deliberately left open by Step 1 for this
+ * exact future need). Never a stack trace, raw provider error, or any other unsafe detail - see
+ * {@code GenerateApplicationMaterialsUseCase}'s failure-message handling for what accompanies each
+ * code.
+ */
+public enum ApplicationMaterialsGenerationFailureCode {
+
+    /** The current Candidate Profile/Career History no longer matches what the generation recorded. */
+    CANDIDATE_CONTEXT_VERSION_MISMATCH,
+
+    /** The AI provider request itself failed (network, auth, rate limit, provider-side error). */
+    AI_PROVIDER_ERROR,
+
+    /** The AI response could not be parsed into the expected structured shape. */
+    MALFORMED_AI_RESPONSE,
+
+    /** The parsed AI response failed deterministic provenance/structural validation. */
+    RESULT_VALIDATION_FAILED,
+
+    /** A validated result could not be persisted, but a safe FAILED transition was still possible. */
+    PERSISTENCE_FAILURE
+}
