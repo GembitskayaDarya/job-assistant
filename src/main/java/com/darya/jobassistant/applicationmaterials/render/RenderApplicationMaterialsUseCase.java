@@ -231,6 +231,8 @@ public class RenderApplicationMaterialsUseCase {
         Optional<ApplicationMaterialArtifact> existing =
                 artifactRepositoryPort.find(generation.id(), materialType, ApplicationMaterialFormat.PDF, RENDERER_VERSION);
         if (existing.isPresent()) {
+            log.info("Reusing existing application material artifact for generation {}, materialType {}, rendererVersion {}",
+                    generation.id(), materialType, RENDERER_VERSION);
             return existing.get();
         }
 
@@ -245,11 +247,16 @@ public class RenderApplicationMaterialsUseCase {
                 storedFile.storageKey(), fileName, document.contentType(), storedFile.sizeBytes(), storedFile.sha256Checksum());
 
         try {
-            return artifactTransaction.execute(status -> artifactRepositoryPort.save(toSave));
+            ApplicationMaterialArtifact saved = artifactTransaction.execute(status -> artifactRepositoryPort.save(toSave));
+            log.info("Created application material artifact for generation {}, materialType {}, rendererVersion {}, sizeBytes {}",
+                    generation.id(), materialType, RENDERER_VERSION, storedFile.sizeBytes());
+            return saved;
         } catch (ApplicationMaterialArtifactAlreadyExistsException e) {
             // Lost a concurrent race - the file we just stored is byte-identical to the winner's
             // (same deterministic key => same deterministic renderer output => FileStoragePort's
             // own idempotent-store already proved this), so reuse the winner's metadata row.
+            log.info("Lost a concurrent artifact creation race for generation {}, materialType {} - reusing the winner's artifact",
+                    generation.id(), materialType);
             return artifactRepositoryPort.find(generation.id(), materialType, ApplicationMaterialFormat.PDF, RENDERER_VERSION)
                     .orElseThrow(() -> new IllegalStateException(
                             "Lost a concurrent artifact metadata creation race for generation '" + generation.id()

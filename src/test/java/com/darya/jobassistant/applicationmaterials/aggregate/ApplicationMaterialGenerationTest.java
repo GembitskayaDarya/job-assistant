@@ -3,6 +3,7 @@ package com.darya.jobassistant.applicationmaterials.aggregate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
@@ -270,5 +271,70 @@ class ApplicationMaterialGenerationTest {
         assertThat(completed.id()).isEqualTo(id);
         assertThat(completed.vacancyId()).isEqualTo(vacancyId);
         assertThat(completed.version()).isEqualTo(4L);
+    }
+
+    // ==================== isStaleInProgress (Sprint 10 Step 6) ====================
+
+    @Test
+    void isStaleInProgress_pending_isNeverStale() {
+        ApplicationMaterialGeneration pending = ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, requestedAt);
+
+        assertThat(pending.isStaleInProgress(requestedAt.plus(Duration.ofDays(1)), Duration.ofMinutes(15))).isFalse();
+    }
+
+    @Test
+    void isStaleInProgress_completed_isNeverStale() {
+        ApplicationMaterialGeneration completed = ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, requestedAt)
+                .start(requestedAt.plusSeconds(1))
+                .complete(requestedAt.plusSeconds(2));
+
+        assertThat(completed.isStaleInProgress(requestedAt.plus(Duration.ofDays(1)), Duration.ofMinutes(15))).isFalse();
+    }
+
+    @Test
+    void isStaleInProgress_failed_isNeverStale() {
+        ApplicationMaterialGeneration failed = ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, requestedAt)
+                .start(requestedAt.plusSeconds(1))
+                .fail("AI_PROVIDER_ERROR", "boom", requestedAt.plusSeconds(2));
+
+        assertThat(failed.isStaleInProgress(requestedAt.plus(Duration.ofDays(1)), Duration.ofMinutes(15))).isFalse();
+    }
+
+    @Test
+    void isStaleInProgress_inProgressWellWithinTimeout_isNotStale() {
+        ApplicationMaterialGeneration inProgress =
+                ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, requestedAt).start(requestedAt.plusSeconds(1));
+        Instant now = requestedAt.plus(Duration.ofMinutes(5));
+
+        assertThat(inProgress.isStaleInProgress(now, Duration.ofMinutes(15))).isFalse();
+    }
+
+    @Test
+    void isStaleInProgress_inProgressPastTimeout_isStale() {
+        ApplicationMaterialGeneration inProgress =
+                ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, requestedAt).start(requestedAt.plusSeconds(1));
+        Instant now = requestedAt.plusSeconds(1).plus(Duration.ofMinutes(15)).plusSeconds(1);
+
+        assertThat(inProgress.isStaleInProgress(now, Duration.ofMinutes(15))).isTrue();
+    }
+
+    @Test
+    void isStaleInProgress_exactlyAtTimeoutBoundary_isNotYetStale() {
+        ApplicationMaterialGeneration inProgress =
+                ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, requestedAt).start(requestedAt.plusSeconds(1));
+        // now == startedAt + timeout exactly: isBefore is a strict comparison, so this instant
+        // itself is the boundary and must not yet be reported as stale.
+        Instant now = requestedAt.plusSeconds(1).plus(Duration.ofMinutes(15));
+
+        assertThat(inProgress.isStaleInProgress(now, Duration.ofMinutes(15))).isFalse();
+    }
+
+    @Test
+    void isStaleInProgress_oneMillisecondPastTimeoutBoundary_isStale() {
+        ApplicationMaterialGeneration inProgress =
+                ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, requestedAt).start(requestedAt.plusSeconds(1));
+        Instant now = requestedAt.plusSeconds(1).plus(Duration.ofMinutes(15)).plusMillis(1);
+
+        assertThat(inProgress.isStaleInProgress(now, Duration.ofMinutes(15))).isTrue();
     }
 }

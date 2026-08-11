@@ -2,11 +2,14 @@ package com.darya.jobassistant.applicationmaterials.preparation;
 
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGeneration;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationActiveConflictException;
+import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationConcurrentModificationException;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationStatus;
 import com.darya.jobassistant.applicationmaterials.artifact.aggregate.ApplicationMaterialArtifact;
+import com.darya.jobassistant.applicationmaterials.config.ApplicationMaterialGenerationProperties;
 import com.darya.jobassistant.applicationmaterials.generation.GenerateApplicationMaterialsOutcome;
 import com.darya.jobassistant.applicationmaterials.generation.GenerateApplicationMaterialsUseCase;
+import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationFailureCode;
 import com.darya.jobassistant.applicationmaterials.render.RenderApplicationMaterialsException;
 import com.darya.jobassistant.applicationmaterials.render.RenderApplicationMaterialsResult;
 import com.darya.jobassistant.applicationmaterials.render.RenderApplicationMaterialsUseCase;
@@ -52,7 +55,10 @@ import org.springframework.stereotype.Service;
  *       runs to ensure artifacts exist, but it reuses persisted ones when present (Step 4) and
  *       makes no AI call itself.
  *   <li>{@code IN_PROGRESS}: reported as {@link PrepareApplicationPackageOutcome.AlreadyInProgress}
- *       immediately - no generation or AI call is started.
+ *       immediately - no generation or AI call is started - unless {@link
+ *       ApplicationMaterialGeneration#isStaleInProgress} reports it has exceeded {@link
+ *       ApplicationMaterialGenerationProperties#staleInProgressTimeout()}, in which case {@link
+ *       #recoverStaleThenCreateOrJoin} runs instead (see "Stale IN_PROGRESS recovery" below).
  *   <li>{@code PENDING}: driven forward via {@link GenerateApplicationMaterialsUseCase#generate},
  *       which itself owns the {@code PENDING -> IN_PROGRESS} optimistic-locked transition - a
  *       matching {@code PENDING} row found here (rather than freshly created by this same call) is
@@ -79,6 +85,29 @@ import org.springframework.stereotype.Service;
  * is caught, the winning row is reloaded, and this method continues from whatever state that row is
  * actually in - never surfaced as a raw {@code DataIntegrityViolationException} to a caller.
  *
+ * <h2>Stale IN_PROGRESS recovery</h2>
+ *
+ * A process may transition a generation to {@code IN_PROGRESS} and then crash or be killed before
+ * reaching {@code COMPLETED}/{@code FAILED}, leaving the row stuck. {@link #recoverStaleThenCreateOrJoin}
+ * never resets it back to {@code PENDING} or reuses it for another AI attempt - the previous process
+ * may have completed or partially completed the external AI request before crashing, so retrying
+ * the same row would blur execution history. Instead it transitions the stale row to {@code FAILED}
+ * (via {@link ApplicationMaterialGeneration#fail} with {@link
+ * ApplicationMaterialsGenerationFailureCode#STALE_IN_PROGRESS}) and, only if that transition itself
+ * succeeds, creates/joins a brand-new generation through the exact same {@link #createOrJoinGeneration}
+ * used for every other "no active generation yet" case - no duplicated generation/rendering logic.
+ *
+ * <p>The stale transition reuses {@link ApplicationMaterialGenerationRepositoryPort#save}'s existing
+ * optimistic-version check as its sole concurrency mechanism - no new query, lock, or lease. Two
+ * requests that both observe the same stale row read it at the same version; only one {@code save}
+ * can win, and the loser's call throws {@link ApplicationMaterialGenerationConcurrentModificationException},
+ * caught here to reload the row (now {@code FAILED}, committed by the winner) and dispatch it
+ * through {@link #resolve} exactly like any other reload - which, being {@code FAILED}, itself calls
+ * {@link #createOrJoinGeneration}. Both requests therefore always end up calling {@link
+ * #createOrJoinGeneration}, and V25's active-uniqueness index (see below) is what actually
+ * guarantees only one of them drives a real AI call - the stale-recovery race and the "no matching
+ * generation" race are closed by the very same final invariant.
+ *
  * <h2>Failure handling</h2>
  *
  * Every controlled failure - a Vacancy that does not exist, a generation that fails, a render or
@@ -99,6 +128,7 @@ public class PrepareApplicationPackageUseCase {
     private final GenerateApplicationMaterialsUseCase generateApplicationMaterialsUseCase;
     private final RenderApplicationMaterialsUseCase renderApplicationMaterialsUseCase;
     private final FileStoragePort fileStoragePort;
+    private final ApplicationMaterialGenerationProperties generationProperties;
     private final Clock clock;
 
     /**
@@ -109,6 +139,14 @@ public class PrepareApplicationPackageUseCase {
      * a distributed lock or backoff policy.
      */
     private static final int MAX_ACTIVE_CONFLICT_ATTEMPTS = 3;
+
+    /**
+     * Fixed, safe failure message accompanying {@link ApplicationMaterialsGenerationFailureCode#STALE_IN_PROGRESS}
+     * - never a stack trace or other infrastructure detail, matching every other failure message
+     * this codebase persists.
+     */
+    private static final String STALE_IN_PROGRESS_FAILURE_MESSAGE =
+            "Generation abandoned: no lifecycle progress observed within the configured stale-IN_PROGRESS timeout";
 
     public PrepareApplicationPackageOutcome prepare(UUID vacancyId) {
         log.info("Application package preparation requested for vacancy {}", vacancyId);
@@ -147,6 +185,9 @@ public class PrepareApplicationPackageUseCase {
                 yield renderAndLoad(generation, true);
             }
             case IN_PROGRESS -> {
+                if (generation.isStaleInProgress(Instant.now(clock), generationProperties.staleInProgressTimeout())) {
+                    yield recoverStaleThenCreateOrJoin(generation, vacancyId, candidateProfileVersion, careerHistoryVersion);
+                }
                 log.info("Application material generation {} for vacancy {} is already in progress", generation.id(), vacancyId);
                 yield new PrepareApplicationPackageOutcome.AlreadyInProgress(generation.id());
             }
@@ -156,6 +197,30 @@ public class PrepareApplicationPackageUseCase {
             }
             case FAILED -> createOrJoinGeneration(vacancyId, candidateProfileVersion, careerHistoryVersion);
         };
+    }
+
+    /**
+     * Attempts to recover {@code stale} - see this class's "Stale IN_PROGRESS recovery" javadoc for
+     * the full algorithm and concurrency argument. Never resets {@code stale} back to {@code
+     * PENDING} or reuses it for another AI attempt; on winning the transition to {@code FAILED} it
+     * always proceeds to {@link #createOrJoinGeneration} for a brand-new generation.
+     */
+    private PrepareApplicationPackageOutcome recoverStaleThenCreateOrJoin(
+            ApplicationMaterialGeneration stale, UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
+        try {
+            ApplicationMaterialGeneration failed = generationRepositoryPort.save(stale.fail(
+                    ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name(),
+                    STALE_IN_PROGRESS_FAILURE_MESSAGE, Instant.now(clock)));
+            log.warn("Recovered stale IN_PROGRESS application material generation {} for vacancy {} (startedAt={})",
+                    failed.id(), vacancyId, stale.startedAt());
+            return createOrJoinGeneration(vacancyId, candidateProfileVersion, careerHistoryVersion);
+        } catch (ApplicationMaterialGenerationConcurrentModificationException e) {
+            log.info("Lost the stale-recovery race for application material generation {} for vacancy {} - reloading", stale.id(), vacancyId);
+            ApplicationMaterialGeneration current = generationRepositoryPort.findById(stale.id())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Lost a stale-recovery race for generation '" + stale.id() + "' but it no longer exists"));
+            return resolve(current, vacancyId, candidateProfileVersion, careerHistoryVersion);
+        }
     }
 
     private Optional<ApplicationMaterialGeneration> findMatchingGeneration(
@@ -193,6 +258,8 @@ public class PrepareApplicationPackageUseCase {
                                 "Lost an active application material generation creation race for vacancy '" + vacancyId
                                         + "' but no matching generation now exists"));
                 if (winner.status() != ApplicationMaterialGenerationStatus.FAILED) {
+                    log.info("Joined existing active application material generation {} (status={}) for vacancy {}",
+                            winner.id(), winner.status(), vacancyId);
                     // Never FAILED here, so resolve's own FAILED branch (which would call back into
                     // this method) cannot be taken - no risk of the attempt bound being reset.
                     return resolve(winner, vacancyId, candidateProfileVersion, careerHistoryVersion);

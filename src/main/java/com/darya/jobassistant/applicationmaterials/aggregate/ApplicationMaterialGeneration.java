@@ -1,5 +1,6 @@
 package com.darya.jobassistant.applicationmaterials.aggregate;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -156,6 +157,26 @@ public record ApplicationMaterialGeneration(
                 id, vacancyId, ApplicationMaterialGenerationStatus.FAILED,
                 candidateProfileVersion, careerHistoryVersion, requestedAt,
                 startedAt, completedAt, failureCode, failureMessage, version);
+    }
+
+    /**
+     * Sprint 10 Step 6: true if this generation is {@code IN_PROGRESS} and has been so for at
+     * least {@code staleTimeout} since it entered that state - the bounded recovery signal for a
+     * process that transitioned this row to {@code IN_PROGRESS} and then crashed (or was killed)
+     * before reaching {@code COMPLETED} or {@code FAILED}. {@link #startedAt} - never JVM process
+     * start time, an in-memory timer, or Telegram request timing - is the only authoritative
+     * timestamp: it is set exactly once, by {@link #start}, and never changes for the rest of this
+     * row's life (see this record's own lifecycle invariants), so it faithfully answers "how long
+     * has the abandoned attempt actually been running" regardless of which process or how many
+     * requests observe it.
+     *
+     * <p>A {@code PENDING}/{@code COMPLETED}/{@code FAILED} generation is never stale - staleness
+     * is a concept that only applies to unfinished, actively-claimed work.
+     */
+    public boolean isStaleInProgress(Instant now, Duration staleTimeout) {
+        return status == ApplicationMaterialGenerationStatus.IN_PROGRESS
+                && startedAt != null
+                && startedAt.plus(staleTimeout).isBefore(now);
     }
 
     private void requireStatus(ApplicationMaterialGenerationStatus required, String action) {

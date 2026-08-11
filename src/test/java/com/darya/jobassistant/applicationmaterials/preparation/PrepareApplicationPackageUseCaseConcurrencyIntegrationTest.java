@@ -7,8 +7,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.AbstractIntegrationTest;
+import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGeneration;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationRepositoryPort;
+import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationStatus;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsAiPort;
+import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationFailureCode;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationResponse;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedApplicationMaterials;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetter;
@@ -24,6 +27,8 @@ import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -32,7 +37,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -54,6 +62,16 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * be invoked at most once regardless of which thread actually wins, and neither thread may observe
  * an unhandled exception.
  */
+/**
+ * Ordered deterministically ({@link Order}), not alphabetically/by-hash: this is a full {@code
+ * @SpringBootTest} against one shared, never-rolled-back Testcontainers PostgreSQL instance for the
+ * whole class (unlike {@code @DataJpaTest}, there is no per-test transaction rollback here), and
+ * Career History is a singleton per candidate profile - once any test adds it via {@link
+ * #ensureCareerHistoryExists()} it stays present for every later test in this class. Every test that
+ * asserts a specific "no Career History yet" precondition must therefore run before the first test
+ * that creates one.
+ */
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     @TempDir
@@ -86,6 +104,7 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
     private ApplicationMaterialsAiPort aiPort;
 
     @Test
+    @Order(1)
     void concurrentFirstTimeRequests_nullCareerHistoryVersion_atMostOneAiGenerationCallWins() throws Exception {
         // The seeded "primary" test candidate profile (see AbstractIntegrationTest) has no Career
         // History imported, so the current effective careerHistoryVersion is null - exactly the
@@ -104,6 +123,7 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
     }
 
     @Test
+    @Order(4)
     void concurrentFirstTimeRequests_withCareerHistoryVersion_atMostOneAiGenerationCallWins() throws Exception {
         ensureCareerHistoryExists();
         CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
@@ -117,6 +137,94 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
         verify(aiPort, times(1)).generate(any(), any());
         assertBothOutcomesAreSafeAndAgreeOnOneGeneration(outcomes);
         assertThat(generationRepositoryPort.findByVacancyId(vacancyId)).hasSize(1);
+    }
+
+    // ==================== Stale IN_PROGRESS recovery (Sprint 10 Step 6) ====================
+
+    @Test
+    @Order(2)
+    void staleInProgressGeneration_singleRequest_recoversAndProducesCompletedGeneration() {
+        // Reads whatever the current effective Career History version actually is, rather than
+        // assuming null - this test only cares that a matching stale row gets recovered, not about
+        // the null-vs-present distinction itself (see the two concurrent tests below for that).
+        CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
+        UUID vacancyId = aVacancy("stale-recovery-single-" + UUID.randomUUID()).getId();
+        UUID staleId = seedStaleInProgressGeneration(vacancyId, snapshot.candidateProfileVersion(),
+                snapshot.careerHistory().map(CareerHistoryAggregate::version).orElse(null));
+        when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
+
+        PrepareApplicationPackageOutcome outcome = useCase.prepare(vacancyId);
+
+        ApplicationMaterialGeneration recoveredStale = generationRepositoryPort.findById(staleId).orElseThrow();
+        assertThat(recoveredStale.status()).isEqualTo(ApplicationMaterialGenerationStatus.FAILED);
+        assertThat(recoveredStale.failureCode()).isEqualTo(ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name());
+
+        assertThat(outcome).isInstanceOf(PrepareApplicationPackageOutcome.Prepared.class);
+        UUID newGenerationId = ((PrepareApplicationPackageOutcome.Prepared) outcome).preparedPackage().generationId();
+        assertThat(newGenerationId).isNotEqualTo(staleId);
+
+        List<ApplicationMaterialGeneration> all = generationRepositoryPort.findByVacancyId(vacancyId);
+        assertThat(all).hasSize(2);
+        verify(aiPort, times(1)).generate(any(), any());
+    }
+
+    @Test
+    @Order(3)
+    void concurrentRequestsAgainstStaleInProgressGeneration_nullCareerHistory_atMostOneAiCallAndOneReplacement() throws Exception {
+        CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
+        assertThat(snapshot.careerHistory()).as("this test requires no Career History for the seeded profile").isEmpty();
+
+        UUID vacancyId = aVacancy("stale-recovery-concurrent-null-" + UUID.randomUUID()).getId();
+        UUID staleId = seedStaleInProgressGeneration(vacancyId, snapshot.candidateProfileVersion(), null);
+        when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
+
+        List<PrepareApplicationPackageOutcome> outcomes = runConcurrently(vacancyId);
+
+        assertStaleRowRecoveredExactlyOnceWithOneReplacement(vacancyId, staleId);
+        verify(aiPort, times(1)).generate(any(), any());
+        assertBothOutcomesAreSafeAndAgreeOnOneGeneration(outcomes);
+    }
+
+    @Test
+    @Order(5)
+    void concurrentRequestsAgainstStaleInProgressGeneration_withCareerHistory_atMostOneAiCallAndOneReplacement() throws Exception {
+        ensureCareerHistoryExists();
+        CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
+        assertThat(snapshot.careerHistory()).as("this test requires Career History to exist for the seeded profile").isPresent();
+
+        UUID vacancyId = aVacancy("stale-recovery-concurrent-with-history-" + UUID.randomUUID()).getId();
+        UUID staleId = seedStaleInProgressGeneration(
+                vacancyId, snapshot.candidateProfileVersion(), snapshot.careerHistory().orElseThrow().version());
+        when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
+
+        List<PrepareApplicationPackageOutcome> outcomes = runConcurrently(vacancyId);
+
+        assertStaleRowRecoveredExactlyOnceWithOneReplacement(vacancyId, staleId);
+        verify(aiPort, times(1)).generate(any(), any());
+        assertBothOutcomesAreSafeAndAgreeOnOneGeneration(outcomes);
+    }
+
+    private void assertStaleRowRecoveredExactlyOnceWithOneReplacement(UUID vacancyId, UUID staleId) {
+        ApplicationMaterialGeneration recoveredStale = generationRepositoryPort.findById(staleId).orElseThrow();
+        assertThat(recoveredStale.status()).isEqualTo(ApplicationMaterialGenerationStatus.FAILED);
+        assertThat(recoveredStale.failureCode()).isEqualTo(ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name());
+
+        // Exactly one logical replacement generation - the abandoned row plus exactly one new one,
+        // never two concurrently-created replacements racing each other.
+        List<ApplicationMaterialGeneration> all = generationRepositoryPort.findByVacancyId(vacancyId);
+        assertThat(all).hasSize(2);
+        assertThat(all).filteredOn(g -> !g.id().equals(staleId)).hasSize(1);
+    }
+
+    private UUID seedStaleInProgressGeneration(UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
+        // Comfortably past application.yml's real default stale-in-progress-timeout (15m) -
+        // deliberately not overridden in this test class, so this proves the actual configured
+        // production default, not an artificially shortened test value.
+        Instant oldRequestedAt = Instant.now().minus(Duration.ofMinutes(20));
+        Instant oldStartedAt = oldRequestedAt.plusSeconds(1);
+        ApplicationMaterialGeneration pending = generationRepositoryPort.save(
+                ApplicationMaterialGeneration.requestNew(vacancyId, candidateProfileVersion, careerHistoryVersion, oldRequestedAt));
+        return generationRepositoryPort.save(pending.start(oldStartedAt)).id();
     }
 
     // ==================== Assertions ====================

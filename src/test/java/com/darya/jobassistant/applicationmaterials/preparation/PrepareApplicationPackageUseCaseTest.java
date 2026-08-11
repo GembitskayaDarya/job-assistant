@@ -10,11 +10,15 @@ import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGeneration;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationActiveConflictException;
+import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationConcurrentModificationException;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationRepositoryPort;
+import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationStatus;
 import com.darya.jobassistant.applicationmaterials.artifact.aggregate.ApplicationMaterialArtifact;
+import com.darya.jobassistant.applicationmaterials.config.ApplicationMaterialGenerationProperties;
 import com.darya.jobassistant.applicationmaterials.generation.GenerateApplicationMaterialsOutcome;
 import com.darya.jobassistant.applicationmaterials.generation.GenerateApplicationMaterialsUseCase;
 import com.darya.jobassistant.applicationmaterials.generation.GenerationOutcomeStatus;
+import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationFailureCode;
 import com.darya.jobassistant.applicationmaterials.render.RenderApplicationMaterialsException;
 import com.darya.jobassistant.applicationmaterials.render.RenderApplicationMaterialsResult;
 import com.darya.jobassistant.applicationmaterials.render.RenderApplicationMaterialsUseCase;
@@ -32,6 +36,7 @@ import com.darya.jobassistant.integrations.filestorage.StoredFileContent;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
 import com.darya.jobassistant.vacancies.service.VacancyQueryService;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -41,6 +46,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -50,6 +56,7 @@ class PrepareApplicationPackageUseCaseTest {
     private static final UUID VACANCY_ID = UUID.randomUUID();
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+    private static final Duration STALE_TIMEOUT = Duration.ofMinutes(15);
 
     @Mock
     private VacancyQueryService vacancyQueryService;
@@ -78,7 +85,8 @@ class PrepareApplicationPackageUseCaseTest {
     void setUp() {
         useCase = new PrepareApplicationPackageUseCase(
                 vacancyQueryService, candidateContextProvider, generationRepositoryPort,
-                generateApplicationMaterialsUseCase, renderApplicationMaterialsUseCase, fileStoragePort, CLOCK);
+                generateApplicationMaterialsUseCase, renderApplicationMaterialsUseCase, fileStoragePort,
+                new ApplicationMaterialGenerationProperties(STALE_TIMEOUT), CLOCK);
     }
 
     // ==================== Vacancy validation ====================
@@ -472,6 +480,108 @@ class PrepareApplicationPackageUseCaseTest {
         assertPrepared(outcome, completed.id(), false);
     }
 
+    // ==================== Stale IN_PROGRESS recovery (Sprint 10 Step 6) ====================
+
+    @Test
+    void prepare_matchingStaleInProgressGeneration_recoversWithSafeFailureCodeAndCreatesNewGeneration() {
+        stubVacancyFound();
+        stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration stale = staleInProgressGeneration(5L, 2L);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(stale));
+        ApplicationMaterialGeneration failedStale =
+                stale.fail(ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name(), "recovered", NOW);
+        when(generationRepositoryPort.save(argThat(g -> g != null && stale.id().equals(g.id())))).thenReturn(failedStale);
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L);
+        when(generationRepositoryPort.save(argThat(g -> g != null && g.id() == null))).thenReturn(freshPending);
+        ApplicationMaterialGeneration completed = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, completed, null));
+        stubSuccessfulRenderAndLoad(completed.id());
+
+        PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
+
+        ArgumentCaptor<ApplicationMaterialGeneration> saveCaptor = ArgumentCaptor.forClass(ApplicationMaterialGeneration.class);
+        verify(generationRepositoryPort, times(2)).save(saveCaptor.capture());
+        ApplicationMaterialGeneration staleTransition = saveCaptor.getAllValues().get(0);
+        assertThat(staleTransition.id()).isEqualTo(stale.id());
+        assertThat(staleTransition.status()).isEqualTo(ApplicationMaterialGenerationStatus.FAILED);
+        assertThat(staleTransition.failureCode()).isEqualTo(ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name());
+        // Never a raw exception message or infrastructure detail - a fixed, safe constant.
+        assertThat(staleTransition.failureMessage()).doesNotContain("Exception", "at com.darya", "SQLState");
+
+        verify(generateApplicationMaterialsUseCase, times(1)).generate(freshPending.id());
+        assertPrepared(outcome, completed.id(), false);
+    }
+
+    @Test
+    void prepare_freshInProgressGeneration_isNeverTreatedAsStale() {
+        stubVacancyFound();
+        stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration fresh = pendingGeneration(5L, 2L).start(NOW);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(fresh));
+
+        PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
+
+        assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.AlreadyInProgress(fresh.id()));
+        verify(generationRepositoryPort, never()).save(any());
+        verify(generateApplicationMaterialsUseCase, never()).generate(any());
+    }
+
+    @Test
+    void prepare_staleRecoveryLosesRace_reloadsWinnerAndJoinsWithoutDuplicateWork() {
+        stubVacancyFound();
+        stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration stale = staleInProgressGeneration(5L, 2L);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(stale));
+        when(generationRepositoryPort.save(argThat(g -> g != null && stale.id().equals(g.id()))))
+                .thenThrow(new ApplicationMaterialGenerationConcurrentModificationException(stale.id(), VACANCY_ID, stale.version()));
+
+        // The concurrent winner already committed the FAILED transition and moved on to complete a
+        // brand-new generation by the time this call reloads.
+        ApplicationMaterialGeneration winnerFailedStale =
+                stale.fail(ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name(), "recovered", NOW);
+        when(generationRepositoryPort.findById(stale.id())).thenReturn(Optional.of(winnerFailedStale));
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L);
+        when(generationRepositoryPort.save(argThat(g -> g != null && g.id() == null))).thenReturn(freshPending);
+        ApplicationMaterialGeneration completed = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, completed, null));
+        stubSuccessfulRenderAndLoad(completed.id());
+
+        PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
+
+        // Exactly one save() actually created a new row (the failed-stale save() attempt threw,
+        // so only the fresh-generation insert counts as a successful save here).
+        verify(generationRepositoryPort, times(1)).save(argThat(g -> g != null && g.id() == null));
+        verify(generateApplicationMaterialsUseCase, times(1)).generate(any());
+        assertPrepared(outcome, completed.id(), false);
+    }
+
+    @Test
+    void prepare_staleInProgressForDifferentCandidateVersion_isIgnored_newGenerationCreatedIndependently() {
+        stubVacancyFound();
+        // Current versions differ from the stale row below, so it is never even considered a match
+        // - no recovery attempt, no interaction with it at all.
+        stubCurrentVersions(9L, null);
+        ApplicationMaterialGeneration staleForOldVersion = staleInProgressGeneration(5L, 2L);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleForOldVersion));
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(9L, null);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
+        ApplicationMaterialGeneration completed = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, completed, null));
+        stubSuccessfulRenderAndLoad(completed.id());
+
+        PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
+
+        verify(generationRepositoryPort, never()).findById(any());
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(9L, null));
+        assertPrepared(outcome, completed.id(), false);
+    }
+
     // ==================== Helpers ====================
 
     private void stubVacancyFound() {
@@ -500,6 +610,16 @@ class PrepareApplicationPackageUseCaseTest {
                 storageKey, fileName, "application/pdf", 8, "c".repeat(64), NOW);
     }
 
+    /** An IN_PROGRESS generation whose startedAt is safely past STALE_TIMEOUT relative to NOW. */
+    private ApplicationMaterialGeneration staleInProgressGeneration(long candidateProfileVersion, Long careerHistoryVersion) {
+        Instant oldStartedAt = NOW.minus(STALE_TIMEOUT).minusSeconds(1);
+        Instant oldRequestedAt = oldStartedAt.minusSeconds(1);
+        ApplicationMaterialGeneration pending = new ApplicationMaterialGeneration(UUID.randomUUID(), VACANCY_ID,
+                ApplicationMaterialGenerationStatus.PENDING, candidateProfileVersion, careerHistoryVersion, oldRequestedAt,
+                null, null, null, null, 0);
+        return pending.start(oldStartedAt);
+    }
+
     private ApplicationMaterialGeneration pendingGeneration(long candidateProfileVersion, Long careerHistoryVersion) {
         ApplicationMaterialGeneration requested =
                 ApplicationMaterialGeneration.requestNew(VACANCY_ID, candidateProfileVersion, careerHistoryVersion, NOW);
@@ -510,7 +630,7 @@ class PrepareApplicationPackageUseCaseTest {
     }
 
     private ApplicationMaterialGeneration argThatRequestsNewGeneration(long candidateProfileVersion, Long careerHistoryVersion) {
-        return argThat(g -> g.id() == null
+        return argThat(g -> g != null && g.id() == null
                 && g.vacancyId().equals(VACANCY_ID)
                 && g.candidateProfileVersion() == candidateProfileVersion
                 && Objects.equals(g.careerHistoryVersion(), careerHistoryVersion));

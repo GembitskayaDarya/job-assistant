@@ -228,6 +228,13 @@ application-materials:
   storage:
     local:
       root-directory: ${APPLICATION_MATERIALS_STORAGE_LOCAL_ROOT_DIRECTORY:./data/application-materials}
+  # Sprint 10 Step 6: how long an application-material generation may stay IN_PROGRESS before
+  # PrepareApplicationPackageUseCase treats it as abandoned (the owning process crashed or was
+  # killed) and safely recovers it - see ApplicationMaterialGeneration#isStaleInProgress. More
+  # generous than job-analysis.claim-stale-after (2m) below: a tailored CV/cover-letter generation
+  # does substantially more work per attempt (a larger prompt, then PDF rendering and storage).
+  generation:
+    stale-in-progress-timeout: ${APPLICATION_MATERIALS_GENERATION_STALE_IN_PROGRESS_TIMEOUT:15m}
 
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}

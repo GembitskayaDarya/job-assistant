@@ -68,6 +68,7 @@ public class TelegramMessageSender {
                 .build();
         try {
             telegramClient.execute(sendDocument);
+            log.info("Sent document '{}' to chat {}", document.fileName(), chatId);
         } catch (TelegramApiException e) {
             log.error("Failed to send document '{}' to chat {}", document.fileName(), chatId, e);
         }

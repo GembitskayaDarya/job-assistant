@@ -24,5 +24,17 @@ public enum ApplicationMaterialsGenerationFailureCode {
     RESULT_VALIDATION_FAILED,
 
     /** A validated result could not be persisted, but a safe FAILED transition was still possible. */
-    PERSISTENCE_FAILURE
+    PERSISTENCE_FAILURE,
+
+    /**
+     * Sprint 10 Step 6: a previous process transitioned this generation to {@code IN_PROGRESS} and
+     * then crashed or was abandoned before reaching {@code COMPLETED}/{@code FAILED} - recovered by
+     * {@code PrepareApplicationPackageUseCase} once {@link
+     * com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGeneration#isStaleInProgress}
+     * reports it exceeded the configured timeout. The old row is never reused for another AI
+     * attempt (it may have completed or partially completed an external AI request before
+     * crashing) - only ever marked {@code FAILED} as honest historical evidence, with a brand-new
+     * generation created for the actual retry.
+     */
+    STALE_IN_PROGRESS
 }
