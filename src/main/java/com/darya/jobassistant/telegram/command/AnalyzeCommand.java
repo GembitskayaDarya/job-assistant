@@ -2,6 +2,7 @@ package com.darya.jobassistant.telegram.command;
 
 import com.darya.jobassistant.ai.AnalyzeVacancyUseCase;
 import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
+import com.darya.jobassistant.telegram.callback.ApplicationPackageKeyboardFactory;
 import com.darya.jobassistant.telegram.format.JobMessageFormatter;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class AnalyzeCommand implements TelegramCommand {
 
     private final AnalyzeVacancyUseCase analyzeVacancyUseCase;
     private final JobMessageFormatter jobMessageFormatter;
+    private final ApplicationPackageKeyboardFactory applicationPackageKeyboardFactory;
 
     @Override
     public String name() {
@@ -57,7 +59,8 @@ public class AnalyzeCommand implements TelegramCommand {
         AnalyzeVacancyResult result = analyzeVacancyUseCase.analyze(vacancyId);
         return switch (result) {
             case AnalyzeVacancyResult.Available(var vacancy, var analysis, var ignored) ->
-                    new BotResponse(jobMessageFormatter.format(vacancy, analysis), ParseMode.MARKDOWNV2, null);
+                    new BotResponse(jobMessageFormatter.format(vacancy, analysis), ParseMode.MARKDOWNV2,
+                            applicationPackageKeyboardFactory.prepareApplicationPackageKeyboard(vacancyId));
             case AnalyzeVacancyResult.VacancyNotFound ignored -> {
                 log.info("Vacancy not found for /analyze request: {}", vacancyId);
                 yield BotResponse.text(NOT_FOUND_MESSAGE);

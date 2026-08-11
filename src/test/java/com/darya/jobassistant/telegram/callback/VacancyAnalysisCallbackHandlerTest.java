@@ -29,6 +29,7 @@ import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 
 @ExtendWith(MockitoExtension.class)
 class VacancyAnalysisCallbackHandlerTest {
@@ -43,6 +44,9 @@ class VacancyAnalysisCallbackHandlerTest {
 
     @Mock
     private JobMessageFormatter jobMessageFormatter;
+
+    @Mock
+    private ApplicationPackageKeyboardFactory applicationPackageKeyboardFactory;
 
     @Mock
     private TelegramMessageSender telegramMessageSender;
@@ -60,7 +64,8 @@ class VacancyAnalysisCallbackHandlerTest {
 
     @BeforeEach
     void setUp() {
-        handler = new VacancyAnalysisCallbackHandler(analyzeImportedVacancyUseCase, jobMessageFormatter, telegramMessageSender);
+        handler = new VacancyAnalysisCallbackHandler(
+                analyzeImportedVacancyUseCase, jobMessageFormatter, applicationPackageKeyboardFactory, telegramMessageSender);
         lenient().when(callbackQuery.getId()).thenReturn("callback-id");
         lenient().when(callbackQuery.getMessage()).thenReturn(message);
         lenient().when(message.getChatId()).thenReturn(CHAT_ID);
@@ -133,6 +138,8 @@ class VacancyAnalysisCallbackHandlerTest {
         when(analyzeImportedVacancyUseCase.analyze(SESSION_ID, CHAT_ID, USER_ID))
                 .thenReturn(new AnalyzeImportedVacancyResult.Available(SESSION_ID, VACANCY_ID, jobOffer, analysis, true));
         when(jobMessageFormatter.format(jobOffer, analysis)).thenReturn("formatted analysis");
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().build();
+        when(applicationPackageKeyboardFactory.prepareApplicationPackageKeyboard(VACANCY_ID)).thenReturn(keyboard);
 
         handler.handle(callbackQuery);
 
@@ -140,6 +147,8 @@ class VacancyAnalysisCallbackHandlerTest {
         verify(telegramMessageSender).send(eq(CHAT_ID), captor.capture());
         assertThat(captor.getValue().text()).isEqualTo("formatted analysis");
         assertThat(captor.getValue().parseMode()).isEqualTo(ParseMode.MARKDOWNV2);
+        assertThat(captor.getValue().keyboard()).isSameAs(keyboard);
+        verify(applicationPackageKeyboardFactory).prepareApplicationPackageKeyboard(VACANCY_ID);
     }
 
     @Test

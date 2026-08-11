@@ -204,15 +204,22 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
 
     @Test
     void generate_multipleGenerationsForOneVacancy_remainIndependent() {
+        // Sequential, not simultaneous: two PENDING generations sharing the same effective key
+        // (vacancy + candidate versions) would collide with V25's active-uniqueness index.
+        // generationA is driven to COMPLETED before generationB is created, matching how multiple
+        // generations for one vacancy actually accumulate over time (see
+        // ApplicationMaterialGeneration's javadoc) - this test is about Step 3's per-row result
+        // independence, not about the active-uniqueness invariant.
         UUID vacancyId = aVacancy("multi-gen-" + UUID.randomUUID()).getId();
-        UUID generationIdA = createMatchingGeneration(vacancyId);
-        UUID generationIdB = createMatchingGeneration(vacancyId);
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
 
+        UUID generationIdA = createMatchingGeneration(vacancyId);
         GenerateApplicationMaterialsOutcome outcomeA = useCase.generate(generationIdA);
+        assertThat(outcomeA.status()).isEqualTo(GenerationOutcomeStatus.COMPLETED);
+
+        UUID generationIdB = createMatchingGeneration(vacancyId);
         GenerateApplicationMaterialsOutcome outcomeB = useCase.generate(generationIdB);
 
-        assertThat(outcomeA.status()).isEqualTo(GenerationOutcomeStatus.COMPLETED);
         assertThat(outcomeB.status()).isEqualTo(GenerationOutcomeStatus.COMPLETED);
         assertThat(outcomeA.result().id()).isNotEqualTo(outcomeB.result().id());
         assertThat(resultRepositoryPort.findByGenerationId(generationIdA)).isPresent();

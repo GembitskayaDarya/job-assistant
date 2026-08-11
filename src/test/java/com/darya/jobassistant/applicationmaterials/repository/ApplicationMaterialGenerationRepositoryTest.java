@@ -91,11 +91,15 @@ class ApplicationMaterialGenerationRepositoryTest {
 
     @Test
     void multipleGenerations_canBePersistedForOneVacancy() {
+        // Distinct candidateProfileVersions - three simultaneously PENDING generations for the same
+        // vacancy and the same effective key would collide with V25's active-uniqueness index (see
+        // ApplicationMaterialGenerationRepositoryAdapterTest's "V25 active-uniqueness" section);
+        // this test is about persisting/listing several rows, not about that invariant.
         Vacancy vacancy = aVacancy("multi-gen-" + UUID.randomUUID());
 
-        generationRepository.save(pending(vacancy));
-        generationRepository.save(pending(vacancy));
-        generationRepository.save(pending(vacancy));
+        generationRepository.save(pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 0L));
+        generationRepository.save(pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 1L));
+        generationRepository.save(pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 2L));
         entityManager.flush();
         entityManager.clear();
 
@@ -104,12 +108,13 @@ class ApplicationMaterialGenerationRepositoryTest {
 
     @Test
     void generations_returnedNewestRequestedFirst() {
+        // Distinct candidateProfileVersions - see multipleGenerations_canBePersistedForOneVacancy.
         Vacancy vacancy = aVacancy("ordering-" + UUID.randomUUID());
 
         ApplicationMaterialGenerationEntity oldest = generationRepository.save(
-                pendingWithRequestedAt(vacancy, REQUESTED_AT));
+                pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 0L));
         ApplicationMaterialGenerationEntity newest = generationRepository.save(
-                pendingWithRequestedAt(vacancy, REQUESTED_AT.plus(1, ChronoUnit.DAYS)));
+                pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT.plus(1, ChronoUnit.DAYS), 1L));
         entityManager.flush();
         entityManager.clear();
 
@@ -424,10 +429,15 @@ class ApplicationMaterialGenerationRepositoryTest {
     }
 
     private ApplicationMaterialGenerationEntity pendingWithRequestedAt(Vacancy vacancy, Instant requestedAt) {
+        return pendingWithCandidateProfileVersion(vacancy, requestedAt, 0L);
+    }
+
+    private ApplicationMaterialGenerationEntity pendingWithCandidateProfileVersion(
+            Vacancy vacancy, Instant requestedAt, long candidateProfileVersion) {
         return ApplicationMaterialGenerationEntity.builder()
                 .vacancy(vacancy)
                 .status(ApplicationMaterialGenerationStatus.PENDING)
-                .candidateProfileVersion(0L)
+                .candidateProfileVersion(candidateProfileVersion)
                 .requestedAt(requestedAt)
                 .build();
     }

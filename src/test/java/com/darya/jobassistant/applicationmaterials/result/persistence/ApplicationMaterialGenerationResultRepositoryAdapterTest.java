@@ -203,11 +203,14 @@ class ApplicationMaterialGenerationResultRepositoryAdapterTest {
 
     @Test
     void multipleGenerationsForOneVacancy_haveIndependentResults() {
+        // Distinct candidateProfileVersions - two simultaneously PENDING generations for the same
+        // vacancy and the same effective key would collide with V25's active-uniqueness index; this
+        // test is about result independence per generation row, not about a specific version value.
         Vacancy vacancy = aVacancy("independent-" + UUID.randomUUID());
         UUID generationIdA = generationPort().save(
                 ApplicationMaterialGeneration.requestNew(vacancy.getId(), 0L, null, REQUESTED_AT)).id();
         UUID generationIdB = generationPort().save(
-                ApplicationMaterialGeneration.requestNew(vacancy.getId(), 0L, null, REQUESTED_AT.plusSeconds(1))).id();
+                ApplicationMaterialGeneration.requestNew(vacancy.getId(), 1L, null, REQUESTED_AT.plusSeconds(1))).id();
 
         adapter().save(ApplicationMaterialGenerationResult.create(
                 generationIdA, minimalCv(), minimalCoverLetter(), "openai", "gpt-4o-mini", 1, REQUESTED_AT));

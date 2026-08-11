@@ -1,6 +1,7 @@
 package com.darya.jobassistant.telegram;
 
 import com.darya.jobassistant.config.TelegramProperties;
+import com.darya.jobassistant.telegram.callback.ApplicationPackageCallbackHandler;
 import com.darya.jobassistant.telegram.callback.VacancyAnalysisCallbackHandler;
 import com.darya.jobassistant.telegram.callback.VacancyImportCallbackHandler;
 import com.darya.jobassistant.telegram.callback.VacancyImportCallbackOutcome;
@@ -36,6 +37,7 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
     private final VacancyImportMessageHandler vacancyImportMessageHandler;
     private final VacancyImportCallbackHandler vacancyImportCallbackHandler;
     private final VacancyAnalysisCallbackHandler vacancyAnalysisCallbackHandler;
+    private final ApplicationPackageCallbackHandler applicationPackageCallbackHandler;
 
     @Override
     public String getBotToken() {
@@ -82,15 +84,19 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
 
     /**
      * Explicit, ordered routing: try {@link VacancyAnalysisCallbackHandler} (the {@code
-     * via:analyze:} prefix) first - it fully handles its own acknowledgement and response, so a
-     * {@code true} result means nothing more to do here. Otherwise fall through to {@link
-     * VacancyImportCallbackHandler} (the {@code vi:} prefix), whose {@link Optional#empty()}
-     * result means the callback data wasn't recognized by either - nothing else currently consumes
-     * callback queries, so it is left un-acknowledged exactly as it always was before either
-     * handler existed, ready for a future handler to claim.
+     * via:analyze:} prefix), then {@link ApplicationPackageCallbackHandler} (the {@code am:prepare:}
+     * prefix) - both fully handle their own acknowledgement and response, so a {@code true} result
+     * means nothing more to do here. Otherwise fall through to {@link VacancyImportCallbackHandler}
+     * (the {@code vi:} prefix), whose {@link Optional#empty()} result means the callback data
+     * wasn't recognized by any of them - nothing else currently consumes callback queries, so it is
+     * left un-acknowledged exactly as it always was before any handler existed, ready for a future
+     * handler to claim.
      */
     private void handleCallbackQuery(CallbackQuery callbackQuery) {
         if (vacancyAnalysisCallbackHandler.handle(callbackQuery)) {
+            return;
+        }
+        if (applicationPackageCallbackHandler.handle(callbackQuery)) {
             return;
         }
         Optional<VacancyImportCallbackOutcome> outcome = vacancyImportCallbackHandler.handle(callbackQuery);

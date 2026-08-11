@@ -9,6 +9,7 @@ import com.darya.jobassistant.ai.AnalyzeVacancyUseCase;
 import com.darya.jobassistant.ai.dto.AnalyzeVacancyResult;
 import com.darya.jobassistant.ai.model.JobAnalysis;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.telegram.callback.ApplicationPackageKeyboardFactory;
 import com.darya.jobassistant.telegram.format.JobMessageFormatter;
 import java.util.List;
 import java.util.UUID;
@@ -19,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 
 @ExtendWith(MockitoExtension.class)
 class AnalyzeCommandTest {
@@ -30,13 +32,16 @@ class AnalyzeCommandTest {
     private JobMessageFormatter jobMessageFormatter;
 
     @Mock
+    private ApplicationPackageKeyboardFactory applicationPackageKeyboardFactory;
+
+    @Mock
     private Message message;
 
     private AnalyzeCommand analyzeCommand;
 
     @BeforeEach
     void setUp() {
-        analyzeCommand = new AnalyzeCommand(analyzeVacancyUseCase, jobMessageFormatter);
+        analyzeCommand = new AnalyzeCommand(analyzeVacancyUseCase, jobMessageFormatter, applicationPackageKeyboardFactory);
     }
 
     @Test
@@ -48,12 +53,16 @@ class AnalyzeCommandTest {
         JobAnalysis analysis = jobAnalysis();
         when(analyzeVacancyUseCase.analyze(vacancyId)).thenReturn(new AnalyzeVacancyResult.Available(jobOffer, analysis, true));
         when(jobMessageFormatter.format(jobOffer, analysis)).thenReturn("formatted result");
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().build();
+        when(applicationPackageKeyboardFactory.prepareApplicationPackageKeyboard(vacancyId)).thenReturn(keyboard);
 
         BotResponse response = analyzeCommand.execute(message);
 
         verify(analyzeVacancyUseCase).analyze(vacancyId);
         verify(jobMessageFormatter).format(jobOffer, analysis);
+        verify(applicationPackageKeyboardFactory).prepareApplicationPackageKeyboard(vacancyId);
         assertThat(response.text()).isEqualTo("formatted result");
+        assertThat(response.keyboard()).isSameAs(keyboard);
         assertThat(response.parseMode()).isEqualTo(ParseMode.MARKDOWNV2);
     }
 

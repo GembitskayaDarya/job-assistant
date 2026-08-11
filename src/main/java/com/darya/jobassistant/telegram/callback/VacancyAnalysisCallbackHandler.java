@@ -58,6 +58,7 @@ public class VacancyAnalysisCallbackHandler {
 
     private final AnalyzeImportedVacancyUseCase analyzeImportedVacancyUseCase;
     private final JobMessageFormatter jobMessageFormatter;
+    private final ApplicationPackageKeyboardFactory applicationPackageKeyboardFactory;
     private final TelegramMessageSender telegramMessageSender;
 
     public boolean handle(CallbackQuery callbackQuery) {
@@ -91,8 +92,9 @@ public class VacancyAnalysisCallbackHandler {
 
     private BotResponse toBotResponse(AnalyzeImportedVacancyResult result) {
         return switch (result) {
-            case AnalyzeImportedVacancyResult.Available(var ignoredSession, var ignoredVacancyId, var vacancy, var analysis, var ignoredNew) ->
-                    new BotResponse(jobMessageFormatter.format(vacancy, analysis), ParseMode.MARKDOWNV2, null);
+            case AnalyzeImportedVacancyResult.Available(var ignoredSession, var vacancyId, var vacancy, var analysis, var ignoredNew) ->
+                    new BotResponse(jobMessageFormatter.format(vacancy, analysis), ParseMode.MARKDOWNV2,
+                            applicationPackageKeyboardFactory.prepareApplicationPackageKeyboard(vacancyId));
             case AnalyzeImportedVacancyResult.InProgress ignored -> BotResponse.text(IN_PROGRESS_MESSAGE);
             case AnalyzeImportedVacancyResult.NotAvailable ignored -> BotResponse.text(NOT_AVAILABLE_MESSAGE);
             case AnalyzeImportedVacancyResult.InvalidState ignored -> BotResponse.text(INVALID_STATE_MESSAGE);

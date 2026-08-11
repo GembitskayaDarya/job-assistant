@@ -1,6 +1,7 @@
 package com.darya.jobassistant.applicationmaterials.persistence;
 
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGeneration;
+import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationActiveConflictException;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationConcurrentModificationException;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationVacancyNotFoundException;
@@ -14,6 +15,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 @RequiredArgsConstructor
 public class ApplicationMaterialGenerationRepositoryAdapter implements ApplicationMaterialGenerationRepositoryPort {
+
+    /** Must match the constraint name in {@code V25__add_application_material_generation_active_uniqueness.sql}. */
+    private static final String ACTIVE_EFFECTIVE_KEY_UNIQUE_INDEX_NAME = "uk_amg_active_effective_key";
 
     private final ApplicationMaterialGenerationRepository generationRepository;
     private final VacancyRepository vacancyRepository;
@@ -64,7 +70,35 @@ public class ApplicationMaterialGenerationRepositoryAdapter implements Applicati
     private ApplicationMaterialGenerationEntity createRow(ApplicationMaterialGeneration generation) {
         Vacancy vacancy = vacancyRepository.findById(generation.vacancyId())
                 .orElseThrow(() -> new ApplicationMaterialGenerationVacancyNotFoundException(generation.vacancyId()));
-        return generationRepository.save(ApplicationMaterialGenerationPersistenceMapper.toNewEntity(generation, vacancy));
+        try {
+            return generationRepository.saveAndFlush(ApplicationMaterialGenerationPersistenceMapper.toNewEntity(generation, vacancy));
+        } catch (DataIntegrityViolationException e) {
+            if (isActiveEffectiveKeyConflict(e)) {
+                throw new ApplicationMaterialGenerationActiveConflictException(
+                        generation.vacancyId(), generation.candidateProfileVersion(), generation.careerHistoryVersion());
+            }
+            throw e;
+        }
+    }
+
+    private boolean isActiveEffectiveKeyConflict(DataIntegrityViolationException e) {
+        ConstraintViolationException constraintViolation = findConstraintViolationException(e);
+        if (constraintViolation != null && constraintViolation.getConstraintName() != null) {
+            return ACTIVE_EFFECTIVE_KEY_UNIQUE_INDEX_NAME.equals(constraintViolation.getConstraintName());
+        }
+        String message = e.getMostSpecificCause().getMessage();
+        return message != null && message.contains(ACTIVE_EFFECTIVE_KEY_UNIQUE_INDEX_NAME);
+    }
+
+    private ConstraintViolationException findConstraintViolationException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ConstraintViolationException constraintViolationException) {
+                return constraintViolationException;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     /**
