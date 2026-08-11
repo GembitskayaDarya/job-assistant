@@ -12,6 +12,10 @@ import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationM
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsValidationException;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedApplicationMaterials;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedApplicationMaterialsValidator;
+import com.darya.jobassistant.applicationmaterials.render.model.RenderModelAssembler;
+import com.darya.jobassistant.applicationmaterials.render.model.RenderableApplicationMaterials;
+import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshot;
+import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.ApplicationMaterialsCandidateContextProvider;
@@ -46,11 +50,24 @@ import org.springframework.transaction.support.TransactionTemplate;
  * itself, so nothing in a future refactor could accidentally cause the {@link
  * ApplicationMaterialsAiPort#generate} call (a real network request) to run inside an open
  * PostgreSQL transaction. Three short, independent transactions exist: {@link #startTransition}
- * (the {@code PENDING -> IN_PROGRESS} write), {@link #completionTransaction} (persisting the result
- * and the {@code IN_PROGRESS -> COMPLETED} write together, atomically - the system must never
- * commit {@code COMPLETED} without a persisted result), and {@link #failureTransaction} (the
+ * (the {@code PENDING -> IN_PROGRESS} write), {@link #completionTransaction} (persisting the
+ * semantic result, the {@link ApplicationMaterialRenderSnapshot} and the {@code IN_PROGRESS ->
+ * COMPLETED} write together, atomically - the system must never commit {@code COMPLETED} without
+ * both a persisted result and a persisted render snapshot), and {@link #failureTransaction} (the
  * {@code IN_PROGRESS -> FAILED} write). The AI call and its response validation happen entirely
  * between the first and third of these, with no transaction open.
+ *
+ * <h2>Render snapshot (production-readiness fix)</h2>
+ *
+ * The {@link ApplicationMaterialRenderSnapshot} persisted in {@link #completionTransaction} is
+ * assembled via {@link RenderModelAssembler#assemble} from the exact same validated {@link
+ * GeneratedApplicationMaterials}, the exact same {@link CandidateContextForApplicationMaterials}
+ * instance used for the AI call, and the exact same {@link JobOffer} - never re-loaded or
+ * re-derived. This closes the reproducibility window that existed when the snapshot was created
+ * lazily on first render: Candidate Profile/Career History can now change freely after this
+ * generation completes without ever making it unrenderable. {@code RenderApplicationMaterialsUseCase}
+ * still contains a lazy-creation fallback, kept solely for generations that completed before this
+ * fix and therefore have no snapshot of their own.
  *
  * <h2>Idempotency and concurrency</h2>
  *
@@ -87,6 +104,7 @@ public class GenerateApplicationMaterialsUseCase {
 
     private final ApplicationMaterialGenerationRepositoryPort generationRepositoryPort;
     private final ApplicationMaterialGenerationResultRepositoryPort resultRepositoryPort;
+    private final ApplicationMaterialRenderSnapshotRepositoryPort snapshotRepositoryPort;
     private final ApplicationMaterialsCandidateContextProvider candidateContextProvider;
     private final VacancyQueryService vacancyQueryService;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
@@ -101,6 +119,7 @@ public class GenerateApplicationMaterialsUseCase {
     public GenerateApplicationMaterialsUseCase(
             ApplicationMaterialGenerationRepositoryPort generationRepositoryPort,
             ApplicationMaterialGenerationResultRepositoryPort resultRepositoryPort,
+            ApplicationMaterialRenderSnapshotRepositoryPort snapshotRepositoryPort,
             ApplicationMaterialsCandidateContextProvider candidateContextProvider,
             VacancyQueryService vacancyQueryService,
             VacancyJobOfferMapper vacancyJobOfferMapper,
@@ -109,6 +128,7 @@ public class GenerateApplicationMaterialsUseCase {
             PlatformTransactionManager transactionManager) {
         this.generationRepositoryPort = generationRepositoryPort;
         this.resultRepositoryPort = resultRepositoryPort;
+        this.snapshotRepositoryPort = snapshotRepositoryPort;
         this.candidateContextProvider = candidateContextProvider;
         this.vacancyQueryService = vacancyQueryService;
         this.vacancyJobOfferMapper = vacancyJobOfferMapper;
@@ -202,9 +222,13 @@ public class GenerateApplicationMaterialsUseCase {
                 started.id(), validated.cv(), validated.coverLetter(),
                 aiResponse.aiProvider(), aiResponse.aiModel(), aiResponse.promptVersion(), Instant.now(clock));
 
+        RenderableApplicationMaterials renderable = RenderModelAssembler.assemble(validated, context, jobOffer);
+        ApplicationMaterialRenderSnapshot snapshotToPersist = ApplicationMaterialRenderSnapshot.create(started.id(), renderable);
+
         try {
             CompletionOutcome outcome = completionTransaction.execute(status -> {
                 ApplicationMaterialGenerationResult savedResult = resultRepositoryPort.save(resultToPersist);
+                snapshotRepositoryPort.save(snapshotToPersist);
                 ApplicationMaterialGeneration completedGeneration = generationRepositoryPort.save(started.complete(Instant.now(clock)));
                 return new CompletionOutcome(savedResult, completedGeneration);
             });

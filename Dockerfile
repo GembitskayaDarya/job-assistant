@@ -16,6 +16,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system spring && adduser --system --ingroup spring spring
+
+# Sprint 10 Step 4: application-materials.storage.local.root-directory defaults to
+# ./data/application-materials, resolved against this WORKDIR - i.e. /app/data/application-materials.
+# /app itself is root-owned (created by WORKDIR above, before USER switches to the non-root spring
+# user), so the directory is created and handed to spring here; otherwise LocalFileStorageAdapter's
+# first write would fail with a permission error at runtime.
+RUN mkdir -p /app/data/application-materials && chown -R spring:spring /app/data
+
 COPY --from=build /workspace/build/libs/*.jar app.jar
 USER spring:spring
 

@@ -46,6 +46,9 @@ config/career-history.yml
 *.backup
 backups/
 
+### Generated application materials (rendered CV/cover-letter PDFs - Sprint 10 Step 4) ###
+/data/application-materials/
+
 ### IntelliJ IDEA ###
 .idea/
 *.iws

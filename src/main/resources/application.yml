@@ -220,6 +220,15 @@ candidate-context:
     max-field-characters: ${CANDIDATE_CONTEXT_APPLICATION_MATERIALS_MAX_FIELD_CHARACTERS:1500}
     max-total-characters: ${CANDIDATE_CONTEXT_APPLICATION_MATERIALS_MAX_TOTAL_CHARACTERS:20000}
 
+# Sprint 10 Step 4: where LocalFileStorageAdapter stores rendered CV/cover-letter PDFs - relative to
+# the process working directory unless overridden with an absolute path. Never committed to Git
+# (see .gitignore) and never persisted to PostgreSQL - only the storage key (a relative path under
+# this root) is stored in application_material_artifact.
+application-materials:
+  storage:
+    local:
+      root-directory: ${APPLICATION_MATERIALS_STORAGE_LOCAL_ROOT_DIRECTORY:./data/application-materials}
+
 job-monitoring:
   enabled: ${JOB_MONITORING_ENABLED:false}
   fixed-delay: ${JOB_MONITORING_FIXED_DELAY:30m}

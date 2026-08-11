@@ -49,6 +49,13 @@ services:
       LOG_LEVEL_MONITORING: ${LOG_LEVEL_MONITORING:-INFO}
     volumes:
       - ./config/candidate-profile.yml:/app/config/candidate-profile.yml:ro
+      # Sprint 10 Step 4 (production-readiness fix): rendered CV/cover-letter PDFs
+      # (application-materials.storage.local.root-directory, default ./data/application-materials
+      # resolved against the image's /app WORKDIR). A bind mount, not a named volume - local dev
+      # workflow calls for opening a just-generated PDF directly from the host filesystem to check
+      # it, and ./data/application-materials is already gitignored for exactly this path. Survives
+      # container rebuilds/restarts the same as a named volume would, since it lives on the host.
+      - ./data/application-materials:/app/data/application-materials
     ports:
       - "8080:8080"
     healthcheck:

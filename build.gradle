@@ -56,6 +56,19 @@ dependencies {
 
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.6'
 
+    // Sprint 10 Step 4: CV/cover-letter PDF rendering. Pure Java, Apache-2.0, no native/Chromium
+    // runtime - PDDocument text is drawn directly with vector positions computed against a
+    // bundled, embedded Unicode font (see ph-fonts-open-sans below), never rasterized.
+    implementation 'org.apache.pdfbox:pdfbox:3.0.3'
+
+    // Sprint 10 Step 4 (production-readiness fix): embedded Unicode font for PDF rendering.
+    // Apache-2.0-licensed Maven Central wrapper bundling the Open Sans TTF family (SIL Open Font
+    // License 1.1, redistribution-permitted) as classpath resources - so the exact same font bytes
+    // are used on every developer machine and inside Docker, with no dependency on the host OS's
+    // installed fonts and no runtime network fetch. Open Sans covers Latin, Latin Extended
+    // (including Polish diacritics) and Cyrillic.
+    implementation 'com.helger.font:ph-fonts-open-sans:6.1.0'
+
     implementation 'net.javacrumbs.shedlock:shedlock-spring'
     implementation 'net.javacrumbs.shedlock:shedlock-provider-jdbc-template'
 
