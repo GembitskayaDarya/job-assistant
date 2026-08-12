@@ -50,7 +50,7 @@ public final class CandidateProfileFactsAssembler {
 
     private static List<CandidateSkillFacts> toSkillFacts(List<CandidateSkill> skills) {
         return skills.stream()
-                .map(skill -> new CandidateSkillFacts(skill.name(), skill.category(), skill.note(), skill.proficiency()))
+                .map(skill -> new CandidateSkillFacts(skill.id(), skill.name(), skill.category(), skill.note(), skill.proficiency()))
                 .toList();
     }
 

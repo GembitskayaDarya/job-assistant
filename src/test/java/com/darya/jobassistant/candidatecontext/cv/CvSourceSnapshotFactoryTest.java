@@ -61,6 +61,28 @@ class CvSourceSnapshotFactoryTest {
     }
 
     /**
+     * Sprint 11 Step 2: the persisted {@code candidate_profile_skill.id} - propagated starting at
+     * {@code CandidateProfileFactsAssembler} (see {@code CandidateProfileFactsAssemblerTest}) -
+     * survives unchanged through {@code CandidateContextSnapshot} all the way to {@link
+     * CvSourceSnapshot}, so a future CV tailoring result can reference an existing skill by stable
+     * identity instead of a free-form name.
+     */
+    @Test
+    void from_preservesStableSkillIdentity() {
+        UUID javaSkillId = UUID.randomUUID();
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Senior Backend Engineer", "Senior",
+                List.of(new CandidateSkillFacts(javaSkillId, "Java", "Language", null, SkillProficiency.EXPERT)),
+                List.of(), 6,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+
+        CvSourceSnapshot result = CvSourceSnapshotFactory.from(snapshot(profile, Optional.empty()));
+
+        assertThat(result.candidateProfile().skills()).hasSize(1);
+        assertThat(result.candidateProfile().skills().get(0).candidateSkillId()).isEqualTo(javaSkillId);
+    }
+
+    /**
      * Sprint 11 Step 1 correction requirement: skill category - previously dropped before {@code
      * CandidateContextSnapshot} was ever built, since the common context used to route through the
      * vacancy-analysis-bounded {@code CandidateProfile} (see {@code CandidateProfileAnalysisAssembler})

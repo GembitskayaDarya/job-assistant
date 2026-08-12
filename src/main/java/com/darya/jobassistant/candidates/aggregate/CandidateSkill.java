@@ -1,6 +1,7 @@
 package com.darya.jobassistant.candidates.aggregate;
 
 import com.darya.jobassistant.candidates.SkillProficiency;
+import java.util.UUID;
 
 /**
  * A single skill within a {@link CandidateProfileAggregate}. Named {@code CandidateSkill} here
@@ -13,8 +14,20 @@ import com.darya.jobassistant.candidates.SkillProficiency;
  * purely so the YAML-to-aggregate migration never silently discards {@code
  * com.darya.jobassistant.candidates.CandidateSkill#note} - it is not read by AI vacancy analysis
  * ({@code JobAnalysisService.formatSkills} only ever reads {@code name}/{@code proficiency}).
+ *
+ * <p>{@link #id} (Sprint 11 Step 2) is the skill row's own persisted {@code
+ * candidate_profile_skill.id} - {@code null} for a not-yet-persisted skill, non-null once loaded
+ * from {@link com.darya.jobassistant.candidates.persistence.CandidateProfileRepositoryAdapter}.
+ * Column already existed (inherited from {@code BaseEntity}); this only stops the mapper from
+ * dropping it. Like Career History's ids, it is stable for the lifetime of one loaded aggregate,
+ * not durable across a subsequent profile save - {@code
+ * CandidateProfileRepositoryAdapter#replaceSkills} deletes and reinserts every skill row on every
+ * save, exactly like {@code CareerHistoryRepositoryAdapter} does for its own children. The
+ * four-argument constructor is kept for the many existing call sites that construct a skill
+ * in-memory with no persisted identity yet.
  */
 public record CandidateSkill(
+        UUID id,
         String name,
         String category,
         String note,
@@ -30,6 +43,11 @@ public record CandidateSkill(
         }
         category = trimToNull(category);
         note = trimToNull(note);
+    }
+
+    /** Convenience constructor for a skill with no persisted identity yet - see {@link #id}. */
+    public CandidateSkill(String name, String category, String note, SkillProficiency proficiency) {
+        this(null, name, category, note, proficiency);
     }
 
     private static String trimToNull(String value) {

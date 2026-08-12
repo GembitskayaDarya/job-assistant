@@ -46,7 +46,8 @@ final class CandidateProfilePersistenceMapper {
     }
 
     private static CandidateSkill toDomainSkill(CandidateProfileSkillEntity entity) {
-        return new CandidateSkill(entity.getSkillName(), entity.getCategory(), entity.getNote(), entity.getProficiency());
+        return new CandidateSkill(
+                entity.getId(), entity.getSkillName(), entity.getCategory(), entity.getNote(), entity.getProficiency());
     }
 
     private static CandidateLanguage toDomainLanguage(CandidateProfileLanguageEntity entity) {

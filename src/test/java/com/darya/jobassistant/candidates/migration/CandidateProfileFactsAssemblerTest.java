@@ -51,6 +51,28 @@ class CandidateProfileFactsAssemblerTest {
         assertThat(facts.skills().get(0).proficiency()).isEqualTo(SkillProficiency.EXPERT);
     }
 
+    /**
+     * Sprint 11 Step 2: {@code candidate_profile_skill.id} already exists as a persisted column
+     * (inherited from {@code BaseEntity}) but was previously dropped by every mapper on the way to
+     * {@code CandidateProfileFacts} - now propagated unchanged so a future CV tailoring result can
+     * reference an existing skill by stable identity instead of inventing a free-form skill name.
+     */
+    @Test
+    void toProfileFacts_propagatesPersistedSkillId() {
+        UUID skillId = UUID.randomUUID();
+        CandidateProfileAggregate aggregateWithSkillId = new CandidateProfileAggregate(
+                UUID.randomUUID(), "primary", "Senior Java Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null,
+                null, false, null,
+                List.of(new CandidateSkill(skillId, "Java", "Language", "10+ years", SkillProficiency.EXPERT)),
+                List.of(), List.of(), 0L);
+
+        CandidateProfileFacts facts = CandidateProfileFactsAssembler.toProfileFacts(aggregateWithSkillId);
+
+        assertThat(facts.skills()).hasSize(1);
+        assertThat(facts.skills().get(0).candidateSkillId()).isEqualTo(skillId);
+    }
+
     @Test
     void toProfileFacts_languagesPreserveResolvedNameAndProficiency() {
         CandidateProfileFacts facts = CandidateProfileFactsAssembler.toProfileFacts(aggregate);

@@ -171,6 +171,23 @@ class CandidateProfileRepositoryAdapterTest {
         assertThat(found).isInstanceOf(CandidateProfileAggregate.class);
     }
 
+    /**
+     * Sprint 11 Step 2: {@code candidate_profile_skill.id} already existed as a persisted column
+     * (inherited from {@code BaseEntity}) but {@link CandidateProfilePersistenceMapper} used to drop
+     * it when assembling {@link CandidateSkill} - now propagated, giving a future CV tailoring
+     * contract a stable identity to reference instead of a free-form skill name.
+     */
+    @Test
+    void save_thenLoad_skillCarriesItsPersistedRowId() {
+        String key = "skill-id-" + UUID.randomUUID();
+        adapter().save(validProfile(key, List.of(new CandidateSkill("Java", "Language", null, SkillProficiency.EXPERT)), List.of()));
+
+        CandidateProfileAggregate found = adapter().findByProfileKey(key).orElseThrow();
+
+        assertThat(found.skills()).hasSize(1);
+        assertThat(found.skills().get(0).id()).isNotNull();
+    }
+
     // ---- 6. Updating scalar values ----
 
     @Test
