@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
+import java.lang.reflect.RecordComponent;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -84,8 +86,30 @@ class CandidateContextSnapshotTest {
         assertThat(snapshot.careerHistoryAvailability()).isEqualTo(CareerHistoryAvailability.AVAILABLE);
     }
 
-    private CandidateProfile validProfile() {
-        return new CandidateProfile(
+    /**
+     * Sprint 11 Step 1 correction regression guard: {@link CandidateContextSnapshot#candidateProfile()}
+     * must carry the complete {@link CandidateProfileFacts}, never the vacancy-analysis-bounded
+     * {@link CandidateProfile} - a common context built from the lossy type would silently drop
+     * skill category and language proficiency before any non-analysis downstream consumer (e.g.
+     * {@code CvSourceSnapshotFactory}) ever saw them. Enforced structurally by the compiler already
+     * (the record component type itself is {@link CandidateProfileFacts}), asserted here via
+     * reflection so a future revert is caught by this test even if some future call site were to
+     * compile against a loosened signature.
+     */
+    @Test
+    void candidateProfileComponent_isTheCompleteFactsType_notTheAnalysisBoundedProfile() {
+        RecordComponent[] components = CandidateContextSnapshot.class.getRecordComponents();
+        RecordComponent candidateProfileComponent = List.of(components).stream()
+                .filter(component -> component.getName().equals("candidateProfile"))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(candidateProfileComponent.getType()).isEqualTo(CandidateProfileFacts.class);
+        assertThat(candidateProfileComponent.getType()).isNotEqualTo(CandidateProfile.class);
+    }
+
+    private CandidateProfileFacts validProfile() {
+        return new CandidateProfileFacts(
                 "Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
     }

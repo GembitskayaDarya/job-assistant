@@ -2,10 +2,10 @@ package com.darya.jobassistant.candidatecontext.runtime;
 
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
-import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
-import com.darya.jobassistant.candidates.migration.CandidateProfileAnalysisAssembler;
+import com.darya.jobassistant.candidates.migration.CandidateProfileFactsAssembler;
 import com.darya.jobassistant.candidates.runtime.CandidateProfileNotConfiguredException;
 import com.darya.jobassistant.candidates.runtime.CandidateProfileRuntimeProperties;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
@@ -54,10 +54,10 @@ public class PersistentCandidateContextProvider implements CandidateContextProvi
         String profileKey = properties.profileKey();
         CandidateProfileAggregate aggregate = candidateProfileRepositoryPort.findByProfileKey(profileKey)
                 .orElseThrow(() -> new CandidateProfileNotConfiguredException(profileKey));
-        CandidateProfile analysisProfile = CandidateProfileAnalysisAssembler.toAnalysisProfile(aggregate);
+        CandidateProfileFacts profileFacts = CandidateProfileFactsAssembler.toProfileFacts(aggregate);
         Optional<CareerHistoryAggregate> careerHistory =
                 careerHistoryRepositoryPort.findByCandidateProfileId(aggregate.id());
         return new CandidateContextSnapshot(
-                aggregate.id(), profileKey, aggregate.version(), analysisProfile, careerHistory);
+                aggregate.id(), profileKey, aggregate.version(), profileFacts, careerHistory);
     }
 }

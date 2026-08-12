@@ -11,6 +11,7 @@ import com.darya.jobassistant.candidatecontext.applicationmaterials.model.Select
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.SelectedCareerResponsibility;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.SelectedCareerTechnology;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.migration.CandidateProfileAnalysisAssembler;
 import com.darya.jobassistant.careerhistory.aggregate.CareerAchievement;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
@@ -113,11 +114,15 @@ public class CandidateContextForApplicationMaterialsSelector {
     }
 
     public CandidateContextForApplicationMaterials select(CandidateContextSnapshot snapshot, JobOffer vacancy) {
+        // Sprint 11 Step 1 correction: snapshot.candidateProfile() now carries the complete,
+        // lossless CandidateProfileFacts - narrowing to the bounded, application-materials-specific
+        // CandidateProfile shape happens explicitly here, at this selector's own boundary.
+        CandidateProfile candidateProfile = CandidateProfileAnalysisAssembler.toAnalysisProfile(snapshot.candidateProfile());
         CareerHistoryAvailability availability = snapshot.careerHistoryAvailability();
         Long careerHistoryVersion = snapshot.careerHistory().map(CareerHistoryAggregate::version).orElse(null);
 
         if (availability != CareerHistoryAvailability.AVAILABLE) {
-            return new CandidateContextForApplicationMaterials(snapshot.candidateProfile(), availability, List.of(),
+            return new CandidateContextForApplicationMaterials(candidateProfile, availability, List.of(),
                     CandidateContextForApplicationMaterialsSelectionMetadata.empty(availability, careerHistoryVersion));
         }
 
@@ -141,7 +146,7 @@ public class CandidateContextForApplicationMaterialsSelector {
 
         Set<CareerProject> selectedProjectSet = selectTopProjects(selectedPositionCandidates, normalizedVacancyText, vacancyTokens);
 
-        return render(snapshot.candidateProfile(), careerHistoryVersion, selectedPositionCandidates, selectedProjectSet,
+        return render(candidateProfile, careerHistoryVersion, selectedPositionCandidates, selectedProjectSet,
                 availableCompanyCount, availablePositionCount, availableProjectCount);
     }
 

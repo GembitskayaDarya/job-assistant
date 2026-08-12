@@ -15,7 +15,7 @@ import com.darya.jobassistant.candidatecontext.applicationmaterials.CandidateCon
 import com.darya.jobassistant.candidatecontext.applicationmaterials.CandidateContextForApplicationMaterialsSelector;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.CandidateContextForApplicationMaterials;
 import com.darya.jobassistant.candidates.CandidatePreferences;
-import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
@@ -144,8 +144,8 @@ class RenderModelAssemblerTest {
         return new CandidateContextForApplicationMaterialsSelector(properties).select(snapshot, vacancy());
     }
 
-    private CandidateProfile validProfile() {
-        return new CandidateProfile("Senior Java Backend Engineer", "Senior", List.of(), List.of(), 6,
+    private CandidateProfileFacts validProfile() {
+        return new CandidateProfileFacts("Senior Java Backend Engineer", "Senior", List.of(), List.of(), 6,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
     }
 

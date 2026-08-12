@@ -18,7 +18,8 @@ import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextAnalysisProperties;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
-import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidatePreferences;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
@@ -273,8 +274,14 @@ class VacancyRecommendationProcessingServiceDurabilityIntegrationTest {
                 new VacancyRecommendationProperties.Scheduler(
                         false, Duration.ofMinutes(10), Duration.ofMinutes(1), Duration.ofHours(1), Duration.ofSeconds(10)));
         CandidateContextProvider candidateContextProvider = mock(CandidateContextProvider.class);
+        // A real fixture, not a mock: CandidateContextForAnalysisSelector below is a real instance
+        // that narrows this via CandidateProfileAnalysisAssembler.toAnalysisProfile(...), which
+        // calls facts.skills()/facts.languages() - an unstubbed mock would NPE there.
+        CandidateProfileFacts profileFacts = new CandidateProfileFacts(
+                "Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
         CandidateContextSnapshot candidateContext =
-                new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, mock(CandidateProfile.class), Optional.empty());
+                new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, profileFacts, Optional.empty());
         lenient().when(candidateContextProvider.loadCurrentContext()).thenReturn(candidateContext);
         CandidateContextForAnalysisSelector candidateContextForAnalysisSelector =
                 new CandidateContextForAnalysisSelector(new CandidateContextAnalysisProperties(4, 6, 4, 4, 4, 4, 12, 1200, 12000));

@@ -13,9 +13,10 @@ import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextAnalysisProperties;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
+import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidatePreferences;
-import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.PreferenceImportance;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
@@ -315,23 +316,23 @@ class JobAnalysisServiceTest {
                 "Summary");
     }
 
-    private CandidateProfile profileWithSkillsAndPreferences() {
-        return new CandidateProfile(
+    private CandidateProfileFacts profileWithSkillsAndPreferences() {
+        return new CandidateProfileFacts(
                 "Senior Java Backend Engineer",
                 "Senior",
                 List.of(
-                        new CandidateSkill("Java", SkillProficiency.EXPERT, null),
-                        new CandidateSkill("Spring Boot", SkillProficiency.STRONG, null),
-                        new CandidateSkill("Kafka", SkillProficiency.WORKING, null),
-                        new CandidateSkill("AWS", SkillProficiency.BASIC, null)),
-                List.of("English", "Polish"),
+                        new CandidateSkillFacts("Java", null, null, SkillProficiency.EXPERT),
+                        new CandidateSkillFacts("Spring Boot", null, null, SkillProficiency.STRONG),
+                        new CandidateSkillFacts("Kafka", null, null, SkillProficiency.WORKING),
+                        new CandidateSkillFacts("AWS", null, null, SkillProficiency.BASIC)),
+                List.of(new CandidateLanguageFacts("English", null), new CandidateLanguageFacts("Polish", null)),
                 6,
                 new CandidatePreferences(
                         null, "Remote, Europe", PreferenceImportance.STRONG, List.of(), false,
                         List.of(), null, "Product company", null, null));
     }
 
-    private CandidateContextSnapshot snapshotWithProfile(CandidateProfile profile) {
+    private CandidateContextSnapshot snapshotWithProfile(CandidateProfileFacts profile) {
         return new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, profile, Optional.empty());
     }
 

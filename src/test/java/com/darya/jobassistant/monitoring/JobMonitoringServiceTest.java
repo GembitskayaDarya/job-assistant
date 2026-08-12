@@ -27,8 +27,11 @@ import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnaly
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextSelectionMetadata;
 import com.darya.jobassistant.candidates.CandidatePreferences;
+import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
+import com.darya.jobassistant.candidates.migration.CandidateProfileAnalysisAssembler;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -96,15 +99,17 @@ class JobMonitoringServiceTest {
     private NotificationDeliveryRepository notificationDeliveryRepository;
 
     private final Clock clock = Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC);
-    private final CandidateProfile profile = new CandidateProfile(
+    private final CandidateProfileFacts profileFacts = new CandidateProfileFacts(
             "Backend Engineer",
             "Senior",
-            List.of(new CandidateSkill("Java", SkillProficiency.WORKING, null)),
-            List.of("English"),
+            List.of(new CandidateSkillFacts("Java", null, null, SkillProficiency.WORKING)),
+            List.of(new CandidateLanguageFacts("English", null)),
             5,
             new CandidatePreferences(null, "Remote", null, List.of(), false, List.of(), null, "Product", null, null));
+    /** Derived from {@link #profileFacts} so {@link #analysisContext} can never drift from it. */
+    private final CandidateProfile profile = CandidateProfileAnalysisAssembler.toAnalysisProfile(profileFacts);
     private final CandidateContextSnapshot candidateContext =
-            new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, profile, Optional.empty());
+            new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, profileFacts, Optional.empty());
     private final CandidateContextForAnalysis analysisContext = new CandidateContextForAnalysis(
             profile, CareerHistoryAvailability.NOT_PROVIDED, List.of(),
             CandidateContextSelectionMetadata.empty(CareerHistoryAvailability.NOT_PROVIDED, null));

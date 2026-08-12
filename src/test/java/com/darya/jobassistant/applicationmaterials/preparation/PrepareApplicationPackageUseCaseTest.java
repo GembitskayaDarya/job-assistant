@@ -27,7 +27,7 @@ import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMater
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
 import com.darya.jobassistant.candidates.CandidatePreferences;
-import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.exception.VacancyNotFoundException;
 import com.darya.jobassistant.integrations.filestorage.FileStorageNotFoundException;
@@ -651,8 +651,8 @@ class PrepareApplicationPackageUseCaseTest {
         return prepared;
     }
 
-    private CandidateProfile validProfile() {
-        return new CandidateProfile("Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
+    private CandidateProfileFacts validProfile() {
+        return new CandidateProfileFacts("Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
     }
 

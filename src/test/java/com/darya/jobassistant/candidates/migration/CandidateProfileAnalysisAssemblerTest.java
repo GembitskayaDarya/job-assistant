@@ -3,8 +3,11 @@ package com.darya.jobassistant.candidates.migration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.PreferenceImportance;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
@@ -112,8 +115,39 @@ class CandidateProfileAnalysisAssemblerTest {
 
     @Test
     void toAnalysisProfile_nullAggregate_isRejected() {
-        assertThatThrownBy(() -> CandidateProfileAnalysisAssembler.toAnalysisProfile(null))
+        assertThatThrownBy(() -> CandidateProfileAnalysisAssembler.toAnalysisProfile((CandidateProfileAggregate) null))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void toAnalysisProfile_nullFacts_isRejected() {
+        assertThatThrownBy(() -> CandidateProfileAnalysisAssembler.toAnalysisProfile((CandidateProfileFacts) null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void toAnalysisProfile_fromFacts_dropsSkillCategoryAndLanguageProficiency() {
+        CandidateProfileFacts facts = new CandidateProfileFacts(
+                "Senior Java Backend Engineer", "Senior",
+                List.of(new CandidateSkillFacts("Java", "Language", "10+ years", SkillProficiency.EXPERT)),
+                List.of(new CandidateLanguageFacts("English", "native")),
+                6, new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+
+        CandidateProfile analysisProfile = CandidateProfileAnalysisAssembler.toAnalysisProfile(facts);
+
+        assertThat(analysisProfile.skills().get(0).name()).isEqualTo("Java");
+        assertThat(analysisProfile.skills().get(0).proficiency()).isEqualTo(SkillProficiency.EXPERT);
+        assertThat(analysisProfile.skills().get(0).note()).isEqualTo("10+ years");
+        assertThat(analysisProfile.languages()).containsExactly("English");
+    }
+
+    @Test
+    void toAnalysisProfile_aggregateOverload_isConsistentWithFactsAssemblerComposition() {
+        CandidateProfile viaAggregate = CandidateProfileAnalysisAssembler.toAnalysisProfile(aggregate);
+        CandidateProfile viaFacts =
+                CandidateProfileAnalysisAssembler.toAnalysisProfile(CandidateProfileFactsAssembler.toProfileFacts(aggregate));
+
+        assertThat(viaAggregate).isEqualTo(viaFacts);
     }
 
     @Test

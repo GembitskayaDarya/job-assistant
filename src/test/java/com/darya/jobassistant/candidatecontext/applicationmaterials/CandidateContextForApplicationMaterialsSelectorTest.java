@@ -10,8 +10,11 @@ import com.darya.jobassistant.candidatecontext.applicationmaterials.model.Select
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.SelectedCareerPosition;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.candidates.migration.CandidateProfileAnalysisAssembler;
 import com.darya.jobassistant.careerhistory.aggregate.CareerAchievement;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
@@ -372,7 +375,7 @@ class CandidateContextForApplicationMaterialsSelectorTest {
     }
 
     private CandidateContextSnapshot snapshot(UUID candidateProfileId, Optional<CareerHistoryAggregate> careerHistory) {
-        return new CandidateContextSnapshot(candidateProfileId, "primary", 0L, validProfile(), careerHistory);
+        return new CandidateContextSnapshot(candidateProfileId, "primary", 0L, validProfileFacts(), careerHistory);
     }
 
     private CandidateContextSnapshot snapshotWithCompanies(List<CareerCompany> companies) {
@@ -381,12 +384,17 @@ class CandidateContextForApplicationMaterialsSelectorTest {
         return snapshot(candidateProfileId, Optional.of(careerHistory));
     }
 
+    /** The bounded profile a selector run should produce - derived from {@link #validProfileFacts()} so the two can never drift. */
     private CandidateProfile validProfile() {
-        return new CandidateProfile(
+        return CandidateProfileAnalysisAssembler.toAnalysisProfile(validProfileFacts());
+    }
+
+    private CandidateProfileFacts validProfileFacts() {
+        return new CandidateProfileFacts(
                 "Senior Java Backend Engineer", "Senior",
-                List.of(new CandidateSkill("Java", SkillProficiency.STRONG, null),
-                        new CandidateSkill("Kafka", SkillProficiency.BASIC, null)),
-                List.of("en"), 5,
+                List.of(new CandidateSkillFacts("Java", null, null, SkillProficiency.STRONG),
+                        new CandidateSkillFacts("Kafka", null, null, SkillProficiency.BASIC)),
+                List.of(), 5,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
     }
 

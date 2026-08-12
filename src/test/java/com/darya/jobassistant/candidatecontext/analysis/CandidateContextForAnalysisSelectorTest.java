@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
 import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
 import com.darya.jobassistant.candidates.CandidatePreferences;
-import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.careerhistory.aggregate.CareerAchievement;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
@@ -394,8 +394,8 @@ class CandidateContextForAnalysisSelectorTest {
         return snapshot(candidateProfileId, Optional.of(careerHistory));
     }
 
-    private CandidateProfile validProfile() {
-        return new CandidateProfile(
+    private CandidateProfileFacts validProfile() {
+        return new CandidateProfileFacts(
                 "Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
     }

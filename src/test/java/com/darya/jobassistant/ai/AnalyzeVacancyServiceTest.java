@@ -25,10 +25,13 @@ import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysis;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextSelectionMetadata;
+import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.candidates.migration.CandidateProfileAnalysisAssembler;
 import com.darya.jobassistant.exception.VacancyNotFoundException;
 import com.darya.jobassistant.integrations.ai.openai.JobAnalysisService;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -529,20 +532,25 @@ class AnalyzeVacancyServiceTest {
     }
 
     private CandidateContextSnapshot candidateContextSnapshot() {
-        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, candidateProfile(), Optional.empty());
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", 0L, candidateProfileFacts(), Optional.empty());
     }
 
-    private CandidateProfile candidateProfile() {
-        return new CandidateProfile(
+    private CandidateProfileFacts candidateProfileFacts() {
+        return new CandidateProfileFacts(
                 "Senior Java Backend Developer",
                 "Senior",
                 List.of(
-                        new CandidateSkill("Java", SkillProficiency.WORKING, null),
-                        new CandidateSkill("Spring Boot", SkillProficiency.WORKING, null)),
-                List.of("English"),
+                        new CandidateSkillFacts("Java", null, null, SkillProficiency.WORKING),
+                        new CandidateSkillFacts("Spring Boot", null, null, SkillProficiency.WORKING)),
+                List.of(new CandidateLanguageFacts("English", null)),
                 6,
                 new CandidatePreferences(
                         null, "Remote Europe", null, List.of(), false, List.of(), null, "Product company", null, null));
+    }
+
+    /** Derived from {@link #candidateProfileFacts()} so the field-initializer fixture below can never drift from it. */
+    private CandidateProfile candidateProfile() {
+        return CandidateProfileAnalysisAssembler.toAnalysisProfile(candidateProfileFacts());
     }
 
     private JobAnalysis jobAnalysis() {

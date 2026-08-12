@@ -18,6 +18,7 @@ import com.darya.jobassistant.candidatecontext.applicationmaterials.model.Candid
 import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
@@ -189,13 +190,19 @@ class ApplicationMaterialsCandidateContextProviderTest {
     }
 
     private CandidateContextSnapshot snapshot(long candidateProfileVersion, Optional<CareerHistoryAggregate> careerHistory) {
-        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", candidateProfileVersion, validProfile(), careerHistory);
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", candidateProfileVersion, validProfileFacts(), careerHistory);
     }
 
     private CareerHistoryAggregate careerHistory(long version) {
         return new CareerHistoryAggregate(UUID.randomUUID(), UUID.randomUUID(), List.<CareerCompany>of(), version);
     }
 
+    private CandidateProfileFacts validProfileFacts() {
+        return new CandidateProfileFacts("Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+    }
+
+    /** Fixture for what the mocked {@link CandidateContextForApplicationMaterialsSelector} returns - unrelated to {@link #validProfileFacts()}. */
     private CandidateProfile validProfile() {
         return new CandidateProfile("Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));

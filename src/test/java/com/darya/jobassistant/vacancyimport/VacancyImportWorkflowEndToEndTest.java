@@ -22,8 +22,9 @@ import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextAnalysisProperties;
 import com.darya.jobassistant.candidatecontext.analysis.CandidateContextForAnalysisSelector;
-import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.CandidateLanguageFacts;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.mapper.CompanyMapper;
@@ -244,13 +245,13 @@ class VacancyImportWorkflowEndToEndTest {
     }
 
     private JobAnalysis analyze(UUID sessionId, UUID vacancyId, boolean expectNewlyCreated) {
-        CandidateProfile profile = new CandidateProfile(
+        CandidateProfileFacts profile = new CandidateProfileFacts(
                 "Senior Java Backend Developer",
                 "Senior",
                 List.of(
-                        new CandidateSkill("Java", SkillProficiency.WORKING, null),
-                        new CandidateSkill("Kafka", SkillProficiency.WORKING, null)),
-                List.of("English"),
+                        new CandidateSkillFacts("Java", null, null, SkillProficiency.WORKING),
+                        new CandidateSkillFacts("Kafka", null, null, SkillProficiency.WORKING)),
+                List.of(new CandidateLanguageFacts("English", null)),
                 6,
                 new CandidatePreferences(
                         null, "Remote Europe", null, List.of(), false, List.of(), null, "Product company", null, null));

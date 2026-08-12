@@ -13,8 +13,9 @@ import com.darya.jobassistant.candidatecontext.applicationmaterials.CandidateCon
 import com.darya.jobassistant.candidatecontext.applicationmaterials.CandidateContextForApplicationMaterialsProperties;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.CandidateContextForApplicationMaterials;
 import com.darya.jobassistant.candidates.CandidatePreferences;
-import com.darya.jobassistant.candidates.CandidateProfile;
-import com.darya.jobassistant.candidates.CandidateSkill;
+import com.darya.jobassistant.candidates.CandidateLanguageFacts;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
@@ -187,9 +188,10 @@ class SpringAiApplicationMaterialsAdapterTest {
         return new CandidateContextForApplicationMaterialsSelector(properties).select(snapshot, vacancy());
     }
 
-    private CandidateProfile validProfile() {
-        return new CandidateProfile("Senior Java Backend Engineer", "Senior",
-                List.of(new CandidateSkill("Java", SkillProficiency.STRONG, null)), List.of("en"), 6,
+    private CandidateProfileFacts validProfile() {
+        return new CandidateProfileFacts("Senior Java Backend Engineer", "Senior",
+                List.of(new CandidateSkillFacts("Java", null, null, SkillProficiency.STRONG)),
+                List.of(new CandidateLanguageFacts("en", null)), 6,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
     }
 
