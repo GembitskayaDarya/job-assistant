@@ -1,4 +1,4 @@
-package com.darya.jobassistant.candidatecontext.cv.tailoring;
+package com.darya.jobassistant.candidatecontext.cv.tailoring.validation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,33 +20,41 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
- * Sprint 11 Step 2: guards {@code candidatecontext.cv.tailoring} - {@link CvTailoringResult} and
- * every type it transitively exposes ({@link CvPositionTailoring}, {@link CvProjectTailoring},
- * {@link CvResponsibilityTailoring}, {@link CvAchievementTailoring}) - as a pure, self-contained domain
- * contract with no dependency on Spring, JPA, OpenAI/Spring AI, persistence entities, the Career
- * History/Candidate Profile aggregates, or {@code CvSourceSnapshot} itself. This contract must be
- * designable and testable in complete isolation from the snapshot it will later be validated
- * against (Sprint 11 Step 3), matching {@code CvSourceModelBoundaryArchitectureTest}'s convention
- * for the sibling factual model.
+ * Sprint 11 Step 3: guards {@code candidatecontext.cv.tailoring.validation} - {@link
+ * CvTailoringValidator} and every type it exposes ({@link CvTailoringValidationResult}, {@link
+ * CvTailoringViolation}, {@link CvTailoringViolationCategory}) - against Spring, JPA/repositories,
+ * OpenAI/Spring AI, the Career History/Candidate Profile aggregates, Telegram, and any
+ * renderer/PDF/HTML dependency.
+ *
+ * <p>Deliberately more permissive than {@code CvTailoringBoundaryArchitectureTest} (the sibling
+ * guard for the pure {@code CvTailoringResult} contract one package up): this validator's entire
+ * job is comparing a {@code CvTailoringResult} against a {@code CvSourceSnapshot}, so {@code
+ * candidatecontext.cv.model.*} and {@code candidatecontext.cv.tailoring.*} are expected, allowed
+ * dependencies here - not forbidden the way they are for the tailoring result types themselves.
  *
  * <p>Deliberately dependency-free (no ArchUnit in this project) - plain classpath walk plus
  * reflection, matching every other boundary test in this codebase.
  */
-class CvTailoringBoundaryArchitectureTest {
+class CvTailoringValidationBoundaryArchitectureTest {
 
-    private static final String BOUNDARY_PACKAGE = "com.darya.jobassistant.candidatecontext.cv.tailoring";
+    private static final String BOUNDARY_PACKAGE = "com.darya.jobassistant.candidatecontext.cv.tailoring.validation";
 
     private static final Set<String> FORBIDDEN_PREFIXES = Set.of(
             "org.springframework",
             "jakarta.persistence",
             "com.darya.jobassistant.integrations.ai",
+            "com.darya.jobassistant.integrations.notifier",
+            "com.darya.jobassistant.integrations.documentrendering",
+            "com.darya.jobassistant.applicationmaterials.render",
             "com.darya.jobassistant.careerhistory.aggregate.",
             "com.darya.jobassistant.candidates.aggregate.",
-            "com.darya.jobassistant.candidatecontext.cv.model.",
-            "com.darya.jobassistant.candidatecontext.CandidateContextSnapshot");
+            "com.darya.jobassistant.candidates.repository.",
+            "com.darya.jobassistant.careerhistory.repository.",
+            "com.darya.jobassistant.candidates.persistence.",
+            "com.darya.jobassistant.careerhistory.persistence.");
 
     @Test
-    void tailoringModel_declaresNoForbiddenDependencies() throws IOException, URISyntaxException {
+    void validationModel_declaresNoForbiddenDependencies() throws IOException, URISyntaxException {
         List<String> violations = new ArrayList<>();
         for (Class<?> type : loadBoundaryClasses()) {
             collectViolations(type, violations);
@@ -117,12 +125,8 @@ class CvTailoringBoundaryArchitectureTest {
         }
         Path resolvedRoot = mainPackageRoot;
 
-        // Depth 1 only - not Files.walk - so this deliberately does NOT recurse into the
-        // candidatecontext.cv.tailoring.validation subpackage, which has its own dedicated,
-        // intentionally more permissive boundary test (CvTailoringValidationBoundaryArchitectureTest)
-        // since it legitimately depends on candidatecontext.cv.model/CvSourceSnapshot.
         List<Class<?>> classes = new ArrayList<>();
-        try (Stream<Path> paths = Files.list(resolvedRoot)) {
+        try (Stream<Path> paths = Files.walk(resolvedRoot)) {
             paths.filter(path -> path.toString().endsWith(".class"))
                     .forEach(path -> classes.add(loadClass(resolvedRoot, path)));
         }
