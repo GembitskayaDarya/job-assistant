@@ -10,6 +10,7 @@ import com.darya.jobassistant.applicationmaterials.render.snapshot.repository.Ap
 import com.darya.jobassistant.applicationmaterials.repository.ApplicationMaterialGenerationRepository;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -52,8 +53,13 @@ public class ApplicationMaterialRenderSnapshotRepositoryAdapter implements Appli
         ApplicationMaterialGenerationEntity generation = generationRepository.findById(snapshot.generationId())
                 .orElseThrow(() -> new ApplicationMaterialGenerationNotFoundException(snapshot.generationId()));
         try {
+            // Truncated to microseconds - see ApplicationMaterialArtifactRepositoryAdapter.save's
+            // comment: the created_at column is PostgreSQL TIMESTAMP (microsecond precision), and
+            // saveAndFlush() returns this in-memory entity rather than re-reading it from the
+            // database, so an untruncated Instant.now() could stop matching a later find()'s result.
+            Instant createdAt = Instant.now(clock).truncatedTo(ChronoUnit.MICROS);
             ApplicationMaterialRenderSnapshotEntity saved = snapshotRepository.saveAndFlush(
-                    mapper.toNewEntity(snapshot, generation, Instant.now(clock)));
+                    mapper.toNewEntity(snapshot, generation, createdAt));
             return mapper.toDomain(saved);
         } catch (DataIntegrityViolationException e) {
             if (isGenerationConflict(e)) {

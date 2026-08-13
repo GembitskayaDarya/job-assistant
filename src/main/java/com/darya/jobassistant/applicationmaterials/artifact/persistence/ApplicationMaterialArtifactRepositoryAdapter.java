@@ -12,6 +12,7 @@ import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMater
 import com.darya.jobassistant.applicationmaterials.repository.ApplicationMaterialGenerationRepository;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -65,8 +66,15 @@ public class ApplicationMaterialArtifactRepositoryAdapter implements Application
         ApplicationMaterialGenerationEntity generation = generationRepository.findById(artifact.generationId())
                 .orElseThrow(() -> new ApplicationMaterialGenerationNotFoundException(artifact.generationId()));
         try {
+            // Truncated to microseconds: the created_at column is PostgreSQL TIMESTAMP, which only
+            // stores microsecond precision. Instant.now() can carry nanosecond precision, and
+            // saveAndFlush() returns this same in-memory managed entity rather than re-reading it
+            // from the database - without truncating here, a later find() (a fresh SELECT, always
+            // microsecond-precision) could read back a value that no longer equals what this method
+            // returned, intermittently breaking any caller that compares createdAt across two calls.
+            Instant createdAt = Instant.now(clock).truncatedTo(ChronoUnit.MICROS);
             ApplicationMaterialArtifactEntity saved = artifactRepository.saveAndFlush(
-                    ApplicationMaterialArtifactPersistenceMapper.toNewEntity(artifact, generation, Instant.now(clock)));
+                    ApplicationMaterialArtifactPersistenceMapper.toNewEntity(artifact, generation, createdAt));
             return ApplicationMaterialArtifactPersistenceMapper.toDomain(saved);
         } catch (DataIntegrityViolationException e) {
             if (isNaturalKeyConflict(e)) {
