@@ -401,6 +401,6 @@ class CvTailoringValidatorTest {
                 List.of(), 6,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
 
-        return new CvSourceSnapshot(profile, CareerHistoryAvailability.AVAILABLE, List.of(company));
+        return new CvSourceSnapshot(profile, CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
     }
 }

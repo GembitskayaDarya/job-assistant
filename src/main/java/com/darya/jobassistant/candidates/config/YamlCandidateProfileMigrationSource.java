@@ -1,5 +1,6 @@
 package com.darya.jobassistant.candidates.config;
 
+import com.darya.jobassistant.candidates.CandidateEducationEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
@@ -49,7 +50,13 @@ public class YamlCandidateProfileMigrationSource implements CandidateProfileMigr
                 toSkills(properties.skills()),
                 properties.languages(),
                 properties.experienceYears(),
-                toPreferences(properties.preferences()));
+                toPreferences(properties.preferences()),
+                blankToNull(properties.email()),
+                blankToNull(properties.phone()),
+                blankToNull(properties.linkedinUrl()),
+                blankToNull(properties.cvLocation()),
+                blankToNull(properties.cvHeadline()),
+                toEducation(properties.education()));
     }
 
     /**
@@ -73,6 +80,14 @@ public class YamlCandidateProfileMigrationSource implements CandidateProfileMigr
     private List<CandidateSkill> toSkills(List<CandidateProfileProperties.SkillProperties> skills) {
         return skills.stream()
                 .map(skill -> new CandidateSkill(skill.name(), skill.proficiency(), skill.note()))
+                .toList();
+    }
+
+    private List<CandidateEducationEntry> toEducation(List<CandidateProfileProperties.EducationProperties> education) {
+        return education.stream()
+                .map(entry -> new CandidateEducationEntry(
+                        entry.institution(), entry.degree(), entry.fieldOfStudy(), entry.location(),
+                        entry.startDate(), entry.endDate(), entry.description()))
                 .toList();
     }
 

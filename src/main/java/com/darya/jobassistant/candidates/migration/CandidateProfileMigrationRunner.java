@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 /**
@@ -47,11 +49,19 @@ import org.springframework.stereotype.Component;
  * <p>Only safe, structured summary information is ever logged - see {@link
  * CandidateProfileMigrationResult}'s javadoc for exactly what that excludes (full skill lists,
  * salary values, personal career data, complete YAML/aggregate content).
+ *
+ * <p>{@code @Order(}{@link Ordered#HIGHEST_PRECEDENCE}{@code )} (Sprint 11 Step 5 acceptance
+ * correction): explicit, so {@code personalprojects.config.PersonalProjectImportRunner} - which
+ * needs the candidate profile row this class's APPLY mode may just have created to already exist
+ * - is guaranteed to run after it among {@link ApplicationReadyEvent} listeners, the same
+ * explicit-ordering rationale {@code StartupOrder} already documents for this codebase's
+ * {@code ApplicationRunner} beans, applied here to {@code @EventListener} beans instead.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 @Conditional(CandidateProfileMigrationActiveCondition.class)
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class CandidateProfileMigrationRunner {
 
     private final CandidateProfileMigrationUseCase migrationUseCase;

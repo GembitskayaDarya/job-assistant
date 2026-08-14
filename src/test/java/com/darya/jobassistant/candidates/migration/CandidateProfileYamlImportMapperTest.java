@@ -3,6 +3,7 @@ package com.darya.jobassistant.candidates.migration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.candidates.CandidateEducationEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
@@ -148,5 +149,62 @@ class CandidateProfileYamlImportMapperTest {
     void toAggregate_nullSource_isRejected() {
         assertThatThrownBy(() -> CandidateProfileYamlImportMapper.toAggregate(null, "primary"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ---- Sprint 11 Step 5: CV header/contact facts and education ----
+
+    @Test
+    void toAggregate_headerFields_areMappedUnchanged() {
+        CandidateProfile withHeader = new CandidateProfile(
+                "Senior Java Backend Engineer", "Senior", List.of(), List.of(), 6, preferences,
+                "person@example.com", "+48123456789", "https://www.linkedin.com/in/example", "Warsaw, Poland",
+                "Senior Java Backend Engineer", List.of());
+
+        CandidateProfileAggregate aggregate = CandidateProfileYamlImportMapper.toAggregate(withHeader, "primary");
+
+        assertThat(aggregate.email()).isEqualTo("person@example.com");
+        assertThat(aggregate.phone()).isEqualTo("+48123456789");
+        assertThat(aggregate.linkedinUrl()).isEqualTo("https://www.linkedin.com/in/example");
+        assertThat(aggregate.cvLocation()).isEqualTo("Warsaw, Poland");
+        assertThat(aggregate.cvHeadline()).isEqualTo("Senior Java Backend Engineer");
+    }
+
+    @Test
+    void toAggregate_education_displayOrderMatchesSourceListPosition() {
+        CandidateProfile withEducation = new CandidateProfile(
+                "Backend Engineer", "Senior", List.of(), List.of(), 6, preferences,
+                null, null, null, null, null,
+                List.of(
+                        new CandidateEducationEntry("University B", null, null, null, null, null, null),
+                        new CandidateEducationEntry("University A", null, null, null, null, null, null)));
+
+        CandidateProfileAggregate aggregate = CandidateProfileYamlImportMapper.toAggregate(withEducation, "primary");
+
+        assertThat(aggregate.education()).extracting(e -> e.institution()).containsExactly("University B", "University A");
+        assertThat(aggregate.education().get(0).displayOrder()).isZero();
+        assertThat(aggregate.education().get(1).displayOrder()).isEqualTo(1);
+    }
+
+    @Test
+    void toAggregate_education_onlyInstitutionIsRequired() {
+        CandidateProfile withMinimalEducation = new CandidateProfile(
+                "Backend Engineer", "Senior", List.of(), List.of(), 6, preferences,
+                null, null, null, null, null,
+                List.of(new CandidateEducationEntry("Example University", null, null, null, null, null, null)));
+
+        CandidateProfileAggregate aggregate = CandidateProfileYamlImportMapper.toAggregate(withMinimalEducation, "primary");
+
+        assertThat(aggregate.education()).hasSize(1);
+        assertThat(aggregate.education().get(0).degree()).isNull();
+    }
+
+    @Test
+    void toAggregate_languages_displayOrderMatchesSourceListPosition() {
+        CandidateProfileAggregate aggregate = CandidateProfileYamlImportMapper.toAggregate(source, "primary");
+
+        var english = aggregate.languages().stream().filter(l -> l.languageCode().equals("en")).findFirst().orElseThrow();
+        var polish = aggregate.languages().stream().filter(l -> l.languageCode().equals("pl")).findFirst().orElseThrow();
+        assertThat(english.displayOrder()).isZero();
+        assertThat(polish.displayOrder()).isEqualTo(1);
     }
 }

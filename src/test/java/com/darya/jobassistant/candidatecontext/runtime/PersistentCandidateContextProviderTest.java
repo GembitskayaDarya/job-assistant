@@ -18,6 +18,7 @@ import com.darya.jobassistant.candidates.runtime.CandidateProfileRuntimeProperti
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryRepositoryPort;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProjectRepositoryPort;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,9 +36,13 @@ class PersistentCandidateContextProviderTest {
     @Mock
     private CareerHistoryRepositoryPort careerHistoryRepositoryPort;
 
+    @Mock
+    private PersonalProjectRepositoryPort personalProjectRepositoryPort;
+
     private PersistentCandidateContextProvider provider(String profileKey) {
         return new PersistentCandidateContextProvider(
-                candidateProfileRepositoryPort, careerHistoryRepositoryPort, new CandidateProfileRuntimeProperties(profileKey));
+                candidateProfileRepositoryPort, careerHistoryRepositoryPort, personalProjectRepositoryPort,
+                new CandidateProfileRuntimeProperties(profileKey));
     }
 
     @Test

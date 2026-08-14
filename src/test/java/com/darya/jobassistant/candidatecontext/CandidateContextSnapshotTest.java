@@ -108,6 +108,36 @@ class CandidateContextSnapshotTest {
         assertThat(candidateProfileComponent.getType()).isNotEqualTo(CandidateProfile.class);
     }
 
+    // ---- Sprint 11 Step 5: Personal Projects ----
+
+    @Test
+    void constructor_fiveArgOverload_defaultsPersonalProjectsToEmpty() {
+        CandidateContextSnapshot snapshot = new CandidateContextSnapshot(
+                UUID.randomUUID(), "primary", 0L, validProfile(), Optional.empty());
+
+        assertThat(snapshot.personalProjects()).isEmpty();
+    }
+
+    @Test
+    void constructor_nullPersonalProjects_becomesEmpty() {
+        CandidateContextSnapshot snapshot = new CandidateContextSnapshot(
+                UUID.randomUUID(), "primary", 0L, validProfile(), Optional.empty(), null);
+
+        assertThat(snapshot.personalProjects()).isEmpty();
+    }
+
+    @Test
+    void constructor_suppliedPersonalProjects_arePreserved() {
+        UUID candidateProfileId = UUID.randomUUID();
+        com.darya.jobassistant.personalprojects.aggregate.PersonalProject project =
+                new com.darya.jobassistant.personalprojects.aggregate.PersonalProject(
+                        candidateProfileId, "Example Project", null, null, null, null, 0, List.of(), List.of());
+        CandidateContextSnapshot snapshot = new CandidateContextSnapshot(
+                candidateProfileId, "primary", 0L, validProfile(), Optional.empty(), List.of(project));
+
+        assertThat(snapshot.personalProjects()).containsExactly(project);
+    }
+
     private CandidateProfileFacts validProfile() {
         return new CandidateProfileFacts(
                 "Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,

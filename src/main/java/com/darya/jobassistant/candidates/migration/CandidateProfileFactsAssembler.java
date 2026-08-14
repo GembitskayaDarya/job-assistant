@@ -1,10 +1,12 @@
 package com.darya.jobassistant.candidates.migration;
 
+import com.darya.jobassistant.candidates.CandidateEducationFacts;
 import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.PreferenceImportance;
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidatePreferenceType;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
@@ -45,7 +47,21 @@ public final class CandidateProfileFactsAssembler {
                 toSkillFacts(aggregate.skills()),
                 toLanguageFacts(aggregate.languages()),
                 aggregate.experienceYears(),
-                toPreferences(aggregate));
+                toPreferences(aggregate),
+                aggregate.email(),
+                aggregate.phone(),
+                aggregate.linkedinUrl(),
+                aggregate.cvLocation(),
+                aggregate.cvHeadline(),
+                toEducationFacts(aggregate.education()));
+    }
+
+    private static List<CandidateEducationFacts> toEducationFacts(List<CandidateEducation> education) {
+        return education.stream()
+                .map(entry -> new CandidateEducationFacts(
+                        entry.id(), entry.institution(), entry.degree(), entry.fieldOfStudy(), entry.location(),
+                        entry.startDate(), entry.endDate(), entry.description(), entry.displayOrder()))
+                .toList();
     }
 
     private static List<CandidateSkillFacts> toSkillFacts(List<CandidateSkill> skills) {

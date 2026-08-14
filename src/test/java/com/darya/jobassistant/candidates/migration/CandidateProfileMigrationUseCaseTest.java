@@ -17,6 +17,7 @@ import com.darya.jobassistant.candidates.entity.CandidateProfilePreferenceEntity
 import com.darya.jobassistant.candidates.entity.CandidateProfileSkillEntity;
 import com.darya.jobassistant.candidates.persistence.CandidateProfileRepositoryAdapter;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
+import com.darya.jobassistant.candidates.repository.CandidateProfileEducationRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfilePreferenceRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileSkillRepository;
@@ -82,12 +83,15 @@ class CandidateProfileMigrationUseCaseTest {
     private CandidateProfilePreferenceRepository candidateProfilePreferenceRepository;
 
     @Autowired
+    private CandidateProfileEducationRepository candidateProfileEducationRepository;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private CandidateProfileRepositoryPort port() {
         return new CandidateProfileRepositoryAdapter(
                 candidateProfileRepository, candidateProfileSkillRepository, candidateProfileLanguageRepository,
-                candidateProfilePreferenceRepository, Clock.systemUTC());
+                candidateProfilePreferenceRepository, candidateProfileEducationRepository, Clock.systemUTC());
     }
 
     private CandidateProfileMigrationUseCase useCase() {

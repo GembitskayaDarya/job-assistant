@@ -1,11 +1,13 @@
 package com.darya.jobassistant.candidates.aggregate;
 
 import java.math.BigDecimal;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Framework-free domain model for the Candidate Profile business aggregate backed by Sprint 9
@@ -54,9 +56,21 @@ import java.util.UUID;
  * <p>{@link #id} is {@code null} for a profile not yet persisted; {@link #version} is the
  * optimistic-locking token a caller must supply unchanged from a prior load to update that exact
  * revision - see {@link CandidateProfileRepositoryPort#save}. Every save of an existing aggregate,
- * including one that only changes {@link #skills}, {@link #languages}, or {@link #preferences},
- * performs a version-checked write of the whole aggregate and increments {@link #version} - all
- * three are parts of this aggregate, not independently versioned sub-resources.
+ * including one that only changes {@link #skills}, {@link #languages}, {@link #preferences}, or
+ * {@link #education}, performs a version-checked write of the whole aggregate and increments
+ * {@link #version} - all four are parts of this aggregate, not independently versioned
+ * sub-resources. {@link #education} joins that set as of Sprint 11 Step 5 - fixed factual data,
+ * flat like {@link #skills}/{@link #languages} (no nested children), so it needs no separate
+ * aggregate the way Career History or Personal Projects do.
+ *
+ * <h2>CV header/contact facts (Sprint 11 Step 5)</h2>
+ *
+ * {@link #email}, {@link #phone}, {@link #linkedinUrl}, {@link #cvLocation}, and {@link
+ * #cvHeadline} are fixed factual CV-presentation data - never AI-generated. {@link #cvHeadline}
+ * is deliberately a separate fact from {@link #targetRole}: {@link #targetRole} is an operational
+ * job-search/vacancy-matching input (fed into the AI analysis prompt and into outbound job-search
+ * queries), while {@link #cvHeadline} is the fixed title printed on the CV document - the two
+ * must be free to diverge and are not kept in sync.
  */
 public record CandidateProfileAggregate(
         UUID id,
@@ -73,11 +87,24 @@ public record CandidateProfileAggregate(
         String currentCountry,
         boolean relocationAllowed,
         String salaryExpectationNote,
+        String email,
+        String phone,
+        String linkedinUrl,
+        String cvLocation,
+        String cvHeadline,
         List<CandidateSkill> skills,
         List<CandidateLanguage> languages,
         List<CandidateProfilePreference> preferences,
+        List<CandidateEducation> education,
         long version
 ) {
+    /** Mirrors V26's {@code chk_candidate_profile_email_format}. */
+    private static final Pattern EMAIL_FORMAT = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+
+    /** Mirrors V26's {@code chk_candidate_profile_linkedin_url_format}. */
+    private static final Pattern LINKEDIN_URL_FORMAT =
+            Pattern.compile("^https://([a-z0-9-]+\\.)*linkedin\\.com/.+$", Pattern.CASE_INSENSITIVE);
+
     public CandidateProfileAggregate {
         profileKey = profileKey == null ? null : profileKey.trim();
         if (profileKey == null || profileKey.isEmpty()) {
@@ -96,12 +123,26 @@ public record CandidateProfileAggregate(
         if (version < 0) {
             throw new IllegalArgumentException("Candidate profile version must not be negative");
         }
+        email = trimToNull(email);
+        if (email != null && !EMAIL_FORMAT.matcher(email).matches()) {
+            throw new IllegalArgumentException("Candidate profile email is not a valid email address: " + email);
+        }
+        phone = trimToNull(phone);
+        linkedinUrl = trimToNull(linkedinUrl);
+        if (linkedinUrl != null && !LINKEDIN_URL_FORMAT.matcher(linkedinUrl).matches()) {
+            throw new IllegalArgumentException("Candidate profile LinkedIn URL is not a valid LinkedIn URL: " + linkedinUrl);
+        }
+        cvLocation = trimToNull(cvLocation);
+        cvHeadline = trimToNull(cvHeadline);
         skills = skills == null ? List.of() : List.copyOf(skills);
-        languages = languages == null ? List.of() : List.copyOf(languages);
+        languages = copySortedByLanguageDisplayOrder(languages);
         preferences = preferences == null ? List.of() : List.copyOf(preferences);
+        education = copySortedByDisplayOrder(education);
         requireUniqueSkillNames(skills);
         requireUniqueLanguageCodes(languages);
+        requireUniqueLanguageDisplayOrders(languages);
         requireValidPreferences(preferences);
+        requireUniqueEducationDisplayOrders(education);
         if (preferredCompanyType != null && hasPreferenceOfType(preferences, CandidatePreferenceType.COMPANY_TYPE)) {
             throw new IllegalArgumentException(
                     "Candidate profile must not set both preferredCompanyType and a COMPANY_TYPE preference");
@@ -109,6 +150,50 @@ public record CandidateProfileAggregate(
         if (remotePolicy != null && hasPreferenceOfType(preferences, CandidatePreferenceType.WORK_ARRANGEMENT)) {
             throw new IllegalArgumentException(
                     "Candidate profile must not set both remotePolicy and a WORK_ARRANGEMENT preference");
+        }
+    }
+
+    /**
+     * Convenience constructor matching this aggregate's pre-Sprint-11-Step-5 shape - defaults the
+     * new CV header/contact facts to {@code null} and {@link #education} to empty, so the many
+     * existing call sites built before those facts existed keep compiling unchanged. Every
+     * production caller that actually has header/education data uses the canonical constructor
+     * above instead.
+     */
+    public CandidateProfileAggregate(
+            UUID id, String profileKey, String targetRole, String seniority, int experienceYears,
+            String preferredCompanyType, String preferredLocation, String employmentModel, String remotePolicy,
+            String salaryCurrency, BigDecimal minimumSalary, String currentCountry, boolean relocationAllowed,
+            String salaryExpectationNote, List<CandidateSkill> skills, List<CandidateLanguage> languages,
+            List<CandidateProfilePreference> preferences, long version) {
+        this(id, profileKey, targetRole, seniority, experienceYears, preferredCompanyType, preferredLocation,
+                employmentModel, remotePolicy, salaryCurrency, minimumSalary, currentCountry, relocationAllowed,
+                salaryExpectationNote, null, null, null, null, null, skills, languages, preferences, List.of(), version);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static List<CandidateEducation> copySortedByDisplayOrder(List<CandidateEducation> education) {
+        if (education == null) {
+            return List.of();
+        }
+        return education.stream()
+                .sorted(Comparator.comparingInt(CandidateEducation::displayOrder))
+                .toList();
+    }
+
+    private static void requireUniqueEducationDisplayOrders(List<CandidateEducation> education) {
+        Set<Integer> seen = new HashSet<>();
+        for (CandidateEducation entry : education) {
+            if (!seen.add(entry.displayOrder())) {
+                throw new IllegalArgumentException("Duplicate education display order in candidate profile: " + entry.displayOrder());
+            }
         }
     }
 
@@ -126,6 +211,32 @@ public record CandidateProfileAggregate(
         for (CandidateLanguage language : languages) {
             if (!seen.add(language.languageCode())) {
                 throw new IllegalArgumentException("Duplicate language code in candidate profile: " + language.languageCode());
+            }
+        }
+    }
+
+    private static List<CandidateLanguage> copySortedByLanguageDisplayOrder(List<CandidateLanguage> languages) {
+        if (languages == null) {
+            return List.of();
+        }
+        return languages.stream()
+                .sorted(Comparator.comparingInt(CandidateLanguage::displayOrder))
+                .toList();
+    }
+
+    /**
+     * Sprint 11 Step 5 acceptance correction: {@code displayOrder} is now a real, order-significant
+     * CV presentation fact (see {@link CandidateLanguage}'s javadoc) - two languages silently
+     * sharing one position in the profile is an invalid aggregate, caught here, before any
+     * persistence attempt, exactly like {@link #requireUniqueEducationDisplayOrders}. The
+     * database's {@code uk_candidate_profile_language_profile_id_display_order} constraint remains
+     * defense-in-depth, not the primary place this is discovered.
+     */
+    private static void requireUniqueLanguageDisplayOrders(List<CandidateLanguage> languages) {
+        Set<Integer> seen = new HashSet<>();
+        for (CandidateLanguage language : languages) {
+            if (!seen.add(language.displayOrder())) {
+                throw new IllegalArgumentException("Duplicate language display order in candidate profile: " + language.displayOrder());
             }
         }
     }

@@ -32,11 +32,18 @@ import java.util.List;
  * company, position, project, and bullet the source Career History has is preserved here, in its
  * existing source-of-truth display order - nothing is filtered, ranked, or dropped for relevance,
  * and nothing is re-sorted alphabetically or by recency.
+ *
+ * <p>{@link #personalProjects} (Sprint 11 Step 5) is sourced from {@code
+ * CandidateContextSnapshot#personalProjects()} - a sibling factual source, not nested inside
+ * {@link #candidateProfile}, since Personal Projects are their own independent aggregate (see
+ * {@code personalprojects.aggregate.PersonalProject}'s javadoc). Same no-filtering,
+ * no-re-sorting, complete-factual-universe contract as {@link #companies}.
  */
 public record CvSourceSnapshot(
         CandidateProfileFacts candidateProfile,
         CareerHistoryAvailability careerHistoryAvailability,
-        List<CvSourceCompany> companies
+        List<CvSourceCompany> companies,
+        List<CvSourcePersonalProject> personalProjects
 ) {
 
     public CvSourceSnapshot {
@@ -47,5 +54,6 @@ public record CvSourceSnapshot(
             throw new IllegalArgumentException("CV source snapshot career history availability must not be null");
         }
         companies = companies == null ? List.of() : List.copyOf(companies);
+        personalProjects = personalProjects == null ? List.of() : List.copyOf(personalProjects);
     }
 }

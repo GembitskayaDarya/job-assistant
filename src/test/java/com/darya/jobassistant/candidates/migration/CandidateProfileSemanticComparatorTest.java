@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.darya.jobassistant.candidates.PreferenceImportance;
 import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidatePreferenceType;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
@@ -110,6 +111,68 @@ class CandidateProfileSemanticComparatorTest {
                 null, false, null, List.of(), List.of(), List.of(), version);
     }
 
+    // ---- Sprint 11 Step 5: header facts, education, and language ordering ----
+
+    @Test
+    void diff_differentCvHeadline_isReportedAsAChange() {
+        CandidateProfileAggregate a = withCvHeadline(profile(UUID.randomUUID(), 0L), "Senior Java Backend Engineer");
+        CandidateProfileAggregate b = withCvHeadline(profile(UUID.randomUUID(), 0L), "Staff Java Backend Engineer");
+
+        CandidateProfileDiff diff = CandidateProfileSemanticComparator.diff(a, b);
+
+        assertThat(diff.equal()).isFalse();
+        assertThat(diff.changedFields()).contains("cvHeadline");
+    }
+
+    @Test
+    void diff_differentEducation_isReportedAsAChange() {
+        CandidateEducation educationA = new CandidateEducation("University A", null, null, null, null, null, null, 0);
+        CandidateEducation educationB = new CandidateEducation("University B", null, null, null, null, null, null, 0);
+        CandidateProfileAggregate a = withEducation(profile(UUID.randomUUID(), 0L), List.of(educationA));
+        CandidateProfileAggregate b = withEducation(profile(UUID.randomUUID(), 0L), List.of(educationB));
+
+        assertThat(CandidateProfileSemanticComparator.areEqual(a, b)).isFalse();
+        assertThat(CandidateProfileSemanticComparator.diff(a, b).changedFields()).contains("education");
+    }
+
+    @Test
+    void diff_reversedLanguageDisplayOrder_isReportedAsAChange() {
+        CandidateProfileAggregate a = withLanguages(profile(UUID.randomUUID(), 0L),
+                List.of(new CandidateLanguage("en", null, 0), new CandidateLanguage("pl", null, 1)));
+        CandidateProfileAggregate b = withLanguages(profile(UUID.randomUUID(), 0L),
+                List.of(new CandidateLanguage("en", null, 1), new CandidateLanguage("pl", null, 0)));
+
+        assertThat(CandidateProfileSemanticComparator.areEqual(a, b)).isFalse();
+        assertThat(CandidateProfileSemanticComparator.diff(a, b).changedFields()).contains("languages");
+    }
+
+    private CandidateProfileAggregate withCvHeadline(CandidateProfileAggregate profile, String cvHeadline) {
+        return new CandidateProfileAggregate(
+                profile.id(), profile.profileKey(), profile.targetRole(), profile.seniority(), profile.experienceYears(),
+                profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
+                profile.salaryCurrency(), profile.minimumSalary(), profile.currentCountry(), profile.relocationAllowed(),
+                profile.salaryExpectationNote(), profile.email(), profile.phone(), profile.linkedinUrl(), profile.cvLocation(),
+                cvHeadline, profile.skills(), profile.languages(), profile.preferences(), profile.education(), profile.version());
+    }
+
+    private CandidateProfileAggregate withEducation(CandidateProfileAggregate profile, List<CandidateEducation> education) {
+        return new CandidateProfileAggregate(
+                profile.id(), profile.profileKey(), profile.targetRole(), profile.seniority(), profile.experienceYears(),
+                profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
+                profile.salaryCurrency(), profile.minimumSalary(), profile.currentCountry(), profile.relocationAllowed(),
+                profile.salaryExpectationNote(), profile.email(), profile.phone(), profile.linkedinUrl(), profile.cvLocation(),
+                profile.cvHeadline(), profile.skills(), profile.languages(), profile.preferences(), education, profile.version());
+    }
+
+    private CandidateProfileAggregate withLanguages(CandidateProfileAggregate profile, List<CandidateLanguage> languages) {
+        return new CandidateProfileAggregate(
+                profile.id(), profile.profileKey(), profile.targetRole(), profile.seniority(), profile.experienceYears(),
+                profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
+                profile.salaryCurrency(), profile.minimumSalary(), profile.currentCountry(), profile.relocationAllowed(),
+                profile.salaryExpectationNote(), profile.email(), profile.phone(), profile.linkedinUrl(), profile.cvLocation(),
+                profile.cvHeadline(), profile.skills(), languages, profile.preferences(), profile.education(), profile.version());
+    }
+
     private CandidateProfileAggregate withTargetRole(CandidateProfileAggregate profile, String targetRole) {
         return new CandidateProfileAggregate(
                 profile.id(), profile.profileKey(), targetRole, profile.seniority(), profile.experienceYears(),
@@ -122,7 +185,7 @@ class CandidateProfileSemanticComparatorTest {
         return new CandidateProfileAggregate(
                 UUID.randomUUID(), "primary", "Backend Engineer", "Senior", 6,
                 null, null, null, null, null, null,
-                null, false, null, skills, List.of(new CandidateLanguage("en", null)), List.of(), 0L);
+                null, false, null, skills, List.of(new CandidateLanguage("en", null, 0)), List.of(), 0L);
     }
 
     private CandidateSkill skill(String name) {

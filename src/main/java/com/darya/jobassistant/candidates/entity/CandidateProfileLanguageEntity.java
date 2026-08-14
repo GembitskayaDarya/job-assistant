@@ -42,4 +42,8 @@ public class CandidateProfileLanguageEntity extends BaseEntity {
 
     @Column(length = 50)
     private String proficiency;
+
+    /** Sprint 11 Step 5 (V28): deterministic CV presentation order - see {@code CandidateLanguage}'s javadoc. */
+    @Column(name = "display_order", nullable = false)
+    private int displayOrder;
 }

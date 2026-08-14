@@ -320,6 +320,42 @@ class CvSourceSnapshotFactoryTest {
         return new CandidateContextSnapshot(UUID.randomUUID(), "primary", 1L, profile, careerHistory);
     }
 
+    // ==================== Sprint 11 Step 5: Personal Projects ====================
+
+    @Test
+    void from_noPersonalProjects_producesEmptyList() {
+        CvSourceSnapshot result = CvSourceSnapshotFactory.from(snapshot(validProfile(), Optional.empty()));
+
+        assertThat(result.personalProjects()).isEmpty();
+    }
+
+    @Test
+    void from_preservesEveryPersonalProjectHighlightAndTechnologyUnfilteredInOrder() {
+        UUID projectId = UUID.randomUUID();
+        UUID highlightId = UUID.randomUUID();
+        UUID technologyId = UUID.randomUUID();
+        com.darya.jobassistant.personalprojects.aggregate.PersonalProject project =
+                new com.darya.jobassistant.personalprojects.aggregate.PersonalProject(
+                        projectId, UUID.randomUUID(), "Example Project", "A factual description",
+                        "https://github.com/example/project", LocalDate.of(2022, 1, 1), LocalDate.of(2022, 6, 1), 0,
+                        List.of(new com.darya.jobassistant.personalprojects.aggregate.PersonalProjectHighlight(highlightId, "Built a REST API", 0)),
+                        List.of(new com.darya.jobassistant.personalprojects.aggregate.PersonalProjectTechnology(technologyId, "Java", "Language", 0)),
+                        0L);
+        CandidateContextSnapshot snapshot = new CandidateContextSnapshot(
+                UUID.randomUUID(), "primary", 1L, validProfile(), Optional.empty(), List.of(project));
+
+        CvSourceSnapshot result = CvSourceSnapshotFactory.from(snapshot);
+
+        assertThat(result.personalProjects()).hasSize(1);
+        var mappedProject = result.personalProjects().get(0);
+        assertThat(mappedProject.personalProjectId()).isEqualTo(projectId);
+        assertThat(mappedProject.name()).isEqualTo("Example Project");
+        assertThat(mappedProject.highlights()).extracting("personalProjectHighlightId", "text")
+                .containsExactly(tuple(highlightId, "Built a REST API"));
+        assertThat(mappedProject.technologies()).extracting("personalProjectTechnologyId", "name", "category")
+                .containsExactly(tuple(technologyId, "Java", "Language"));
+    }
+
     private CandidateProfileFacts validProfile() {
         return new CandidateProfileFacts(
                 "Senior Backend Engineer",

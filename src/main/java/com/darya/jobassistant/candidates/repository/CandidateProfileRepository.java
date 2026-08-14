@@ -64,6 +64,11 @@ public interface CandidateProfileRepository extends JpaRepository<CandidateProfi
                 c.currentCountry = :currentCountry,
                 c.relocationAllowed = :relocationAllowed,
                 c.salaryExpectationNote = :salaryExpectationNote,
+                c.email = :email,
+                c.phone = :phone,
+                c.linkedinUrl = :linkedinUrl,
+                c.cvLocation = :cvLocation,
+                c.cvHeadline = :cvHeadline,
                 c.updatedAt = :updatedAt,
                 c.version = c.version + 1
             WHERE c.id = :id AND c.version = :expectedVersion
@@ -83,6 +88,11 @@ public interface CandidateProfileRepository extends JpaRepository<CandidateProfi
             @Param("currentCountry") String currentCountry,
             @Param("relocationAllowed") boolean relocationAllowed,
             @Param("salaryExpectationNote") String salaryExpectationNote,
+            @Param("email") String email,
+            @Param("phone") String phone,
+            @Param("linkedinUrl") String linkedinUrl,
+            @Param("cvLocation") String cvLocation,
+            @Param("cvHeadline") String cvHeadline,
             @Param("updatedAt") Instant updatedAt,
             @Param("expectedVersion") long expectedVersion);
 }

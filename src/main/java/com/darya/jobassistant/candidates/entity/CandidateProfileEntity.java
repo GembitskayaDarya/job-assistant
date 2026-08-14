@@ -76,6 +76,23 @@ public class CandidateProfileEntity extends BaseEntity {
     @Column(name = "salary_expectation_note", length = 500)
     private String salaryExpectationNote;
 
+    /** Sprint 11 Step 5: CV header/contact facts - see {@link CandidateProfileEntity}'s javadoc. */
+    @Column(length = 255)
+    private String email;
+
+    @Column(length = 50)
+    private String phone;
+
+    @Column(name = "linkedin_url", length = 500)
+    private String linkedinUrl;
+
+    @Column(name = "cv_location", length = 300)
+    private String cvLocation;
+
+    /** Fixed, never-AI-generated CV title - deliberately separate from {@link #targetRole}. */
+    @Column(name = "cv_headline", length = 255)
+    private String cvHeadline;
+
     @Version
     @Column(nullable = false)
     private long version;

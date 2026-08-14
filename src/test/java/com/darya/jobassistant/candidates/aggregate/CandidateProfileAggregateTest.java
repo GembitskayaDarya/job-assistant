@@ -18,7 +18,7 @@ class CandidateProfileAggregateTest {
             new CandidateSkill("Spring Boot", "Framework", null, SkillProficiency.STRONG));
 
     private final List<CandidateLanguage> languages = List.of(
-            new CandidateLanguage("en", "FLUENT"));
+            new CandidateLanguage("en", "FLUENT", 0));
 
     private final List<CandidateProfilePreference> preferences = List.of(
             new CandidateProfilePreference(CandidatePreferenceType.WORK_ARRANGEMENT, "Remote", PreferenceImportance.STRONG),
@@ -75,7 +75,7 @@ class CandidateProfileAggregateTest {
         CandidateProfileAggregate profile = profileWith(mutableSkills, mutableLanguages, mutablePreferences);
 
         mutableSkills.add(new CandidateSkill("Kafka", null, null, SkillProficiency.BASIC));
-        mutableLanguages.add(new CandidateLanguage("pl", null));
+        mutableLanguages.add(new CandidateLanguage("pl", null, 1));
         mutablePreferences.add(new CandidateProfilePreference(CandidatePreferenceType.COMPANY_TYPE, "Product", PreferenceImportance.PREFERRED));
 
         assertThat(profile.skills()).hasSize(2);
@@ -89,7 +89,7 @@ class CandidateProfileAggregateTest {
 
         assertThatThrownBy(() -> profile.skills().add(new CandidateSkill("Kotlin", null, null, SkillProficiency.BASIC)))
                 .isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> profile.languages().add(new CandidateLanguage("ru", null)))
+        assertThatThrownBy(() -> profile.languages().add(new CandidateLanguage("ru", null, 1)))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> profile.preferences().add(
                 new CandidateProfilePreference(CandidatePreferenceType.COMPANY_TYPE, "Product", PreferenceImportance.STRONG)))
@@ -150,10 +150,30 @@ class CandidateProfileAggregateTest {
     @Test
     void constructor_duplicateLanguageCodes_areRejected() {
         List<CandidateLanguage> duplicateLanguages = List.of(
-                new CandidateLanguage("en", "FLUENT"),
-                new CandidateLanguage("en", "NATIVE"));
+                new CandidateLanguage("en", "FLUENT", 0),
+                new CandidateLanguage("en", "NATIVE", 1));
 
         assertThatThrownBy(() -> profileWith(skills, duplicateLanguages, List.of())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void constructor_duplicateLanguageDisplayOrder_isRejected() {
+        List<CandidateLanguage> duplicateOrders = List.of(
+                new CandidateLanguage("en", "FLUENT", 0),
+                new CandidateLanguage("pl", "NATIVE", 0));
+
+        assertThatThrownBy(() -> profileWith(skills, duplicateOrders, List.of())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void constructor_languagesSortedByDisplayOrder_regardlessOfInputOrder() {
+        List<CandidateLanguage> outOfOrder = List.of(
+                new CandidateLanguage("pl", null, 1),
+                new CandidateLanguage("en", null, 0));
+
+        CandidateProfileAggregate profile = profileWith(skills, outOfOrder, List.of());
+
+        assertThat(profile.languages()).extracting(CandidateLanguage::languageCode).containsExactly("en", "pl");
     }
 
     @Test
@@ -234,6 +254,112 @@ class CandidateProfileAggregateTest {
                 null, null, null, null, null, null,
                 null, false, null,
                 skills, languages, preferences, 0L);
+    }
+
+    // ---- Sprint 11 Step 5: CV header/contact facts + education ----
+
+    @Test
+    void constructor_headerFieldsAndEducation_arePopulated() {
+        CandidateEducation education = new CandidateEducation("Example University", "BSc", "CS", null, null, null, null, 0);
+
+        CandidateProfileAggregate profile = new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                "person@example.com", "+48123456789", "https://www.linkedin.com/in/example", "Warsaw, Poland",
+                "Senior Java Backend Engineer",
+                skills, languages, preferences, List.of(education), 0L);
+
+        assertThat(profile.email()).isEqualTo("person@example.com");
+        assertThat(profile.phone()).isEqualTo("+48123456789");
+        assertThat(profile.linkedinUrl()).isEqualTo("https://www.linkedin.com/in/example");
+        assertThat(profile.cvLocation()).isEqualTo("Warsaw, Poland");
+        assertThat(profile.cvHeadline()).isEqualTo("Senior Java Backend Engineer");
+        assertThat(profile.education()).containsExactly(education);
+    }
+
+    @Test
+    void constructor_oldEighteenArgOverload_defaultsHeaderFieldsAndEducation() {
+        CandidateProfileAggregate profile = profileWith(skills, languages, preferences);
+
+        assertThat(profile.email()).isNull();
+        assertThat(profile.phone()).isNull();
+        assertThat(profile.linkedinUrl()).isNull();
+        assertThat(profile.cvLocation()).isNull();
+        assertThat(profile.cvHeadline()).isNull();
+        assertThat(profile.education()).isEmpty();
+    }
+
+    @Test
+    void constructor_invalidEmail_isRejected() {
+        assertThatThrownBy(() -> new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                "not-an-email", null, null, null, null,
+                skills, languages, preferences, List.of(), 0L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void constructor_invalidLinkedinUrl_isRejected() {
+        assertThatThrownBy(() -> new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                null, null, "https://example.com/not-linkedin", null, null,
+                skills, languages, preferences, List.of(), 0L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void constructor_linkedinUrlWithSubdomain_isAccepted() {
+        CandidateProfileAggregate profile = new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                null, null, "https://pl.linkedin.com/in/example", null, null,
+                skills, languages, preferences, List.of(), 0L);
+
+        assertThat(profile.linkedinUrl()).isEqualTo("https://pl.linkedin.com/in/example");
+    }
+
+    @Test
+    void constructor_blankHeaderFields_becomeNull() {
+        CandidateProfileAggregate profile = new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                "  ", "  ", null, "  ", "  ",
+                skills, languages, preferences, List.of(), 0L);
+
+        assertThat(profile.email()).isNull();
+        assertThat(profile.phone()).isNull();
+        assertThat(profile.cvLocation()).isNull();
+        assertThat(profile.cvHeadline()).isNull();
+    }
+
+    @Test
+    void constructor_educationSortedByDisplayOrder_regardlessOfInputOrder() {
+        CandidateEducation second = new CandidateEducation("University B", null, null, null, null, null, null, 1);
+        CandidateEducation first = new CandidateEducation("University A", null, null, null, null, null, null, 0);
+
+        CandidateProfileAggregate profile = new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                null, null, null, null, null,
+                skills, languages, preferences, List.of(second, first), 0L);
+
+        assertThat(profile.education()).extracting(CandidateEducation::institution)
+                .containsExactly("University A", "University B");
+    }
+
+    @Test
+    void constructor_duplicateEducationDisplayOrder_isRejected() {
+        CandidateEducation first = new CandidateEducation("University A", null, null, null, null, null, null, 0);
+        CandidateEducation second = new CandidateEducation("University B", null, null, null, null, null, null, 0);
+
+        assertThatThrownBy(() -> new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                null, null, null, null, null,
+                skills, languages, preferences, List.of(first, second), 0L))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     private CandidateProfileAggregate profileWithKey(String profileKey) {

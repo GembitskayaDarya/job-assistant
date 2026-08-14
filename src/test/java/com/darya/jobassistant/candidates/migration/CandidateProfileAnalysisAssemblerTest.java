@@ -26,7 +26,7 @@ class CandidateProfileAnalysisAssemblerTest {
             null, null, null, null, null, null,
             "Poland", true, "8000 EUR/month",
             List.of(new CandidateSkill("Java", "Language", "10+ years", SkillProficiency.EXPERT)),
-            List.of(new CandidateLanguage("en", null), new CandidateLanguage("pl", null)),
+            List.of(new CandidateLanguage("en", null, 0), new CandidateLanguage("pl", null, 1)),
             List.of(
                     new CandidateProfilePreference(CandidatePreferenceType.WORK_ARRANGEMENT, "Remote", PreferenceImportance.STRONG),
                     new CandidateProfilePreference(CandidatePreferenceType.ALLOWED_WORK_COUNTRY, "Poland", null),

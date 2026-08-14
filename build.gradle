@@ -92,4 +92,11 @@ tasks.named('test') {
     // test fixture instead of the developer's real, gitignored config/candidate-profile.yml -
     // otherwise a fresh checkout without that file would fail every Spring context test.
     systemProperty 'CANDIDATE_PROFILE_PATH', file('src/test/resources/candidate-profile-test.yml').absolutePath
+
+    // Sprint 11 Step 5: the default test JVM heap is too small for this suite's growing number of
+    // distinct cached Spring ApplicationContext configurations (each @DataJpaTest/@SpringBootTest
+    // slice keeps its own Hibernate metamodel/connection pool alive for the whole run) - without
+    // this, a full run intermittently fails with OutOfMemoryError unrelated to any actual test
+    // assertion.
+    maxHeapSize = '4g'
 }

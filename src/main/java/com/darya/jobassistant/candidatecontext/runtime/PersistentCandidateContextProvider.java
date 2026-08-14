@@ -10,6 +10,9 @@ import com.darya.jobassistant.candidates.runtime.CandidateProfileNotConfiguredEx
 import com.darya.jobassistant.candidates.runtime.CandidateProfileRuntimeProperties;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryRepositoryPort;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProject;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProjectRepositoryPort;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -21,8 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
  * CandidateProfileRuntimeProperties#profileKey()} {@code
  * com.darya.jobassistant.candidates.runtime.PersistentCandidateProfileProvider} uses) together
  * with its optional Career History (via {@link CareerHistoryRepositoryPort}, keyed by the
- * profile's own technical {@link CandidateProfileAggregate#id()}) inside one read-only, {@code
- * REPEATABLE_READ} transaction - so both reads observe the same consistent database snapshot.
+ * profile's own technical {@link CandidateProfileAggregate#id()}) and its Personal Projects (via
+ * {@link PersonalProjectRepositoryPort}, Sprint 11 Step 5, same key) inside one read-only, {@code
+ * REPEATABLE_READ} transaction - so all three reads observe the same consistent database snapshot.
  *
  * <p>The transaction closes when {@link #loadCurrentContext()} returns: no transaction is ever
  * held open across the AI call a caller makes afterward. Never creates a Career History row, never
@@ -37,14 +41,17 @@ public class PersistentCandidateContextProvider implements CandidateContextProvi
 
     private final CandidateProfileRepositoryPort candidateProfileRepositoryPort;
     private final CareerHistoryRepositoryPort careerHistoryRepositoryPort;
+    private final PersonalProjectRepositoryPort personalProjectRepositoryPort;
     private final CandidateProfileRuntimeProperties properties;
 
     public PersistentCandidateContextProvider(
             CandidateProfileRepositoryPort candidateProfileRepositoryPort,
             CareerHistoryRepositoryPort careerHistoryRepositoryPort,
+            PersonalProjectRepositoryPort personalProjectRepositoryPort,
             CandidateProfileRuntimeProperties properties) {
         this.candidateProfileRepositoryPort = candidateProfileRepositoryPort;
         this.careerHistoryRepositoryPort = careerHistoryRepositoryPort;
+        this.personalProjectRepositoryPort = personalProjectRepositoryPort;
         this.properties = properties;
     }
 
@@ -57,7 +64,8 @@ public class PersistentCandidateContextProvider implements CandidateContextProvi
         CandidateProfileFacts profileFacts = CandidateProfileFactsAssembler.toProfileFacts(aggregate);
         Optional<CareerHistoryAggregate> careerHistory =
                 careerHistoryRepositoryPort.findByCandidateProfileId(aggregate.id());
+        List<PersonalProject> personalProjects = personalProjectRepositoryPort.findAllByCandidateProfileId(aggregate.id());
         return new CandidateContextSnapshot(
-                aggregate.id(), profileKey, aggregate.version(), profileFacts, careerHistory);
+                aggregate.id(), profileKey, aggregate.version(), profileFacts, careerHistory, personalProjects);
     }
 }

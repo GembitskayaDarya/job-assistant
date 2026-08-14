@@ -1,15 +1,18 @@
 package com.darya.jobassistant.candidates.persistence;
 
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileConcurrentModificationException;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfilePreference;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.candidates.aggregate.CandidateSkill;
+import com.darya.jobassistant.candidates.entity.CandidateProfileEducationEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileLanguageEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfilePreferenceEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileSkillEntity;
+import com.darya.jobassistant.candidates.repository.CandidateProfileEducationRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfilePreferenceRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
@@ -49,6 +52,7 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
     private final CandidateProfileSkillRepository candidateProfileSkillRepository;
     private final CandidateProfileLanguageRepository candidateProfileLanguageRepository;
     private final CandidateProfilePreferenceRepository candidateProfilePreferenceRepository;
+    private final CandidateProfileEducationRepository candidateProfileEducationRepository;
     private final Clock clock;
 
     @Override
@@ -72,6 +76,7 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
         replaceSkills(savedParent, profile.skills());
         replaceLanguages(savedParent, profile.languages());
         replacePreferences(savedParent, profile.preferences());
+        replaceEducation(savedParent, profile.education());
         return loadComplete(savedParent);
     }
 
@@ -103,6 +108,11 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
                 profile.currentCountry(),
                 profile.relocationAllowed(),
                 profile.salaryExpectationNote(),
+                profile.email(),
+                profile.phone(),
+                profile.linkedinUrl(),
+                profile.cvLocation(),
+                profile.cvHeadline(),
                 Instant.now(clock),
                 profile.version());
         if (updatedRows == 0) {
@@ -157,12 +167,26 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
         candidateProfilePreferenceRepository.saveAll(toInsert);
     }
 
+    /** Same delete-then-insert strategy and flush-ordering rationale as {@link #replaceSkills}. */
+    private void replaceEducation(CandidateProfileEntity profile, List<CandidateEducation> education) {
+        candidateProfileEducationRepository.deleteAll(
+                candidateProfileEducationRepository.findByCandidateProfileId(profile.getId()));
+        candidateProfileEducationRepository.flush();
+        List<CandidateProfileEducationEntity> toInsert = education.stream()
+                .map(entry -> CandidateProfilePersistenceMapper.toEducationEntity(entry, profile))
+                .toList();
+        candidateProfileEducationRepository.saveAll(toInsert);
+    }
+
     private CandidateProfileAggregate loadComplete(CandidateProfileEntity entity) {
         List<CandidateProfileSkillEntity> skills = candidateProfileSkillRepository.findByCandidateProfileId(entity.getId());
-        List<CandidateProfileLanguageEntity> languages = candidateProfileLanguageRepository.findByCandidateProfileId(entity.getId());
+        List<CandidateProfileLanguageEntity> languages =
+                candidateProfileLanguageRepository.findByCandidateProfileIdOrderByDisplayOrderAscIdAsc(entity.getId());
         List<CandidateProfilePreferenceEntity> preferences =
                 candidateProfilePreferenceRepository.findByCandidateProfileIdOrderByPriorityOrderAscIdAsc(entity.getId());
-        return CandidateProfilePersistenceMapper.toDomain(entity, skills, languages, preferences);
+        List<CandidateProfileEducationEntity> education =
+                candidateProfileEducationRepository.findByCandidateProfileIdOrderByDisplayOrderAscIdAsc(entity.getId());
+        return CandidateProfilePersistenceMapper.toDomain(entity, skills, languages, preferences, education);
     }
 
     private CandidateProfileConcurrentModificationException concurrentModification(CandidateProfileAggregate profile) {

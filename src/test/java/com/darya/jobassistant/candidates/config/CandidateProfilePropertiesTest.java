@@ -74,7 +74,8 @@ class CandidateProfilePropertiesTest {
         List<String> languages = new ArrayList<>(List.of("English"));
 
         CandidateProfileProperties properties =
-                new CandidateProfileProperties("Senior Java Backend Developer", "Senior", skills, languages, 6, null);
+                new CandidateProfileProperties("Senior Java Backend Developer", "Senior", skills, languages, 6, null,
+                        null, null, null, null, null, List.of(), List.of());
 
         skills.add(new CandidateProfileProperties.SkillProperties("Kotlin", SkillProficiency.BASIC, null));
         languages.add("Polish");

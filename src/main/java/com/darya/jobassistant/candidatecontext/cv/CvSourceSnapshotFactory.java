@@ -4,6 +4,9 @@ import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
 import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceAchievement;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceCompany;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProject;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProjectHighlight;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProjectTechnology;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePosition;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceProject;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceResponsibility;
@@ -16,6 +19,9 @@ import com.darya.jobassistant.careerhistory.aggregate.CareerPosition;
 import com.darya.jobassistant.careerhistory.aggregate.CareerProject;
 import com.darya.jobassistant.careerhistory.aggregate.CareerResponsibility;
 import com.darya.jobassistant.careerhistory.aggregate.CareerTechnology;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProject;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProjectHighlight;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProjectTechnology;
 import java.util.List;
 
 /**
@@ -50,7 +56,24 @@ public final class CvSourceSnapshotFactory {
         List<CvSourceCompany> companies = snapshot.careerHistory()
                 .map(history -> history.companies().stream().map(CvSourceSnapshotFactory::toCompany).toList())
                 .orElse(List.of());
-        return new CvSourceSnapshot(snapshot.candidateProfile(), availability, companies);
+        List<CvSourcePersonalProject> personalProjects =
+                snapshot.personalProjects().stream().map(CvSourceSnapshotFactory::toPersonalProject).toList();
+        return new CvSourceSnapshot(snapshot.candidateProfile(), availability, companies, personalProjects);
+    }
+
+    private static CvSourcePersonalProject toPersonalProject(PersonalProject project) {
+        return new CvSourcePersonalProject(
+                project.id(), project.name(), project.description(), project.url(), project.startDate(), project.endDate(),
+                project.highlights().stream().map(CvSourceSnapshotFactory::toPersonalProjectHighlight).toList(),
+                project.technologies().stream().map(CvSourceSnapshotFactory::toPersonalProjectTechnology).toList());
+    }
+
+    private static CvSourcePersonalProjectHighlight toPersonalProjectHighlight(PersonalProjectHighlight highlight) {
+        return new CvSourcePersonalProjectHighlight(highlight.id(), highlight.text());
+    }
+
+    private static CvSourcePersonalProjectTechnology toPersonalProjectTechnology(PersonalProjectTechnology technology) {
+        return new CvSourcePersonalProjectTechnology(technology.id(), technology.name(), technology.category());
     }
 
     private static CvSourceCompany toCompany(CareerCompany company) {

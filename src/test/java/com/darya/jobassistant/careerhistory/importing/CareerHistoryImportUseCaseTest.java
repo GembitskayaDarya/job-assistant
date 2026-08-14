@@ -7,6 +7,7 @@ import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPor
 import com.darya.jobassistant.candidates.entity.CandidateProfileEntity;
 import com.darya.jobassistant.candidates.persistence.CandidateProfileRepositoryAdapter;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
+import com.darya.jobassistant.candidates.repository.CandidateProfileEducationRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfilePreferenceRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileSkillRepository;
@@ -77,6 +78,9 @@ class CareerHistoryImportUseCaseTest {
     private CandidateProfilePreferenceRepository candidateProfilePreferenceRepository;
 
     @Autowired
+    private CandidateProfileEducationRepository candidateProfileEducationRepository;
+
+    @Autowired
     private CareerHistoryRepository careerHistoryRepository;
     @Autowired
     private CareerCompanyRepository careerCompanyRepository;
@@ -103,7 +107,7 @@ class CareerHistoryImportUseCaseTest {
     private CandidateProfileRepositoryPort candidateProfilePort() {
         return new CandidateProfileRepositoryAdapter(
                 candidateProfileRepository, candidateProfileSkillRepository, candidateProfileLanguageRepository,
-                candidateProfilePreferenceRepository, Clock.systemUTC());
+                candidateProfilePreferenceRepository, candidateProfileEducationRepository, Clock.systemUTC());
     }
 
     private CareerHistoryRepositoryPort careerHistoryPort() {

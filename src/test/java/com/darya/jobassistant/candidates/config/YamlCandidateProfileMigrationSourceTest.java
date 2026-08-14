@@ -35,7 +35,8 @@ class YamlCandidateProfileMigrationSourceTest {
                         PreferenceImportance.PREFERRED,
                         "Product",
                         PreferenceImportance.PREFERRED,
-                        null));
+                        null),
+                null, null, null, null, null, List.of(), List.of());
 
         YamlCandidateProfileMigrationSource source = new YamlCandidateProfileMigrationSource(properties);
 
@@ -74,7 +75,8 @@ class YamlCandidateProfileMigrationSourceTest {
                 List.of("English"),
                 6,
                 new CandidateProfileProperties.PreferencesProperties(
-                        "   ", "  ", null, List.of(), false, List.of(), null, "   ", null, "  "));
+                        "   ", "  ", null, List.of(), false, List.of(), null, "   ", null, "  "),
+                null, null, null, null, null, List.of(), List.of());
 
         CandidateProfile profile = new YamlCandidateProfileMigrationSource(properties).loadSourceProfile();
 
@@ -88,7 +90,8 @@ class YamlCandidateProfileMigrationSourceTest {
     @Test
     void loadSourceProfile_missingPreferences_defaultsToEmptyUnconfiguredPreferences() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
-                "Senior Java Backend Developer", "Senior", List.of(), List.of("English"), 6, null);
+                "Senior Java Backend Developer", "Senior", List.of(), List.of("English"), 6, null,
+                null, null, null, null, null, List.of(), List.of());
 
         CandidateProfile profile = new YamlCandidateProfileMigrationSource(properties).loadSourceProfile();
 
@@ -107,7 +110,8 @@ class YamlCandidateProfileMigrationSourceTest {
                 6,
                 new CandidateProfileProperties.PreferencesProperties(
                         "Poland", "Remote", PreferenceImportance.STRONG, List.of("Poland"), false,
-                        List.of("B2B"), PreferenceImportance.PREFERRED, "Product", PreferenceImportance.PREFERRED, null));
+                        List.of("B2B"), PreferenceImportance.PREFERRED, "Product", PreferenceImportance.PREFERRED, null),
+                null, null, null, null, null, List.of(), List.of());
         YamlCandidateProfileMigrationSource source = new YamlCandidateProfileMigrationSource(properties);
 
         CandidateProfile profile = source.loadSourceProfile();
@@ -124,7 +128,8 @@ class YamlCandidateProfileMigrationSourceTest {
     @Test
     void loadSourceProfile_missingTargetRole_throwsMigrationSourceException() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
-                null, "Senior", List.of(), List.of("English"), 6, null);
+                null, "Senior", List.of(), List.of("English"), 6, null,
+                null, null, null, null, null, List.of(), List.of());
 
         assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
                 .isInstanceOf(CandidateProfileMigrationSourceException.class);
@@ -133,7 +138,8 @@ class YamlCandidateProfileMigrationSourceTest {
     @Test
     void loadSourceProfile_blankTargetSeniority_throwsMigrationSourceException() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
-                "Senior Java Backend Developer", "   ", List.of(), List.of("English"), 6, null);
+                "Senior Java Backend Developer", "   ", List.of(), List.of("English"), 6, null,
+                null, null, null, null, null, List.of(), List.of());
 
         assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
                 .isInstanceOf(CandidateProfileMigrationSourceException.class);
@@ -144,7 +150,8 @@ class YamlCandidateProfileMigrationSourceTest {
         // Simulates the "candidate-profile.yml missing, optional import silently skipped" case:
         // every field left at its default/null.
         CandidateProfileProperties properties = new CandidateProfileProperties(
-                null, null, null, null, 0, null);
+                null, null, null, null, 0, null,
+                null, null, null, null, null, List.of(), List.of());
 
         assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
                 .isInstanceOf(CandidateProfileMigrationSourceException.class);

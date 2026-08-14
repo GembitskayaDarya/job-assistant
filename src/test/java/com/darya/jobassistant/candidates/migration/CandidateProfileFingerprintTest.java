@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.darya.jobassistant.candidates.PreferenceImportance;
 import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidatePreferenceType;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
@@ -19,17 +20,17 @@ class CandidateProfileFingerprintTest {
     @Test
     void sha256_identicalSemanticProfiles_produceIdenticalFingerprints() {
         CandidateProfileAggregate a = profile(UUID.randomUUID(), 0L,
-                List.of(skill("Java"), skill("Kafka")), List.of(lang("en"), lang("pl")));
+                List.of(skill("Java"), skill("Kafka")), List.of(lang("en", 0), lang("pl", 1)));
         CandidateProfileAggregate b = profile(UUID.randomUUID(), 5L,
-                List.of(skill("Java"), skill("Kafka")), List.of(lang("en"), lang("pl")));
+                List.of(skill("Java"), skill("Kafka")), List.of(lang("en", 0), lang("pl", 1)));
 
         assertThat(CandidateProfileFingerprint.sha256(a)).isEqualTo(CandidateProfileFingerprint.sha256(b));
     }
 
     @Test
     void sha256_differentIdAndVersion_doNotAffectFingerprint() {
-        CandidateProfileAggregate a = profile(UUID.randomUUID(), 0L, List.of(skill("Java")), List.of(lang("en")));
-        CandidateProfileAggregate b = profile(UUID.randomUUID(), 42L, List.of(skill("Java")), List.of(lang("en")));
+        CandidateProfileAggregate a = profile(UUID.randomUUID(), 0L, List.of(skill("Java")), List.of(lang("en", 0)));
+        CandidateProfileAggregate b = profile(UUID.randomUUID(), 42L, List.of(skill("Java")), List.of(lang("en", 0)));
 
         assertThat(CandidateProfileFingerprint.sha256(a)).isEqualTo(CandidateProfileFingerprint.sha256(b));
     }
@@ -107,6 +108,49 @@ class CandidateProfileFingerprintTest {
                 0L);
     }
 
+    // ---- Sprint 11 Step 5: header facts, education, and language ordering ----
+
+    @Test
+    void sha256_meaningfulCvHeadlineChange_changesTheFingerprint() {
+        CandidateProfileAggregate a = profileWithHeadline("Senior Java Backend Engineer");
+        CandidateProfileAggregate b = profileWithHeadline("Staff Java Backend Engineer");
+
+        assertThat(CandidateProfileFingerprint.sha256(a)).isNotEqualTo(CandidateProfileFingerprint.sha256(b));
+    }
+
+    @Test
+    void sha256_meaningfulEducationChange_changesTheFingerprint() {
+        CandidateProfileAggregate a = profileWithEducation("University A");
+        CandidateProfileAggregate b = profileWithEducation("University B");
+
+        assertThat(CandidateProfileFingerprint.sha256(a)).isNotEqualTo(CandidateProfileFingerprint.sha256(b));
+    }
+
+    @Test
+    void sha256_reversedLanguageDisplayOrder_producesADifferentFingerprint() {
+        CandidateProfileAggregate a = profile(UUID.randomUUID(), 0L, List.of(),
+                List.of(new CandidateLanguage("en", null, 0), new CandidateLanguage("pl", null, 1)));
+        CandidateProfileAggregate b = profile(UUID.randomUUID(), 0L, List.of(),
+                List.of(new CandidateLanguage("en", null, 1), new CandidateLanguage("pl", null, 0)));
+
+        assertThat(CandidateProfileFingerprint.sha256(a)).isNotEqualTo(CandidateProfileFingerprint.sha256(b));
+    }
+
+    private CandidateProfileAggregate profileWithHeadline(String cvHeadline) {
+        return new CandidateProfileAggregate(
+                UUID.randomUUID(), "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, new BigDecimal("5000.00"), null, false, null,
+                null, null, null, null, cvHeadline, List.of(), List.of(), List.of(), List.of(), 0L);
+    }
+
+    private CandidateProfileAggregate profileWithEducation(String institution) {
+        CandidateEducation education = new CandidateEducation(institution, null, null, null, null, null, null, 0);
+        return new CandidateProfileAggregate(
+                UUID.randomUUID(), "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, new BigDecimal("5000.00"), null, false, null,
+                null, null, null, null, null, List.of(), List.of(), List.of(), List.of(education), 0L);
+    }
+
     private CandidateProfileAggregate profile(UUID id, long version, List<CandidateSkill> skills, List<CandidateLanguage> languages) {
         return new CandidateProfileAggregate(
                 id, "primary", "Backend Engineer", "Senior", 6,
@@ -118,7 +162,7 @@ class CandidateProfileFingerprintTest {
         return new CandidateSkill(name, null, null, SkillProficiency.STRONG);
     }
 
-    private CandidateLanguage lang(String code) {
-        return new CandidateLanguage(code, null);
+    private CandidateLanguage lang(String code, int displayOrder) {
+        return new CandidateLanguage(code, null, displayOrder);
     }
 }

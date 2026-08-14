@@ -1,9 +1,11 @@
 package com.darya.jobassistant.candidates.persistence;
 
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfilePreference;
 import com.darya.jobassistant.candidates.aggregate.CandidateSkill;
+import com.darya.jobassistant.candidates.entity.CandidateProfileEducationEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileLanguageEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfilePreferenceEntity;
@@ -23,7 +25,8 @@ final class CandidateProfilePersistenceMapper {
             CandidateProfileEntity entity,
             List<CandidateProfileSkillEntity> skillEntities,
             List<CandidateProfileLanguageEntity> languageEntities,
-            List<CandidateProfilePreferenceEntity> preferenceEntities) {
+            List<CandidateProfilePreferenceEntity> preferenceEntities,
+            List<CandidateProfileEducationEntity> educationEntities) {
         return new CandidateProfileAggregate(
                 entity.getId(),
                 entity.getProfileKey(),
@@ -39,9 +42,15 @@ final class CandidateProfilePersistenceMapper {
                 entity.getCurrentCountry(),
                 entity.isRelocationAllowed(),
                 entity.getSalaryExpectationNote(),
+                entity.getEmail(),
+                entity.getPhone(),
+                entity.getLinkedinUrl(),
+                entity.getCvLocation(),
+                entity.getCvHeadline(),
                 skillEntities.stream().map(CandidateProfilePersistenceMapper::toDomainSkill).toList(),
                 languageEntities.stream().map(CandidateProfilePersistenceMapper::toDomainLanguage).toList(),
                 preferenceEntities.stream().map(CandidateProfilePersistenceMapper::toDomainPreference).toList(),
+                educationEntities.stream().map(CandidateProfilePersistenceMapper::toDomainEducation).toList(),
                 entity.getVersion());
     }
 
@@ -51,11 +60,17 @@ final class CandidateProfilePersistenceMapper {
     }
 
     private static CandidateLanguage toDomainLanguage(CandidateProfileLanguageEntity entity) {
-        return new CandidateLanguage(entity.getLanguageCode(), entity.getProficiency());
+        return new CandidateLanguage(entity.getLanguageCode(), entity.getProficiency(), entity.getDisplayOrder());
     }
 
     private static CandidateProfilePreference toDomainPreference(CandidateProfilePreferenceEntity entity) {
         return new CandidateProfilePreference(entity.getType(), entity.getValue(), entity.getImportance(), entity.getPriorityOrder());
+    }
+
+    private static CandidateEducation toDomainEducation(CandidateProfileEducationEntity entity) {
+        return new CandidateEducation(
+                entity.getId(), entity.getInstitution(), entity.getDegree(), entity.getFieldOfStudy(), entity.getLocation(),
+                entity.getStartDate(), entity.getEndDate(), entity.getDescription(), entity.getDisplayOrder());
     }
 
     /** A brand-new, not-yet-persisted parent row - id left null so Hibernate generates one. */
@@ -79,6 +94,11 @@ final class CandidateProfilePersistenceMapper {
         entity.setCurrentCountry(profile.currentCountry());
         entity.setRelocationAllowed(profile.relocationAllowed());
         entity.setSalaryExpectationNote(profile.salaryExpectationNote());
+        entity.setEmail(profile.email());
+        entity.setPhone(profile.phone());
+        entity.setLinkedinUrl(profile.linkedinUrl());
+        entity.setCvLocation(profile.cvLocation());
+        entity.setCvHeadline(profile.cvHeadline());
     }
 
     static CandidateProfileSkillEntity toSkillEntity(CandidateSkill skill, CandidateProfileEntity profile) {
@@ -96,6 +116,7 @@ final class CandidateProfilePersistenceMapper {
                 .candidateProfile(profile)
                 .languageCode(language.languageCode())
                 .proficiency(language.proficiency())
+                .displayOrder(language.displayOrder())
                 .build();
     }
 
@@ -106,6 +127,20 @@ final class CandidateProfilePersistenceMapper {
                 .value(preference.value())
                 .importance(preference.importance())
                 .priorityOrder(preference.priorityOrder())
+                .build();
+    }
+
+    static CandidateProfileEducationEntity toEducationEntity(CandidateEducation education, CandidateProfileEntity profile) {
+        return CandidateProfileEducationEntity.builder()
+                .candidateProfile(profile)
+                .institution(education.institution())
+                .degree(education.degree())
+                .fieldOfStudy(education.fieldOfStudy())
+                .location(education.location())
+                .startDate(education.startDate())
+                .endDate(education.endDate())
+                .description(education.description())
+                .displayOrder(education.displayOrder())
                 .build();
     }
 }

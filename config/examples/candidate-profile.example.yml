@@ -5,8 +5,14 @@
 # then edit the values below to describe yourself. config/candidate-profile.yml is gitignored,
 # so your personal data never gets committed.
 #
-# Everything under `candidate:` feeds the AI vacancy-analysis prompt (JobAnalysisService):
-# target role/seniority/experience, skills with proficiency, languages, and work preferences.
+# Most of `candidate:` feeds the AI vacancy-analysis prompt (JobAnalysisService): target
+# role/seniority/experience, skills with proficiency, languages, and work preferences.
+#
+# The `email`/`phone`/`linkedin-url`/`cv-location`/`cv-headline`/`education`/`personal-projects`
+# fields below (Sprint 11 Step 5) are the exception: fixed, factual CV-presentation data that
+# JobAnalysisService never reads and AI never generates or rewrites. `cv-headline` is deliberately
+# separate from `target-role` above - target-role drives job search/matching, cv-headline is the
+# fixed title printed on the CV document itself.
 candidate:
   # Role and seniority you're targeting - used to judge fit against a vacancy's stated role.
   target-role: Senior Java Backend Developer
@@ -60,3 +66,44 @@ candidate:
 
     # Leave blank if you don't want salary to influence the AI match score at all.
     salary-expectation:
+
+  # --- Fixed factual CV-presentation data (Sprint 11 Step 5) - never read for AI matching, never AI-generated ---
+
+  # All optional; leave any of these blank if you don't want them on the CV yet.
+  email:
+  phone:
+  linkedin-url:
+  cv-location: Warsaw, Poland
+  cv-headline: Senior Java Backend Engineer
+
+  # Only institution is required per entry - leave degree/field-of-study blank if the factual
+  # source only has university/faculty information.
+  education:
+    - institution: Example University
+      degree: BSc Computer Science
+      field-of-study: Computer Science
+      location: Warsaw, Poland
+      start-date: 2014-09-01
+      end-date: 2018-06-30
+
+  # Factual source projects only - AI may later select/order highlights or technologies from
+  # these, but must never invent a project, a highlight, or a technology.
+  #
+  # `id` is REQUIRED and must be a fixed UUID you assign yourself and never change - it is this
+  # project's stable identity across every import run. Generate one once (e.g. `uuidgen` on
+  # macOS/Linux) and keep it: the bootstrap import matches on this id, not on `name`, so renaming
+  # a project is safe but changing its id creates a second, duplicate project on the next import.
+  personal-projects:
+    - id: 00000000-0000-0000-0000-000000000001
+      name: Example Side Project
+      description: A short factual description of what the project does.
+      url: https://github.com/example/example-project
+      start-date: 2022-01-01
+      end-date:
+      highlights:
+        - A factual highlight bullet about this project.
+      technologies:
+        - name: Java
+          category: Language
+        - name: PostgreSQL
+          category: Database

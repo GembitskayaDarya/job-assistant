@@ -1,5 +1,6 @@
 package com.darya.jobassistant.candidates.migration;
 
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidatePreferenceType;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
@@ -59,9 +60,15 @@ public final class CandidateProfileFingerprint {
         appendField(canonical, profile.currentCountry());
         appendField(canonical, String.valueOf(profile.relocationAllowed()));
         appendField(canonical, profile.salaryExpectationNote());
+        appendField(canonical, profile.email());
+        appendField(canonical, profile.phone());
+        appendField(canonical, profile.linkedinUrl());
+        appendField(canonical, profile.cvLocation());
+        appendField(canonical, profile.cvHeadline());
         appendField(canonical, canonicalSkills(profile.skills()));
         appendField(canonical, canonicalLanguages(profile.languages()));
         appendField(canonical, canonicalPreferences(profile.preferences()));
+        appendField(canonical, canonicalEducation(profile.education()));
         return canonical.toString();
     }
 
@@ -73,10 +80,29 @@ public final class CandidateProfileFingerprint {
                 .orElse("");
     }
 
+    /**
+     * Sorted by {@link CandidateLanguage#displayOrder()} (Sprint 11 Step 5), not language code -
+     * {@code displayOrder} is now the real, order-significant CV presentation fact, so two
+     * profiles with the same languages in a different order are no longer semantically identical
+     * (mirroring how an order-significant {@code CandidateProfilePreference} type is handled
+     * below).
+     */
     private static String canonicalLanguages(List<CandidateLanguage> languages) {
         return languages.stream()
-                .sorted(Comparator.comparing(CandidateLanguage::languageCode))
-                .map(language -> join(language.languageCode(), language.proficiency()))
+                .sorted(Comparator.comparingInt(CandidateLanguage::displayOrder))
+                .map(language -> join(language.languageCode(), language.proficiency(), String.valueOf(language.displayOrder())))
+                .reduce((a, b) -> a + RECORD_SEPARATOR + b)
+                .orElse("");
+    }
+
+    /** Sorted by {@link CandidateEducation#displayOrder()} - a candidate's declared education order is itself a real fact. */
+    private static String canonicalEducation(List<CandidateEducation> education) {
+        return education.stream()
+                .sorted(Comparator.comparingInt(CandidateEducation::displayOrder))
+                .map(entry -> join(
+                        entry.institution(), entry.degree(), entry.fieldOfStudy(), entry.location(),
+                        String.valueOf(entry.startDate()), String.valueOf(entry.endDate()), entry.description(),
+                        String.valueOf(entry.displayOrder())))
                 .reduce((a, b) -> a + RECORD_SEPARATOR + b)
                 .orElse("");
     }

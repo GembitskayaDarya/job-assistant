@@ -1,5 +1,6 @@
 package com.darya.jobassistant.candidates.migration;
 
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidatePreferenceType;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
@@ -51,14 +52,22 @@ public final class CandidateProfileSemanticComparator {
         addIfDifferent(changed, "currentCountry", a.currentCountry(), b.currentCountry());
         addIfDifferent(changed, "relocationAllowed", a.relocationAllowed(), b.relocationAllowed());
         addIfDifferent(changed, "salaryExpectationNote", a.salaryExpectationNote(), b.salaryExpectationNote());
+        addIfDifferent(changed, "email", a.email(), b.email());
+        addIfDifferent(changed, "phone", a.phone(), b.phone());
+        addIfDifferent(changed, "linkedinUrl", a.linkedinUrl(), b.linkedinUrl());
+        addIfDifferent(changed, "cvLocation", a.cvLocation(), b.cvLocation());
+        addIfDifferent(changed, "cvHeadline", a.cvHeadline(), b.cvHeadline());
         if (!skillSet(a.skills()).equals(skillSet(b.skills()))) {
             changed.add("skills");
         }
-        if (!languageSet(a.languages()).equals(languageSet(b.languages()))) {
+        if (!orderedLanguages(a.languages()).equals(orderedLanguages(b.languages()))) {
             changed.add("languages");
         }
         if (!preferencesEqual(a.preferences(), b.preferences())) {
             changed.add("preferences");
+        }
+        if (!orderedEducation(a.education()).equals(orderedEducation(b.education()))) {
+            changed.add("education");
         }
         return new CandidateProfileDiff(changed.isEmpty(), changed);
     }
@@ -73,10 +82,27 @@ public final class CandidateProfileSemanticComparator {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
-    private static Set<String> languageSet(List<CandidateLanguage> languages) {
+    /**
+     * Ordered by {@link CandidateLanguage#displayOrder()} (Sprint 11 Step 5) - unlike {@link
+     * #skillSet}, language order is now a real, order-significant CV presentation fact (see
+     * {@code CandidateProfileFingerprint#canonicalLanguages}'s javadoc for the same reasoning), so
+     * this is compared positionally, not as a set.
+     */
+    private static List<String> orderedLanguages(List<CandidateLanguage> languages) {
         return languages.stream()
-                .map(language -> language.languageCode() + '' + language.proficiency())
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                .sorted(Comparator.comparingInt(CandidateLanguage::displayOrder))
+                .map(language -> language.languageCode() + '' + language.proficiency() + '' + language.displayOrder())
+                .toList();
+    }
+
+    /** Ordered by {@link CandidateEducation#displayOrder()} - a candidate's declared education order is itself a real fact. */
+    private static List<String> orderedEducation(List<CandidateEducation> education) {
+        return education.stream()
+                .sorted(Comparator.comparingInt(CandidateEducation::displayOrder))
+                .map(entry -> entry.institution() + '' + entry.degree() + '' + entry.fieldOfStudy() + ''
+                        + entry.location() + '' + entry.startDate() + '' + entry.endDate() + ''
+                        + entry.description() + '' + entry.displayOrder())
+                .toList();
     }
 
     /**

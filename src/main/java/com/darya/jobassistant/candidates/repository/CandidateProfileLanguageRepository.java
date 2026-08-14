@@ -14,4 +14,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface CandidateProfileLanguageRepository extends JpaRepository<CandidateProfileLanguageEntity, UUID> {
 
     List<CandidateProfileLanguageEntity> findByCandidateProfileId(UUID candidateProfileId);
+
+    /** Sprint 11 Step 5: deterministic CV presentation order (V28's {@code display_order}). */
+    List<CandidateProfileLanguageEntity> findByCandidateProfileIdOrderByDisplayOrderAscIdAsc(UUID candidateProfileId);
 }

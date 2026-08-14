@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.candidates.PreferenceImportance;
 import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidatePreferenceType;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
@@ -16,6 +17,7 @@ import com.darya.jobassistant.candidates.entity.CandidateProfileEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileLanguageEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfilePreferenceEntity;
 import com.darya.jobassistant.candidates.entity.CandidateProfileSkillEntity;
+import com.darya.jobassistant.candidates.repository.CandidateProfileEducationRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfilePreferenceRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
@@ -74,6 +76,9 @@ class CandidateProfileRepositoryAdapterTest {
     private CandidateProfilePreferenceRepository candidateProfilePreferenceRepository;
 
     @Autowired
+    private CandidateProfileEducationRepository candidateProfileEducationRepository;
+
+    @Autowired
     private EntityManager entityManager;
 
     @Autowired
@@ -84,7 +89,7 @@ class CandidateProfileRepositoryAdapterTest {
     private CandidateProfileRepositoryAdapter adapter() {
         return new CandidateProfileRepositoryAdapter(
                 candidateProfileRepository, candidateProfileSkillRepository, candidateProfileLanguageRepository,
-                candidateProfilePreferenceRepository, Clock.systemUTC());
+                candidateProfilePreferenceRepository, candidateProfileEducationRepository, Clock.systemUTC());
     }
 
     // ---- 1/2. New profile persists parent, skills, languages, and preferences ----
@@ -108,7 +113,7 @@ class CandidateProfileRepositoryAdapterTest {
         CandidateProfileAggregate toSave = withPreferences(
                 validProfile("children-" + UUID.randomUUID(),
                         List.of(new CandidateSkill("Java", "Language", null, SkillProficiency.EXPERT)),
-                        List.of(new CandidateLanguage("en", "FLUENT"))),
+                        List.of(new CandidateLanguage("en", "FLUENT", 0))),
                 List.of(new CandidateProfilePreference(CandidatePreferenceType.COMPANY_TYPE, "Product", PreferenceImportance.PREFERRED)));
 
         CandidateProfileAggregate saved = adapter().save(toSave);
@@ -131,7 +136,7 @@ class CandidateProfileRepositoryAdapterTest {
         adapter().save(withPreferences(
                 validProfile(key,
                         List.of(new CandidateSkill("Kafka", null, null, SkillProficiency.STRONG)),
-                        List.of(new CandidateLanguage("pl", null))),
+                        List.of(new CandidateLanguage("pl", null, 0))),
                 List.of(new CandidateProfilePreference(CandidatePreferenceType.ALLOWED_WORK_COUNTRY, "Poland", null))));
         entityManager.clear();
 
@@ -158,7 +163,7 @@ class CandidateProfileRepositoryAdapterTest {
         String key = "no-proxy-" + UUID.randomUUID();
         adapter().save(validProfile(key,
                 List.of(new CandidateSkill("Java", null, null, SkillProficiency.EXPERT)),
-                List.of(new CandidateLanguage("en", null))));
+                List.of(new CandidateLanguage("en", null, 0))));
 
         CandidateProfileAggregate found = adapter().findByProfileKey(key).orElseThrow();
         // The mapper already extracted every value into plain records before this returns, so
@@ -221,9 +226,9 @@ class CandidateProfileRepositoryAdapterTest {
     void save_updateWithDifferentLanguageSet_removesOldLanguagesAndStoresNewOnes() {
         String key = "replace-languages-" + UUID.randomUUID();
         CandidateProfileAggregate initial = adapter().save(validProfile(key,
-                List.of(), List.of(new CandidateLanguage("en", null))));
+                List.of(), List.of(new CandidateLanguage("en", null, 0))));
 
-        adapter().save(withLanguages(initial, List.of(new CandidateLanguage("pl", "STRONG"))));
+        adapter().save(withLanguages(initial, List.of(new CandidateLanguage("pl", "STRONG", 0))));
 
         assertThat(candidateProfileLanguageRepository.findByCandidateProfileId(initial.id()))
                 .extracting(CandidateProfileLanguageEntity::getLanguageCode)
@@ -385,12 +390,12 @@ class CandidateProfileRepositoryAdapterTest {
 
         CandidateProfileAggregate initial = tx.execute(status -> port.save(validProfile(key,
                 List.of(new CandidateSkill("Java", null, null, SkillProficiency.EXPERT)),
-                List.of(new CandidateLanguage("en", "FLUENT")))));
+                List.of(new CandidateLanguage("en", "FLUENT", 0)))));
         String originalTargetRole = initial.targetRole();
         long originalVersion = initial.version();
 
         CandidateProfileAggregate invalidUpdate = withLanguages(withTargetRoleNoSave(initial, "Updated Target Role"),
-                List.of(new CandidateLanguage("en", "A".repeat(51))));
+                List.of(new CandidateLanguage("en", "A".repeat(51), 0)));
 
         assertThatThrownBy(() -> tx.execute(status -> port.save(invalidUpdate)))
                 .isInstanceOf(DataIntegrityViolationException.class);
@@ -433,7 +438,7 @@ class CandidateProfileRepositoryAdapterTest {
         tx.execute(status -> adapter().save(withPreferences(
                 validProfile(key,
                         List.of(new CandidateSkill("Java", null, null, SkillProficiency.EXPERT)),
-                        List.of(new CandidateLanguage("en", null))),
+                        List.of(new CandidateLanguage("en", null, 0))),
                 List.of(new CandidateProfilePreference(CandidatePreferenceType.COMPANY_TYPE, "Product", PreferenceImportance.PREFERRED)))));
 
         CandidateProfileAggregate firstWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
@@ -481,12 +486,12 @@ class CandidateProfileRepositoryAdapterTest {
     void save_languagesOnlyChange_incrementsParentVersion() {
         String key = "languages-only-version-" + UUID.randomUUID();
         CandidateProfileAggregate initial = adapter().save(validProfile(key,
-                List.of(), List.of(new CandidateLanguage("en", null))));
+                List.of(), List.of(new CandidateLanguage("en", null, 0))));
         long previousVersion = initial.version();
 
         CandidateProfileAggregate loaded = adapter().findByProfileKey(key).orElseThrow();
         CandidateProfileAggregate languagesOnlyChange =
-                withLanguages(loaded, List.of(new CandidateLanguage("pl", "STRONG")));
+                withLanguages(loaded, List.of(new CandidateLanguage("pl", "STRONG", 0)));
 
         CandidateProfileAggregate saved = adapter().save(languagesOnlyChange);
 
@@ -521,7 +526,7 @@ class CandidateProfileRepositoryAdapterTest {
 
         tx.execute(status -> adapter().save(validProfile(key,
                 List.of(new CandidateSkill("Java", null, null, SkillProficiency.EXPERT)),
-                List.of(new CandidateLanguage("en", null)))));
+                List.of(new CandidateLanguage("en", null, 0)))));
 
         CandidateProfileAggregate firstWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
         CandidateProfileAggregate secondWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
@@ -549,18 +554,18 @@ class CandidateProfileRepositoryAdapterTest {
 
         tx.execute(status -> adapter().save(validProfile(key,
                 List.of(new CandidateSkill("Java", null, null, SkillProficiency.EXPERT)),
-                List.of(new CandidateLanguage("en", null)))));
+                List.of(new CandidateLanguage("en", null, 0)))));
 
         CandidateProfileAggregate firstWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
         CandidateProfileAggregate secondWriterCopy = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
         long originalVersion = firstWriterCopy.version();
 
         CandidateProfileAggregate afterFirstWrite = tx.execute(status -> adapter().save(
-                withLanguages(firstWriterCopy, List.of(new CandidateLanguage("pl", "STRONG")))));
+                withLanguages(firstWriterCopy, List.of(new CandidateLanguage("pl", "STRONG", 0)))));
         assertThat(afterFirstWrite.version()).isEqualTo(originalVersion + 1);
 
         assertThatThrownBy(() -> tx.execute(status -> adapter().save(
-                withLanguages(secondWriterCopy, List.of(new CandidateLanguage("ru", "BASIC"))))))
+                withLanguages(secondWriterCopy, List.of(new CandidateLanguage("ru", "BASIC", 0))))))
                 .isInstanceOf(CandidateProfileConcurrentModificationException.class);
 
         CandidateProfileAggregate finalState = tx.execute(status -> adapter().findByProfileKey(key).orElseThrow());
@@ -611,9 +616,9 @@ class CandidateProfileRepositoryAdapterTest {
     @Test
     void save_sameLanguageCode_acrossTwoDifferentProfiles_bothAccepted() {
         CandidateProfileAggregate profileA = adapter().save(validProfile("lang-a-" + UUID.randomUUID(),
-                List.of(), List.of(new CandidateLanguage("pl", null))));
+                List.of(), List.of(new CandidateLanguage("pl", null, 0))));
         CandidateProfileAggregate profileB = adapter().save(validProfile("lang-b-" + UUID.randomUUID(),
-                List.of(), List.of(new CandidateLanguage("pl", null))));
+                List.of(), List.of(new CandidateLanguage("pl", null, 0))));
 
         assertThat(candidateProfileLanguageRepository.findByCandidateProfileId(profileA.id())).hasSize(1);
         assertThat(candidateProfileLanguageRepository.findByCandidateProfileId(profileB.id())).hasSize(1);
@@ -680,6 +685,62 @@ class CandidateProfileRepositoryAdapterTest {
 
         assertThatThrownBy(() -> adapter().save(validProfile(key, List.of(), List.of())))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    // ---- Sprint 11 Step 5: header facts, education, and ordered languages ----
+
+    @Test
+    void save_newProfileWithHeaderFieldsAndEducation_persistsAndReloadsThem() {
+        CandidateEducation education = new CandidateEducation("Example University", "BSc CS", "Computer Science", null, null, null, null, 0);
+        CandidateProfileAggregate toSave = new CandidateProfileAggregate(
+                null, "header-" + UUID.randomUUID(), "Senior Java Backend Engineer", "Senior", 6,
+                null, "Europe", null, null, "EUR", new BigDecimal("8000.00"), null, false, null,
+                "person@example.com", "+48123456789", "https://www.linkedin.com/in/example", "Warsaw, Poland",
+                "Senior Java Backend Engineer",
+                List.of(), List.of(), List.of(), List.of(education), 0L);
+
+        CandidateProfileAggregate saved = adapter().save(toSave);
+
+        assertThat(saved.email()).isEqualTo("person@example.com");
+        assertThat(saved.phone()).isEqualTo("+48123456789");
+        assertThat(saved.linkedinUrl()).isEqualTo("https://www.linkedin.com/in/example");
+        assertThat(saved.cvLocation()).isEqualTo("Warsaw, Poland");
+        assertThat(saved.cvHeadline()).isEqualTo("Senior Java Backend Engineer");
+        assertThat(saved.education()).hasSize(1);
+        assertThat(saved.education().get(0).institution()).isEqualTo("Example University");
+        assertThat(saved.education().get(0).id()).isNotNull();
+    }
+
+    @Test
+    void save_replacingEducation_fullyReplacesThePreviousSet() {
+        CandidateEducation original = new CandidateEducation("University A", null, null, null, null, null, null, 0);
+        CandidateProfileAggregate saved = adapter().save(withEducation(validProfile("edu-replace-" + UUID.randomUUID(), List.of(), List.of()), List.of(original)));
+
+        CandidateEducation replacement = new CandidateEducation("University B", null, null, null, null, null, null, 0);
+        CandidateProfileAggregate updated = adapter().save(withEducation(saved, List.of(replacement)));
+
+        assertThat(updated.education()).hasSize(1);
+        assertThat(updated.education().get(0).institution()).isEqualTo("University B");
+    }
+
+    @Test
+    void save_languages_reloadInDisplayOrder() {
+        CandidateProfileAggregate toSave = validProfile("lang-order-" + UUID.randomUUID(), List.of(), List.of(
+                new CandidateLanguage("pl", "NATIVE", 1),
+                new CandidateLanguage("en", "FLUENT", 0)));
+
+        CandidateProfileAggregate saved = adapter().save(toSave);
+
+        assertThat(saved.languages()).extracting(CandidateLanguage::languageCode).containsExactly("en", "pl");
+    }
+
+    private CandidateProfileAggregate withEducation(CandidateProfileAggregate profile, List<CandidateEducation> education) {
+        return new CandidateProfileAggregate(
+                profile.id(), profile.profileKey(), profile.targetRole(), profile.seniority(), profile.experienceYears(),
+                profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
+                profile.salaryCurrency(), profile.minimumSalary(), profile.currentCountry(), profile.relocationAllowed(),
+                profile.salaryExpectationNote(), profile.email(), profile.phone(), profile.linkedinUrl(), profile.cvLocation(),
+                profile.cvHeadline(), profile.skills(), profile.languages(), profile.preferences(), education, profile.version());
     }
 
     private CandidateProfileAggregate validProfile(

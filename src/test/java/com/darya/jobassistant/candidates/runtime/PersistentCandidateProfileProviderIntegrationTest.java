@@ -8,6 +8,7 @@ import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.candidates.persistence.CandidateProfileRepositoryAdapter;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
+import com.darya.jobassistant.candidates.repository.CandidateProfileEducationRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfilePreferenceRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileSkillRepository;
@@ -56,10 +57,13 @@ class PersistentCandidateProfileProviderIntegrationTest {
     @Autowired
     private CandidateProfilePreferenceRepository candidateProfilePreferenceRepository;
 
+    @Autowired
+    private CandidateProfileEducationRepository candidateProfileEducationRepository;
+
     private CandidateProfileRepositoryPort repositoryPort() {
         return new CandidateProfileRepositoryAdapter(
                 candidateProfileRepository, candidateProfileSkillRepository, candidateProfileLanguageRepository,
-                candidateProfilePreferenceRepository, Clock.systemUTC());
+                candidateProfilePreferenceRepository, candidateProfileEducationRepository, Clock.systemUTC());
     }
 
     private PersistentCandidateProfileProvider provider(String profileKey) {

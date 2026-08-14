@@ -14,5 +14,5 @@ SELECT id, 'Spring Boot', 'STRONG' FROM candidate_profile WHERE profile_key = 'p
 UNION ALL
 SELECT id, 'PostgreSQL', 'STRONG' FROM candidate_profile WHERE profile_key = 'primary';
 
-INSERT INTO candidate_profile_language (candidate_profile_id, language_code)
-SELECT id, 'en' FROM candidate_profile WHERE profile_key = 'primary';
+INSERT INTO candidate_profile_language (candidate_profile_id, language_code, display_order)
+SELECT id, 'en', 0 FROM candidate_profile WHERE profile_key = 'primary';

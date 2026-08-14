@@ -23,7 +23,7 @@ class CandidateProfileFactsAssemblerTest {
             null, null, null, null, null, null,
             "Poland", true, "8000 EUR/month",
             List.of(new CandidateSkill("Java", "Language", "10+ years", SkillProficiency.EXPERT)),
-            List.of(new CandidateLanguage("en", "native"), new CandidateLanguage("pl", "conversational")),
+            List.of(new CandidateLanguage("en", "native", 0), new CandidateLanguage("pl", "conversational", 1)),
             List.of(
                     new CandidateProfilePreference(CandidatePreferenceType.WORK_ARRANGEMENT, "Remote", PreferenceImportance.STRONG),
                     new CandidateProfilePreference(CandidatePreferenceType.ALLOWED_WORK_COUNTRY, "Poland", null),
@@ -87,7 +87,7 @@ class CandidateProfileFactsAssemblerTest {
         CandidateProfileAggregate withoutLanguageProficiency = new CandidateProfileAggregate(
                 UUID.randomUUID(), "primary", "Senior Java Backend Engineer", "Senior", 6,
                 null, null, null, null, null, null,
-                null, false, null, List.of(), List.of(new CandidateLanguage("en", null)), List.of(), 0L);
+                null, false, null, List.of(), List.of(new CandidateLanguage("en", null, 0)), List.of(), 0L);
 
         CandidateProfileFacts facts = CandidateProfileFactsAssembler.toProfileFacts(withoutLanguageProficiency);
 

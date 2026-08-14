@@ -362,9 +362,9 @@ class CandidateProfileRepositoryTest {
     void validLanguageCodes_lowercaseLetters_areAccepted() {
         CandidateProfileEntity profile = candidateProfileRepository.save(fullProfile("valid-lang-" + UUID.randomUUID()));
 
-        candidateProfileLanguageRepository.save(language(profile, "en", null));
-        candidateProfileLanguageRepository.save(language(profile, "ru", null));
-        candidateProfileLanguageRepository.save(language(profile, "pl", null));
+        candidateProfileLanguageRepository.save(language(profile, "en", null, 0));
+        candidateProfileLanguageRepository.save(language(profile, "ru", null, 1));
+        candidateProfileLanguageRepository.save(language(profile, "pl", null, 2));
         entityManager.flush();
 
         assertThat(candidateProfileLanguageRepository.findByCandidateProfileId(profile.getId()))
@@ -461,10 +461,15 @@ class CandidateProfileRepositoryTest {
     }
 
     private CandidateProfileLanguageEntity language(CandidateProfileEntity profile, String code, String proficiency) {
+        return language(profile, code, proficiency, 0);
+    }
+
+    private CandidateProfileLanguageEntity language(CandidateProfileEntity profile, String code, String proficiency, int displayOrder) {
         return CandidateProfileLanguageEntity.builder()
                 .candidateProfile(profile)
                 .languageCode(code)
                 .proficiency(proficiency)
+                .displayOrder(displayOrder)
                 .build();
     }
 }

@@ -9,6 +9,7 @@ import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.candidates.persistence.CandidateProfileRepositoryAdapter;
 import com.darya.jobassistant.candidates.repository.CandidateProfileLanguageRepository;
+import com.darya.jobassistant.candidates.repository.CandidateProfileEducationRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfilePreferenceRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileRepository;
 import com.darya.jobassistant.candidates.repository.CandidateProfileSkillRepository;
@@ -28,6 +29,11 @@ import com.darya.jobassistant.careerhistory.repository.CareerProjectRepository;
 import com.darya.jobassistant.careerhistory.repository.CareerProjectResponsibilityRepository;
 import com.darya.jobassistant.careerhistory.repository.CareerProjectTechnologyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProjectRepositoryPort;
+import com.darya.jobassistant.personalprojects.persistence.PersonalProjectRepositoryAdapter;
+import com.darya.jobassistant.personalprojects.repository.PersonalProjectHighlightRepository;
+import com.darya.jobassistant.personalprojects.repository.PersonalProjectRepository;
+import com.darya.jobassistant.personalprojects.repository.PersonalProjectTechnologyRepository;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.util.List;
@@ -75,6 +81,9 @@ class PersistentCandidateContextProviderIntegrationTest {
     private CandidateProfilePreferenceRepository candidateProfilePreferenceRepository;
 
     @Autowired
+    private CandidateProfileEducationRepository candidateProfileEducationRepository;
+
+    @Autowired
     private CareerHistoryRepository careerHistoryRepository;
     @Autowired
     private CareerCompanyRepository careerCompanyRepository;
@@ -95,10 +104,17 @@ class PersistentCandidateContextProviderIntegrationTest {
     @Autowired
     private EntityManager entityManager;
 
+    @Autowired
+    private PersonalProjectRepository personalProjectRepository;
+    @Autowired
+    private PersonalProjectHighlightRepository personalProjectHighlightRepository;
+    @Autowired
+    private PersonalProjectTechnologyRepository personalProjectTechnologyRepository;
+
     private CandidateProfileRepositoryPort candidateProfileRepositoryPort() {
         return new CandidateProfileRepositoryAdapter(
                 candidateProfileRepository, candidateProfileSkillRepository, candidateProfileLanguageRepository,
-                candidateProfilePreferenceRepository, Clock.systemUTC());
+                candidateProfilePreferenceRepository, candidateProfileEducationRepository, Clock.systemUTC());
     }
 
     private CareerHistoryRepositoryPort careerHistoryRepositoryPort() {
@@ -109,9 +125,16 @@ class PersistentCandidateContextProviderIntegrationTest {
                 careerProjectTechnologyRepository, candidateProfileRepository, Clock.systemUTC(), entityManager);
     }
 
+    private PersonalProjectRepositoryPort personalProjectRepositoryPort() {
+        return new PersonalProjectRepositoryAdapter(
+                personalProjectRepository, personalProjectHighlightRepository, personalProjectTechnologyRepository,
+                candidateProfileRepository, Clock.systemUTC(), entityManager);
+    }
+
     private PersistentCandidateContextProvider provider(String profileKey) {
         return new PersistentCandidateContextProvider(
-                candidateProfileRepositoryPort(), careerHistoryRepositoryPort(), new CandidateProfileRuntimeProperties(profileKey));
+                candidateProfileRepositoryPort(), careerHistoryRepositoryPort(), personalProjectRepositoryPort(),
+                new CandidateProfileRuntimeProperties(profileKey));
     }
 
     @Test

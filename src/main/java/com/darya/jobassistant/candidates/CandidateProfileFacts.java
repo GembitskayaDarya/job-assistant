@@ -33,7 +33,13 @@ public record CandidateProfileFacts(
         List<CandidateSkillFacts> skills,
         List<CandidateLanguageFacts> languages,
         int experienceYears,
-        CandidatePreferences preferences
+        CandidatePreferences preferences,
+        String email,
+        String phone,
+        String linkedinUrl,
+        String cvLocation,
+        String cvHeadline,
+        List<CandidateEducationFacts> education
 ) {
 
     public CandidateProfileFacts {
@@ -53,5 +59,33 @@ public record CandidateProfileFacts(
         }
         skills = skills == null ? List.of() : List.copyOf(skills);
         languages = languages == null ? List.of() : List.copyOf(languages);
+        email = trimToNull(email);
+        phone = trimToNull(phone);
+        linkedinUrl = trimToNull(linkedinUrl);
+        cvLocation = trimToNull(cvLocation);
+        cvHeadline = trimToNull(cvHeadline);
+        education = education == null ? List.of() : List.copyOf(education);
+    }
+
+    /**
+     * Convenience constructor matching this type's pre-Sprint-11-Step-5 shape - defaults the new
+     * CV header/contact facts to {@code null} and {@link #education} to empty. Format validation
+     * for email/LinkedIn URL is {@code candidates.aggregate.CandidateProfileAggregate}'s
+     * responsibility, the single source of truth for that rule - this type only carries the
+     * already-validated result through.
+     */
+    public CandidateProfileFacts(
+            String targetRole, String targetSeniority, List<CandidateSkillFacts> skills,
+            List<CandidateLanguageFacts> languages, int experienceYears, CandidatePreferences preferences) {
+        this(targetRole, targetSeniority, skills, languages, experienceYears, preferences,
+                null, null, null, null, null, List.of());
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

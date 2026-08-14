@@ -1,7 +1,9 @@
 package com.darya.jobassistant.candidates.migration;
 
+import com.darya.jobassistant.candidates.CandidateEducationEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
+import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
 import com.darya.jobassistant.candidates.aggregate.CandidateLanguage;
 import com.darya.jobassistant.candidates.aggregate.CandidatePreferenceType;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
@@ -53,9 +55,15 @@ public final class CandidateProfileYamlImportMapper {
                 source.preferences().currentCountry(),
                 source.preferences().relocationAllowed(),
                 source.preferences().salaryExpectation(),
+                source.email(),
+                source.phone(),
+                source.linkedinUrl(),
+                source.cvLocation(),
+                source.cvHeadline(),
                 toSkills(source.skills()),
                 toLanguages(source.languages()),
                 toPreferences(source.preferences()),
+                toEducation(source.education()),
                 0L);
     }
 
@@ -65,10 +73,29 @@ public final class CandidateProfileYamlImportMapper {
                 .toList();
     }
 
+    /**
+     * {@code displayOrder} is assigned from this list's own position (Sprint 11 Step 5) - the
+     * YAML {@code languages:} list order is the intended CV presentation order, the same
+     * convention already used for {@code preferredContractTypes}.
+     */
     private static List<CandidateLanguage> toLanguages(List<String> languageNames) {
-        return languageNames.stream()
-                .map(name -> new CandidateLanguage(CandidateProfileLanguageCodes.codeForName(name), null))
-                .toList();
+        List<CandidateLanguage> result = new ArrayList<>();
+        for (int i = 0; i < languageNames.size(); i++) {
+            result.add(new CandidateLanguage(CandidateProfileLanguageCodes.codeForName(languageNames.get(i)), null, i));
+        }
+        return result;
+    }
+
+    /** {@code displayOrder} is assigned from this list's own position, same convention as {@link #toLanguages}. */
+    private static List<CandidateEducation> toEducation(List<CandidateEducationEntry> education) {
+        List<CandidateEducation> result = new ArrayList<>();
+        for (int i = 0; i < education.size(); i++) {
+            CandidateEducationEntry entry = education.get(i);
+            result.add(new CandidateEducation(
+                    entry.institution(), entry.degree(), entry.fieldOfStudy(), entry.location(),
+                    entry.startDate(), entry.endDate(), entry.description(), i));
+        }
+        return result;
     }
 
     private static List<CandidateProfilePreference> toPreferences(CandidatePreferences preferences) {
