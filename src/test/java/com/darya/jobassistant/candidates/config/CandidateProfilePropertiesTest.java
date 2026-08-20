@@ -26,7 +26,10 @@ class CandidateProfilePropertiesTest {
                         "candidate.skills[0].note=Primary language",
                         "candidate.skills[1].name=Spring Boot",
                         "candidate.skills[1].proficiency=WORKING",
-                        "candidate.languages=English,Polish",
+                        "candidate.languages[0].language=English",
+                        "candidate.languages[0].proficiency=Fluent",
+                        "candidate.languages[1].language=Polish",
+                        "candidate.languages[1].proficiency=Conversational",
                         "candidate.experience-years=6",
                         "candidate.preferences.current-country=Poland",
                         "candidate.preferences.preferred-work-arrangement=Remote",
@@ -44,7 +47,12 @@ class CandidateProfilePropertiesTest {
                     assertThat(properties.targetRole()).isEqualTo("Senior Java Backend Developer");
                     assertThat(properties.targetSeniority()).isEqualTo("Senior");
                     assertThat(properties.experienceYears()).isEqualTo(6);
-                    assertThat(properties.languages()).containsExactly("English", "Polish");
+                    assertThat(properties.languages()).extracting(
+                                    CandidateProfileProperties.LanguageProperties::language,
+                                    CandidateProfileProperties.LanguageProperties::proficiency)
+                            .containsExactly(
+                                    org.assertj.core.groups.Tuple.tuple("English", "Fluent"),
+                                    org.assertj.core.groups.Tuple.tuple("Polish", "Conversational"));
 
                     assertThat(properties.skills()).hasSize(2);
                     CandidateProfileProperties.SkillProperties firstSkill = properties.skills().get(0);
@@ -71,17 +79,19 @@ class CandidateProfilePropertiesTest {
     void constructor_defensivelyCopiesSkillsAndLanguages() {
         List<CandidateProfileProperties.SkillProperties> skills =
                 new ArrayList<>(List.of(new CandidateProfileProperties.SkillProperties("Java", SkillProficiency.WORKING, null)));
-        List<String> languages = new ArrayList<>(List.of("English"));
+        List<CandidateProfileProperties.LanguageProperties> languages =
+                new ArrayList<>(List.of(new CandidateProfileProperties.LanguageProperties("English", "Fluent")));
 
         CandidateProfileProperties properties =
                 new CandidateProfileProperties("Senior Java Backend Developer", "Senior", skills, languages, 6, null,
-                        null, null, null, null, null, List.of(), List.of());
+                        null, null, null, null, null, null, List.of(), List.of());
 
         skills.add(new CandidateProfileProperties.SkillProperties("Kotlin", SkillProficiency.BASIC, null));
-        languages.add("Polish");
+        languages.add(new CandidateProfileProperties.LanguageProperties("Polish", "Conversational"));
 
         assertThat(properties.skills()).hasSize(1);
-        assertThat(properties.languages()).containsExactly("English");
+        assertThat(properties.languages()).extracting(CandidateProfileProperties.LanguageProperties::language)
+                .containsExactly("English");
         assertThat(properties.skills()).isUnmodifiable();
         assertThat(properties.languages()).isUnmodifiable();
     }
@@ -99,7 +109,8 @@ class CandidateProfilePropertiesTest {
                 .withPropertyValues(
                         "candidate.target-role=",
                         "candidate.target-seniority=Senior",
-                        "candidate.languages=English",
+                        "candidate.languages[0].language=English",
+                        "candidate.languages[0].proficiency=Fluent",
                         "candidate.experience-years=6")
                 .run(context -> {
                     assertThat(context).hasNotFailed();

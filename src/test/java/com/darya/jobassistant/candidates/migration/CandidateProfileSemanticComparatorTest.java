@@ -113,6 +113,18 @@ class CandidateProfileSemanticComparatorTest {
 
     // ---- Sprint 11 Step 5: header facts, education, and language ordering ----
 
+    /** Acceptance correction. */
+    @Test
+    void diff_differentFullName_isReportedAsAChange() {
+        CandidateProfileAggregate a = withFullName(profile(UUID.randomUUID(), 0L), "Jane Doe");
+        CandidateProfileAggregate b = withFullName(profile(UUID.randomUUID(), 0L), "John Smith");
+
+        CandidateProfileDiff diff = CandidateProfileSemanticComparator.diff(a, b);
+
+        assertThat(diff.equal()).isFalse();
+        assertThat(diff.changedFields()).contains("fullName");
+    }
+
     @Test
     void diff_differentCvHeadline_isReportedAsAChange() {
         CandidateProfileAggregate a = withCvHeadline(profile(UUID.randomUUID(), 0L), "Senior Java Backend Engineer");
@@ -144,6 +156,16 @@ class CandidateProfileSemanticComparatorTest {
 
         assertThat(CandidateProfileSemanticComparator.areEqual(a, b)).isFalse();
         assertThat(CandidateProfileSemanticComparator.diff(a, b).changedFields()).contains("languages");
+    }
+
+    private CandidateProfileAggregate withFullName(CandidateProfileAggregate profile, String fullName) {
+        return new CandidateProfileAggregate(
+                profile.id(), profile.profileKey(), profile.targetRole(), profile.seniority(), profile.experienceYears(),
+                profile.preferredCompanyType(), profile.preferredLocation(), profile.employmentModel(), profile.remotePolicy(),
+                profile.salaryCurrency(), profile.minimumSalary(), profile.currentCountry(), profile.relocationAllowed(),
+                profile.salaryExpectationNote(), fullName, profile.email(), profile.phone(), profile.linkedinUrl(),
+                profile.cvLocation(), profile.cvHeadline(), profile.skills(), profile.languages(), profile.preferences(),
+                profile.education(), profile.version());
     }
 
     private CandidateProfileAggregate withCvHeadline(CandidateProfileAggregate profile, String cvHeadline) {

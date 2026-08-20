@@ -60,6 +60,7 @@ public final class CandidateProfileFingerprint {
         appendField(canonical, profile.currentCountry());
         appendField(canonical, String.valueOf(profile.relocationAllowed()));
         appendField(canonical, profile.salaryExpectationNote());
+        appendField(canonical, profile.fullName());
         appendField(canonical, profile.email());
         appendField(canonical, profile.phone());
         appendField(canonical, profile.linkedinUrl());

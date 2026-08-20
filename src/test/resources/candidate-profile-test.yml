@@ -7,8 +7,10 @@ candidate:
   experience-years: 6
 
   languages:
-    - English
-    - Polish
+    - language: English
+      proficiency: Fluent
+    - language: Polish
+      proficiency: Conversational
 
   skills:
     - name: Java

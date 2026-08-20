@@ -110,6 +110,19 @@ class CandidateProfileFactsAssemblerTest {
         assertThat(preferences.salaryExpectation()).isEqualTo("8000 EUR/month");
     }
 
+    /** Acceptance correction. */
+    @Test
+    void toProfileFacts_propagatesFullName() {
+        CandidateProfileAggregate withFullName = new CandidateProfileAggregate(
+                UUID.randomUUID(), "primary", "Senior Java Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                "Jane Doe", null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), 0L);
+
+        CandidateProfileFacts facts = CandidateProfileFactsAssembler.toProfileFacts(withFullName);
+
+        assertThat(facts.fullName()).isEqualTo("Jane Doe");
+    }
+
     @Test
     void toProfileFacts_nullAggregate_isRejected() {
         assertThatThrownBy(() -> CandidateProfileFactsAssembler.toProfileFacts(null))

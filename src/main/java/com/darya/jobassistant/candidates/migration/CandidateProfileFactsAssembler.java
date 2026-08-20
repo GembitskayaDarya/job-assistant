@@ -23,8 +23,9 @@ import java.util.Optional;
  * CandidateContextSnapshot -> use-case projections} pipeline. {@link
  * CandidateProfileAnalysisAssembler#toAnalysisProfile(CandidateProfileFacts)} is the explicit,
  * separate narrowing step for vacancy analysis specifically; this class performs no narrowing at
- * all - every currently-persisted fact (including skill {@link CandidateSkillFacts#category} and
- * language {@link CandidateLanguageFacts#proficiency}, both dropped by that narrowing step) survives
+ * all - every currently-persisted fact (including skill {@link CandidateSkillFacts#category},
+ * dropped by that narrowing step - language {@link CandidateLanguageFacts#proficiency} is no
+ * longer dropped there either, as of the acceptance correction that made it importable) survives
  * here.
  *
  * <p>Framework-free and stateless: no repository calls, no Spring dependencies. Reuses {@link
@@ -48,6 +49,7 @@ public final class CandidateProfileFactsAssembler {
                 toLanguageFacts(aggregate.languages()),
                 aggregate.experienceYears(),
                 toPreferences(aggregate),
+                aggregate.fullName(),
                 aggregate.email(),
                 aggregate.phone(),
                 aggregate.linkedinUrl(),

@@ -1,6 +1,7 @@
 package com.darya.jobassistant.candidates.config;
 
 import com.darya.jobassistant.candidates.CandidateEducationEntry;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
@@ -48,9 +49,10 @@ public class YamlCandidateProfileMigrationSource implements CandidateProfileMigr
                 properties.targetRole(),
                 properties.targetSeniority(),
                 toSkills(properties.skills()),
-                properties.languages(),
+                toLanguages(properties.languages()),
                 properties.experienceYears(),
                 toPreferences(properties.preferences()),
+                blankToNull(properties.fullName()),
                 blankToNull(properties.email()),
                 blankToNull(properties.phone()),
                 blankToNull(properties.linkedinUrl()),
@@ -71,6 +73,15 @@ public class YamlCandidateProfileMigrationSource implements CandidateProfileMigr
                             + "target seniority must both be set. Check CANDIDATE_PROFILE_PATH points at a "
                             + "valid candidate-profile.yml file.");
         }
+        for (CandidateProfileProperties.LanguageProperties language : properties.languages()) {
+            if (isBlank(language.language()) || isBlank(language.proficiency())) {
+                throw new CandidateProfileMigrationSourceException(
+                        "Candidate profile migration YAML source has an incomplete language entry - every "
+                                + "candidate.languages[] entry must set both language and proficiency. "
+                                + "candidates.aggregate.CandidateLanguage itself still allows a null proficiency for "
+                                + "other callers, but a private-YAML-authored entry must be complete.");
+            }
+        }
     }
 
     private boolean isBlank(String value) {
@@ -80,6 +91,13 @@ public class YamlCandidateProfileMigrationSource implements CandidateProfileMigr
     private List<CandidateSkill> toSkills(List<CandidateProfileProperties.SkillProperties> skills) {
         return skills.stream()
                 .map(skill -> new CandidateSkill(skill.name(), skill.proficiency(), skill.note()))
+                .toList();
+    }
+
+    /** {@code displayOrder} is not assigned here - {@code CandidateProfileYamlImportMapper#toLanguages} derives it from list position. */
+    private List<CandidateLanguageEntry> toLanguages(List<CandidateProfileProperties.LanguageProperties> languages) {
+        return languages.stream()
+                .map(entry -> new CandidateLanguageEntry(entry.language(), entry.proficiency()))
                 .toList();
     }
 

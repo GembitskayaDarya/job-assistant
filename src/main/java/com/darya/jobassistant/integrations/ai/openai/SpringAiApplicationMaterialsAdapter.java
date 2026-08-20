@@ -18,6 +18,7 @@ import com.darya.jobassistant.candidatecontext.applicationmaterials.model.Select
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.SelectedCareerProject;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.SelectedCareerResponsibility;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.SelectedCareerTechnology;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
@@ -211,7 +212,7 @@ public class SpringAiApplicationMaterialsAdapter implements ApplicationMaterials
         List<GeneratedCvExperience> experiences = safe(dto.experiences()).stream()
                 .map(this::toDomainExperience)
                 .toList();
-        return new GeneratedCv(dto.headline(), dto.professionalSummary(), skills, experiences, context.candidateProfile().languages());
+        return new GeneratedCv(dto.headline(), dto.professionalSummary(), skills, experiences, languageNames(context.candidateProfile().languages()));
     }
 
     private GeneratedCvExperience toDomainExperience(GeneratedCvExperienceResponseDto dto) {
@@ -277,7 +278,7 @@ public class SpringAiApplicationMaterialsAdapter implements ApplicationMaterials
                         orNotAvailable(profile.targetRole()),
                         orNotAvailable(profile.targetSeniority()),
                         profile.experienceYears(),
-                        formatList(profile.languages()),
+                        formatList(languageNames(profile.languages())),
                         formatSkills(profile.skills()),
                         formatPreferences(profile.preferences()));
     }
@@ -368,6 +369,11 @@ public class SpringAiApplicationMaterialsAdapter implements ApplicationMaterials
 
     private String formatList(List<String> values) {
         return values == null || values.isEmpty() ? NOT_AVAILABLE : String.join(", ", values);
+    }
+
+    /** The AI prompt only ever needed the language name - proficiency is CV-presentation data, never fed here. */
+    private List<String> languageNames(List<CandidateLanguageEntry> languages) {
+        return languages.stream().map(CandidateLanguageEntry::language).toList();
     }
 
     private String formatOptional(Object value) {

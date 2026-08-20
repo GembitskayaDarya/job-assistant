@@ -3,6 +3,7 @@ package com.darya.jobassistant.candidates.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
@@ -10,6 +11,7 @@ import com.darya.jobassistant.candidates.PreferenceImportance;
 import com.darya.jobassistant.candidates.SkillProficiency;
 import com.darya.jobassistant.candidates.migration.CandidateProfileMigrationSourceException;
 import java.util.List;
+import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.Test;
 
 class YamlCandidateProfileMigrationSourceTest {
@@ -23,7 +25,10 @@ class YamlCandidateProfileMigrationSourceTest {
                         new CandidateProfileProperties.SkillProperties("Java", SkillProficiency.WORKING, "Primary language"),
                         new CandidateProfileProperties.SkillProperties("Spring Boot", SkillProficiency.WORKING, null),
                         new CandidateProfileProperties.SkillProperties("Kafka", SkillProficiency.BASIC, null)),
-                List.of("English", "Russian", "Polish"),
+                List.of(
+                        new CandidateProfileProperties.LanguageProperties("English", "Fluent"),
+                        new CandidateProfileProperties.LanguageProperties("Russian", "Native"),
+                        new CandidateProfileProperties.LanguageProperties("Polish", "Conversational")),
                 6,
                 new CandidateProfileProperties.PreferencesProperties(
                         "Poland",
@@ -36,7 +41,7 @@ class YamlCandidateProfileMigrationSourceTest {
                         "Product",
                         PreferenceImportance.PREFERRED,
                         null),
-                null, null, null, null, null, List.of(), List.of());
+                "Jane Doe", null, null, null, null, null, List.of(), List.of());
 
         YamlCandidateProfileMigrationSource source = new YamlCandidateProfileMigrationSource(properties);
 
@@ -45,7 +50,12 @@ class YamlCandidateProfileMigrationSourceTest {
         assertThat(profile.targetRole()).isEqualTo("Senior Java Backend Developer");
         assertThat(profile.targetSeniority()).isEqualTo("Senior");
         assertThat(profile.experienceYears()).isEqualTo(6);
-        assertThat(profile.languages()).containsExactly("English", "Russian", "Polish");
+        assertThat(profile.fullName()).isEqualTo("Jane Doe");
+        assertThat(profile.languages()).extracting(CandidateLanguageEntry::language, CandidateLanguageEntry::proficiency)
+                .containsExactly(
+                        Tuple.tuple("English", "Fluent"),
+                        Tuple.tuple("Russian", "Native"),
+                        Tuple.tuple("Polish", "Conversational"));
 
         // Skill order is preserved exactly as configured.
         assertThat(profile.skills()).containsExactly(
@@ -72,11 +82,11 @@ class YamlCandidateProfileMigrationSourceTest {
                 "Senior Java Backend Developer",
                 "Senior",
                 List.of(),
-                List.of("English"),
+                List.of(new CandidateProfileProperties.LanguageProperties("English", "Fluent")),
                 6,
                 new CandidateProfileProperties.PreferencesProperties(
                         "   ", "  ", null, List.of(), false, List.of(), null, "   ", null, "  "),
-                null, null, null, null, null, List.of(), List.of());
+                null, null, null, null, null, null, List.of(), List.of());
 
         CandidateProfile profile = new YamlCandidateProfileMigrationSource(properties).loadSourceProfile();
 
@@ -90,8 +100,9 @@ class YamlCandidateProfileMigrationSourceTest {
     @Test
     void loadSourceProfile_missingPreferences_defaultsToEmptyUnconfiguredPreferences() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
-                "Senior Java Backend Developer", "Senior", List.of(), List.of("English"), 6, null,
-                null, null, null, null, null, List.of(), List.of());
+                "Senior Java Backend Developer", "Senior", List.of(),
+                List.of(new CandidateProfileProperties.LanguageProperties("English", "Fluent")), 6, null,
+                null, null, null, null, null, null, List.of(), List.of());
 
         CandidateProfile profile = new YamlCandidateProfileMigrationSource(properties).loadSourceProfile();
 
@@ -106,19 +117,20 @@ class YamlCandidateProfileMigrationSourceTest {
                 "Senior Java Backend Developer",
                 "Senior",
                 List.of(new CandidateProfileProperties.SkillProperties("Java", SkillProficiency.WORKING, null)),
-                List.of("English"),
+                List.of(new CandidateProfileProperties.LanguageProperties("English", "Fluent")),
                 6,
                 new CandidateProfileProperties.PreferencesProperties(
                         "Poland", "Remote", PreferenceImportance.STRONG, List.of("Poland"), false,
                         List.of("B2B"), PreferenceImportance.PREFERRED, "Product", PreferenceImportance.PREFERRED, null),
-                null, null, null, null, null, List.of(), List.of());
+                null, null, null, null, null, null, List.of(), List.of());
         YamlCandidateProfileMigrationSource source = new YamlCandidateProfileMigrationSource(properties);
 
         CandidateProfile profile = source.loadSourceProfile();
 
         assertThatThrownBy(() -> profile.skills().add(new CandidateSkill("Kotlin", SkillProficiency.BASIC, null)))
                 .isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> profile.languages().add("German")).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> profile.languages().add(new CandidateLanguageEntry("German", "Fluent")))
+                .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> profile.preferences().allowedWorkCountries().add("Germany"))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> profile.preferences().preferredContractTypes().add("UoP"))
@@ -128,8 +140,8 @@ class YamlCandidateProfileMigrationSourceTest {
     @Test
     void loadSourceProfile_missingTargetRole_throwsMigrationSourceException() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
-                null, "Senior", List.of(), List.of("English"), 6, null,
-                null, null, null, null, null, List.of(), List.of());
+                null, "Senior", List.of(), List.of(new CandidateProfileProperties.LanguageProperties("English", "Fluent")), 6, null,
+                null, null, null, null, null, null, List.of(), List.of());
 
         assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
                 .isInstanceOf(CandidateProfileMigrationSourceException.class);
@@ -138,8 +150,9 @@ class YamlCandidateProfileMigrationSourceTest {
     @Test
     void loadSourceProfile_blankTargetSeniority_throwsMigrationSourceException() {
         CandidateProfileProperties properties = new CandidateProfileProperties(
-                "Senior Java Backend Developer", "   ", List.of(), List.of("English"), 6, null,
-                null, null, null, null, null, List.of(), List.of());
+                "Senior Java Backend Developer", "   ", List.of(),
+                List.of(new CandidateProfileProperties.LanguageProperties("English", "Fluent")), 6, null,
+                null, null, null, null, null, null, List.of(), List.of());
 
         assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
                 .isInstanceOf(CandidateProfileMigrationSourceException.class);
@@ -151,7 +164,30 @@ class YamlCandidateProfileMigrationSourceTest {
         // every field left at its default/null.
         CandidateProfileProperties properties = new CandidateProfileProperties(
                 null, null, null, null, 0, null,
-                null, null, null, null, null, List.of(), List.of());
+                null, null, null, null, null, null, List.of(), List.of());
+
+        assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
+                .isInstanceOf(CandidateProfileMigrationSourceException.class);
+    }
+
+    /** Acceptance correction: a structured language entry with a blank proficiency must fail loudly, not silently import as null. */
+    @Test
+    void loadSourceProfile_languageWithBlankProficiency_throwsMigrationSourceException() {
+        CandidateProfileProperties properties = new CandidateProfileProperties(
+                "Senior Java Backend Developer", "Senior", List.of(),
+                List.of(new CandidateProfileProperties.LanguageProperties("English", "  ")), 6, null,
+                null, null, null, null, null, null, List.of(), List.of());
+
+        assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
+                .isInstanceOf(CandidateProfileMigrationSourceException.class);
+    }
+
+    @Test
+    void loadSourceProfile_languageWithBlankName_throwsMigrationSourceException() {
+        CandidateProfileProperties properties = new CandidateProfileProperties(
+                "Senior Java Backend Developer", "Senior", List.of(),
+                List.of(new CandidateProfileProperties.LanguageProperties("  ", "Fluent")), 6, null,
+                null, null, null, null, null, null, List.of(), List.of());
 
         assertThatThrownBy(() -> new YamlCandidateProfileMigrationSource(properties).loadSourceProfile())
                 .isInstanceOf(CandidateProfileMigrationSourceException.class);

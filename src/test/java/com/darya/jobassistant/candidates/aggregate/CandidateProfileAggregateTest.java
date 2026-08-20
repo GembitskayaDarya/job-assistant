@@ -277,16 +277,53 @@ class CandidateProfileAggregateTest {
         assertThat(profile.education()).containsExactly(education);
     }
 
+    /** Acceptance correction. */
+    @Test
+    void constructor_fullName_isPopulated() {
+        CandidateProfileAggregate profile = new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                "Jane Doe", null, null, null, null, null,
+                skills, languages, preferences, List.of(), 0L);
+
+        assertThat(profile.fullName()).isEqualTo("Jane Doe");
+    }
+
+    @Test
+    void constructor_blankFullName_becomesNull() {
+        CandidateProfileAggregate profile = new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                "   ", null, null, null, null, null,
+                skills, languages, preferences, List.of(), 0L);
+
+        assertThat(profile.fullName()).isNull();
+    }
+
     @Test
     void constructor_oldEighteenArgOverload_defaultsHeaderFieldsAndEducation() {
         CandidateProfileAggregate profile = profileWith(skills, languages, preferences);
 
+        assertThat(profile.fullName()).isNull();
         assertThat(profile.email()).isNull();
         assertThat(profile.phone()).isNull();
         assertThat(profile.linkedinUrl()).isNull();
         assertThat(profile.cvLocation()).isNull();
         assertThat(profile.cvHeadline()).isNull();
         assertThat(profile.education()).isEmpty();
+    }
+
+    @Test
+    void constructor_oldTwentyFourArgOverload_defaultsFullNameOnly() {
+        CandidateProfileAggregate profile = new CandidateProfileAggregate(
+                null, "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, null, null, false, null,
+                "person@example.com", "+48123456789", "https://www.linkedin.com/in/example", "Warsaw, Poland",
+                "Senior Java Backend Engineer",
+                skills, languages, preferences, List.of(), 0L);
+
+        assertThat(profile.fullName()).isNull();
+        assertThat(profile.email()).isEqualTo("person@example.com");
     }
 
     @Test

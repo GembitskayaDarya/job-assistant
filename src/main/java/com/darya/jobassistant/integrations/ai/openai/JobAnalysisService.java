@@ -10,6 +10,7 @@ import com.darya.jobassistant.candidatecontext.analysis.SelectedCareerPosition;
 import com.darya.jobassistant.candidatecontext.analysis.SelectedCareerProject;
 import com.darya.jobassistant.candidatecontext.analysis.SelectedCareerResponsibility;
 import com.darya.jobassistant.candidatecontext.analysis.SelectedCareerTechnology;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
@@ -261,7 +262,7 @@ public class JobAnalysisService {
                         orNotAvailable(profile.targetRole()),
                         orNotAvailable(profile.targetSeniority()),
                         profile.experienceYears(),
-                        formatList(profile.languages()),
+                        formatList(languageNames(profile.languages())),
                         formatSkills(profile.skills()),
                         formatPreferences(profile.preferences()));
     }
@@ -373,6 +374,11 @@ public class JobAnalysisService {
 
     private String formatList(List<String> values) {
         return values == null || values.isEmpty() ? NOT_CONFIGURED : String.join(", ", values);
+    }
+
+    /** The AI matching prompt only ever needed the language name - proficiency is CV-presentation data, never fed here. */
+    private List<String> languageNames(List<CandidateLanguageEntry> languages) {
+        return languages.stream().map(CandidateLanguageEntry::language).toList();
     }
 
     private String formatOptional(Object value) {

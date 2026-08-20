@@ -65,12 +65,14 @@ import java.util.regex.Pattern;
  *
  * <h2>CV header/contact facts (Sprint 11 Step 5)</h2>
  *
- * {@link #email}, {@link #phone}, {@link #linkedinUrl}, {@link #cvLocation}, and {@link
- * #cvHeadline} are fixed factual CV-presentation data - never AI-generated. {@link #cvHeadline}
- * is deliberately a separate fact from {@link #targetRole}: {@link #targetRole} is an operational
- * job-search/vacancy-matching input (fed into the AI analysis prompt and into outbound job-search
- * queries), while {@link #cvHeadline} is the fixed title printed on the CV document - the two
- * must be free to diverge and are not kept in sync.
+ * {@link #fullName}, {@link #email}, {@link #phone}, {@link #linkedinUrl}, {@link #cvLocation},
+ * and {@link #cvHeadline} are fixed factual CV-presentation data - never AI-generated. {@link
+ * #cvHeadline} is deliberately a separate fact from {@link #targetRole}: {@link #targetRole} is
+ * an operational job-search/vacancy-matching input (fed into the AI analysis prompt and into
+ * outbound job-search queries), while {@link #cvHeadline} is the fixed title printed on the CV
+ * document - the two must be free to diverge and are not kept in sync. {@link #fullName}
+ * (acceptance correction) joins the header facts the same way, matching V30's {@code full_name}
+ * column.
  */
 public record CandidateProfileAggregate(
         UUID id,
@@ -87,6 +89,7 @@ public record CandidateProfileAggregate(
         String currentCountry,
         boolean relocationAllowed,
         String salaryExpectationNote,
+        String fullName,
         String email,
         String phone,
         String linkedinUrl,
@@ -123,6 +126,7 @@ public record CandidateProfileAggregate(
         if (version < 0) {
             throw new IllegalArgumentException("Candidate profile version must not be negative");
         }
+        fullName = trimToNull(fullName);
         email = trimToNull(email);
         if (email != null && !EMAIL_FORMAT.matcher(email).matches()) {
             throw new IllegalArgumentException("Candidate profile email is not a valid email address: " + email);
@@ -168,7 +172,26 @@ public record CandidateProfileAggregate(
             List<CandidateProfilePreference> preferences, long version) {
         this(id, profileKey, targetRole, seniority, experienceYears, preferredCompanyType, preferredLocation,
                 employmentModel, remotePolicy, salaryCurrency, minimumSalary, currentCountry, relocationAllowed,
-                salaryExpectationNote, null, null, null, null, null, skills, languages, preferences, List.of(), version);
+                salaryExpectationNote, null, null, null, null, null, null, skills, languages, preferences, List.of(), version);
+    }
+
+    /**
+     * Convenience constructor matching this aggregate's shape from the first Sprint 11 Step 5
+     * round (email/phone/linkedinUrl/cvLocation/cvHeadline, no {@link #fullName}) - defaults
+     * {@link #fullName} to {@code null}, so every call site built before that fact existed keeps
+     * compiling unchanged.
+     */
+    public CandidateProfileAggregate(
+            UUID id, String profileKey, String targetRole, String seniority, int experienceYears,
+            String preferredCompanyType, String preferredLocation, String employmentModel, String remotePolicy,
+            String salaryCurrency, BigDecimal minimumSalary, String currentCountry, boolean relocationAllowed,
+            String salaryExpectationNote, String email, String phone, String linkedinUrl, String cvLocation,
+            String cvHeadline, List<CandidateSkill> skills, List<CandidateLanguage> languages,
+            List<CandidateProfilePreference> preferences, List<CandidateEducation> education, long version) {
+        this(id, profileKey, targetRole, seniority, experienceYears, preferredCompanyType, preferredLocation,
+                employmentModel, remotePolicy, salaryCurrency, minimumSalary, currentCountry, relocationAllowed,
+                salaryExpectationNote, null, email, phone, linkedinUrl, cvLocation, cvHeadline,
+                skills, languages, preferences, education, version);
     }
 
     private static String trimToNull(String value) {

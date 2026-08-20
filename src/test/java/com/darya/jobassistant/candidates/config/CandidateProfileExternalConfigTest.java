@@ -74,7 +74,8 @@ class CandidateProfileExternalConfigTest {
                   target-seniority: Mid
                   experience-years: 3
                   languages:
-                    - English
+                    - language: English
+                      proficiency: Fluent
                   skills:
                     - name: Kotlin
                       proficiency: WORKING

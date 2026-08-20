@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.candidates.CandidateEducationEntry;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
@@ -26,7 +27,7 @@ class CandidateProfileYamlImportMapperTest {
             "Senior Java Backend Engineer", "Senior",
             List.of(new CandidateSkill("Java", SkillProficiency.EXPERT, "10+ years commercial use"),
                     new CandidateSkill("Kafka", SkillProficiency.WORKING, null)),
-            List.of("English", "Polish"),
+            List.of(new CandidateLanguageEntry("English", "Fluent"), new CandidateLanguageEntry("Polish", "Conversational")),
             6, preferences);
 
     @Test
@@ -67,10 +68,21 @@ class CandidateProfileYamlImportMapperTest {
         assertThat(aggregate.languages()).extracting(l -> l.languageCode()).containsExactlyInAnyOrder("en", "pl");
     }
 
+    /** Acceptance correction: the previous plain {@code List<String>} shape had no field for this, so proficiency was always imported as null. */
+    @Test
+    void toAggregate_languageProficiencyIsCarriedThroughUnchanged() {
+        CandidateProfileAggregate aggregate = CandidateProfileYamlImportMapper.toAggregate(source, "primary");
+
+        var english = aggregate.languages().stream().filter(l -> l.languageCode().equals("en")).findFirst().orElseThrow();
+        var polish = aggregate.languages().stream().filter(l -> l.languageCode().equals("pl")).findFirst().orElseThrow();
+        assertThat(english.proficiency()).isEqualTo("Fluent");
+        assertThat(polish.proficiency()).isEqualTo("Conversational");
+    }
+
     @Test
     void toAggregate_unrecognizedLanguageName_failsValidation_ratherThanBeingDiscarded() {
         CandidateProfile withUnknownLanguage = new CandidateProfile(
-                "Backend Engineer", "Senior", List.of(), List.of("Klingon"), 6, preferences);
+                "Backend Engineer", "Senior", List.of(), List.of(new CandidateLanguageEntry("Klingon", "Fluent")), 6, preferences);
 
         assertThatThrownBy(() -> CandidateProfileYamlImportMapper.toAggregate(withUnknownLanguage, "primary"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -157,11 +169,12 @@ class CandidateProfileYamlImportMapperTest {
     void toAggregate_headerFields_areMappedUnchanged() {
         CandidateProfile withHeader = new CandidateProfile(
                 "Senior Java Backend Engineer", "Senior", List.of(), List.of(), 6, preferences,
-                "person@example.com", "+48123456789", "https://www.linkedin.com/in/example", "Warsaw, Poland",
+                "Jane Doe", "person@example.com", "+48123456789", "https://www.linkedin.com/in/example", "Warsaw, Poland",
                 "Senior Java Backend Engineer", List.of());
 
         CandidateProfileAggregate aggregate = CandidateProfileYamlImportMapper.toAggregate(withHeader, "primary");
 
+        assertThat(aggregate.fullName()).isEqualTo("Jane Doe");
         assertThat(aggregate.email()).isEqualTo("person@example.com");
         assertThat(aggregate.phone()).isEqualTo("+48123456789");
         assertThat(aggregate.linkedinUrl()).isEqualTo("https://www.linkedin.com/in/example");
@@ -173,7 +186,7 @@ class CandidateProfileYamlImportMapperTest {
     void toAggregate_education_displayOrderMatchesSourceListPosition() {
         CandidateProfile withEducation = new CandidateProfile(
                 "Backend Engineer", "Senior", List.of(), List.of(), 6, preferences,
-                null, null, null, null, null,
+                null, null, null, null, null, null,
                 List.of(
                         new CandidateEducationEntry("University B", null, null, null, null, null, null),
                         new CandidateEducationEntry("University A", null, null, null, null, null, null)));
@@ -189,7 +202,7 @@ class CandidateProfileYamlImportMapperTest {
     void toAggregate_education_onlyInstitutionIsRequired() {
         CandidateProfile withMinimalEducation = new CandidateProfile(
                 "Backend Engineer", "Senior", List.of(), List.of(), 6, preferences,
-                null, null, null, null, null,
+                null, null, null, null, null, null,
                 List.of(new CandidateEducationEntry("Example University", null, null, null, null, null, null)));
 
         CandidateProfileAggregate aggregate = CandidateProfileYamlImportMapper.toAggregate(withMinimalEducation, "primary");

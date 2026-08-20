@@ -77,6 +77,9 @@ public class CandidateProfileEntity extends BaseEntity {
     private String salaryExpectationNote;
 
     /** Sprint 11 Step 5: CV header/contact facts - see {@link CandidateProfileEntity}'s javadoc. */
+    @Column(name = "full_name", length = 255)
+    private String fullName;
+
     @Column(length = 255)
     private String email;
 

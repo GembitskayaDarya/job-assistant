@@ -711,6 +711,43 @@ class CandidateProfileRepositoryAdapterTest {
         assertThat(saved.education().get(0).id()).isNotNull();
     }
 
+    /** Acceptance correction. */
+    @Test
+    void save_newProfileWithFullName_persistsAndReloadsIt() {
+        CandidateProfileAggregate toSave = new CandidateProfileAggregate(
+                null, "full-name-" + UUID.randomUUID(), "Senior Java Backend Engineer", "Senior", 6,
+                null, "Europe", null, null, "EUR", new BigDecimal("8000.00"), null, false, null,
+                "Jane Doe", null, null, null, null, null,
+                List.of(), List.of(), List.of(), List.of(), 0L);
+
+        CandidateProfileAggregate saved = adapter().save(toSave);
+
+        assertThat(saved.fullName()).isEqualTo("Jane Doe");
+
+        CandidateProfileAggregate reloaded = adapter().findByProfileKey(toSave.profileKey()).orElseThrow();
+        assertThat(reloaded.fullName()).isEqualTo("Jane Doe");
+    }
+
+    @Test
+    void save_updatingFullNameOnly_persistsTheChange() {
+        CandidateProfileAggregate initial = adapter().save(new CandidateProfileAggregate(
+                null, "full-name-update-" + UUID.randomUUID(), "Senior Java Backend Engineer", "Senior", 6,
+                null, "Europe", null, null, "EUR", new BigDecimal("8000.00"), null, false, null,
+                "Jane Doe", null, null, null, null, null,
+                List.of(), List.of(), List.of(), List.of(), 0L));
+
+        CandidateProfileAggregate updated = adapter().save(new CandidateProfileAggregate(
+                initial.id(), initial.profileKey(), initial.targetRole(), initial.seniority(), initial.experienceYears(),
+                initial.preferredCompanyType(), initial.preferredLocation(), initial.employmentModel(), initial.remotePolicy(),
+                initial.salaryCurrency(), initial.minimumSalary(), initial.currentCountry(), initial.relocationAllowed(),
+                initial.salaryExpectationNote(), "Jane Smith", initial.email(), initial.phone(), initial.linkedinUrl(),
+                initial.cvLocation(), initial.cvHeadline(), initial.skills(), initial.languages(), initial.preferences(),
+                initial.education(), initial.version()));
+
+        assertThat(updated.fullName()).isEqualTo("Jane Smith");
+        assertThat(updated.version()).isEqualTo(initial.version() + 1);
+    }
+
     @Test
     void save_replacingEducation_fullyReplacesThePreviousSet() {
         CandidateEducation original = new CandidateEducation("University A", null, null, null, null, null, null, 0);

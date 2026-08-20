@@ -17,15 +17,17 @@ class CandidateProfileTest {
             new CandidateSkill("Java", SkillProficiency.STRONG, null),
             new CandidateSkill("Spring Boot", SkillProficiency.WORKING, null));
 
+    private final List<CandidateLanguageEntry> languages = List.of(new CandidateLanguageEntry("English", "Fluent"));
+
     @Test
     void constructor_validRichProfile_isCreated() {
         CandidateProfile profile = new CandidateProfile(
-                "Senior Java Backend Engineer", "Senior", skills, List.of("English"), 6, preferences);
+                "Senior Java Backend Engineer", "Senior", skills, languages, 6, preferences);
 
         assertThat(profile.targetRole()).isEqualTo("Senior Java Backend Engineer");
         assertThat(profile.targetSeniority()).isEqualTo("Senior");
         assertThat(profile.skills()).containsExactlyElementsOf(skills);
-        assertThat(profile.languages()).containsExactly("English");
+        assertThat(profile.languages()).containsExactly(new CandidateLanguageEntry("English", "Fluent"));
         assertThat(profile.experienceYears()).isEqualTo(6);
         assertThat(profile.preferences()).isSameAs(preferences);
     }
@@ -41,26 +43,27 @@ class CandidateProfileTest {
     @Test
     void constructor_mutatingSourceLists_doesNotAffectStoredState() {
         List<CandidateSkill> mutableSkills = new ArrayList<>(skills);
-        List<String> mutableLanguages = new ArrayList<>(List.of("English"));
+        List<CandidateLanguageEntry> mutableLanguages = new ArrayList<>(languages);
 
         CandidateProfile profile = new CandidateProfile(
                 "Senior Java Backend Engineer", "Senior", mutableSkills, mutableLanguages, 6, preferences);
 
         mutableSkills.add(new CandidateSkill("Kafka", SkillProficiency.BASIC, null));
-        mutableLanguages.add("Polish");
+        mutableLanguages.add(new CandidateLanguageEntry("Polish", "Conversational"));
 
         assertThat(profile.skills()).hasSize(2);
-        assertThat(profile.languages()).containsExactly("English");
+        assertThat(profile.languages()).containsExactly(new CandidateLanguageEntry("English", "Fluent"));
     }
 
     @Test
     void accessors_skillsAndLanguages_areUnmodifiable() {
         CandidateProfile profile = new CandidateProfile(
-                "Senior Java Backend Engineer", "Senior", skills, List.of("English"), 6, preferences);
+                "Senior Java Backend Engineer", "Senior", skills, languages, 6, preferences);
 
         assertThatThrownBy(() -> profile.skills().add(new CandidateSkill("Kafka", SkillProficiency.BASIC, null)))
                 .isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> profile.languages().add("Polish")).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> profile.languages().add(new CandidateLanguageEntry("Polish", "Conversational")))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

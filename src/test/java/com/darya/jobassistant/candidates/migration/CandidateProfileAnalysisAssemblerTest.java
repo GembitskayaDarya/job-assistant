@@ -3,6 +3,7 @@ package com.darya.jobassistant.candidates.migration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
@@ -57,7 +58,8 @@ class CandidateProfileAnalysisAssemblerTest {
     void toAnalysisProfile_languagesReconstructedAsDisplayNames() {
         CandidateProfile analysisProfile = CandidateProfileAnalysisAssembler.toAnalysisProfile(aggregate);
 
-        assertThat(analysisProfile.languages()).containsExactlyInAnyOrder("English", "Polish");
+        assertThat(analysisProfile.languages()).extracting(CandidateLanguageEntry::language)
+                .containsExactlyInAnyOrder("English", "Polish");
     }
 
     @Test
@@ -125,8 +127,13 @@ class CandidateProfileAnalysisAssemblerTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /**
+     * Acceptance correction: skill category is still dropped (unchanged narrowing), but language
+     * proficiency is no longer dropped - see this class's javadoc for why the migration parity
+     * check now requires that.
+     */
     @Test
-    void toAnalysisProfile_fromFacts_dropsSkillCategoryAndLanguageProficiency() {
+    void toAnalysisProfile_fromFacts_dropsSkillCategoryButPreservesLanguageProficiency() {
         CandidateProfileFacts facts = new CandidateProfileFacts(
                 "Senior Java Backend Engineer", "Senior",
                 List.of(new CandidateSkillFacts("Java", "Language", "10+ years", SkillProficiency.EXPERT)),
@@ -138,7 +145,7 @@ class CandidateProfileAnalysisAssemblerTest {
         assertThat(analysisProfile.skills().get(0).name()).isEqualTo("Java");
         assertThat(analysisProfile.skills().get(0).proficiency()).isEqualTo(SkillProficiency.EXPERT);
         assertThat(analysisProfile.skills().get(0).note()).isEqualTo("10+ years");
-        assertThat(analysisProfile.languages()).containsExactly("English");
+        assertThat(analysisProfile.languages()).containsExactly(new CandidateLanguageEntry("English", "native"));
     }
 
     @Test
@@ -158,7 +165,8 @@ class CandidateProfileAnalysisAssemblerTest {
         CandidateProfile original = new CandidateProfile(
                 "Senior Java Backend Engineer", "Senior",
                 List.of(new com.darya.jobassistant.candidates.CandidateSkill("Java", SkillProficiency.EXPERT, null)),
-                List.of("English", "Polish"), 6, preferences);
+                List.of(new CandidateLanguageEntry("English", "Fluent"), new CandidateLanguageEntry("Polish", "Conversational")),
+                6, preferences);
 
         CandidateProfileAggregate mapped = CandidateProfileYamlImportMapper.toAggregate(original, "primary");
         CandidateProfile reassembled = CandidateProfileAnalysisAssembler.toAnalysisProfile(mapped);

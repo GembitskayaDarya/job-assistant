@@ -42,6 +42,7 @@ final class CandidateProfilePersistenceMapper {
                 entity.getCurrentCountry(),
                 entity.isRelocationAllowed(),
                 entity.getSalaryExpectationNote(),
+                entity.getFullName(),
                 entity.getEmail(),
                 entity.getPhone(),
                 entity.getLinkedinUrl(),
@@ -94,6 +95,7 @@ final class CandidateProfilePersistenceMapper {
         entity.setCurrentCountry(profile.currentCountry());
         entity.setRelocationAllowed(profile.relocationAllowed());
         entity.setSalaryExpectationNote(profile.salaryExpectationNote());
+        entity.setFullName(profile.fullName());
         entity.setEmail(profile.email());
         entity.setPhone(profile.phone());
         entity.setLinkedinUrl(profile.linkedinUrl());

@@ -1,5 +1,6 @@
 package com.darya.jobassistant.candidates.migration;
 
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileFacts;
@@ -10,9 +11,16 @@ import java.util.List;
 /**
  * Assembles the complete {@link CandidateProfileFacts} into the bounded, YAML-shaped,
  * analysis-ready {@link CandidateProfile} - the intentionally lossy narrowing step for vacancy
- * analysis specifically (drops {@link CandidateSkillFacts#category} and every language's {@link
- * CandidateLanguageFacts#proficiency}). See {@link CandidateProfileYamlImportMapper} for the
- * opposite (migration) direction; the two are deliberately separate classes.
+ * analysis specifically (drops {@link CandidateSkillFacts#category}). See {@link
+ * CandidateProfileYamlImportMapper} for the opposite (migration) direction; the two are
+ * deliberately separate classes.
+ *
+ * <p>Acceptance correction: language {@link CandidateLanguageFacts#proficiency} is <em>not</em>
+ * dropped (as it once was) - {@link CandidateProfile#languages()} can now carry it ({@link
+ * CandidateLanguageEntry}), and the migration parity check ({@code
+ * CandidateProfileMigrationUseCase#verifyParity}) round-trips a real, imported proficiency value
+ * through exactly this class - dropping it here would make every import with real language
+ * proficiency data fail parity.
  *
  * <p>Sprint 11 Step 1 correction: {@link #toAnalysisProfile(CandidateProfileAggregate)} - kept for
  * {@code PersistentCandidateProfileProvider}/{@code CandidateProfileParityVerifier}, which still
@@ -49,7 +57,7 @@ public final class CandidateProfileAnalysisAssembler {
                 facts.targetRole(),
                 facts.targetSeniority(),
                 toSkills(facts.skills()),
-                toLanguageNames(facts.languages()),
+                toLanguages(facts.languages()),
                 facts.experienceYears(),
                 facts.preferences());
     }
@@ -60,7 +68,9 @@ public final class CandidateProfileAnalysisAssembler {
                 .toList();
     }
 
-    private static List<String> toLanguageNames(List<CandidateLanguageFacts> languages) {
-        return languages.stream().map(CandidateLanguageFacts::name).toList();
+    private static List<CandidateLanguageEntry> toLanguages(List<CandidateLanguageFacts> languages) {
+        return languages.stream()
+                .map(language -> new CandidateLanguageEntry(language.name(), language.proficiency()))
+                .toList();
     }
 }

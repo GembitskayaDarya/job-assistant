@@ -108,6 +108,7 @@ public class CandidateProfileRepositoryAdapter implements CandidateProfileReposi
                 profile.currentCountry(),
                 profile.relocationAllowed(),
                 profile.salaryExpectationNote(),
+                profile.fullName(),
                 profile.email(),
                 profile.phone(),
                 profile.linkedinUrl(),

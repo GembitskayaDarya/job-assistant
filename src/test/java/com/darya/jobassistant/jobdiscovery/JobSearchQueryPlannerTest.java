@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.candidates.CandidatePreferences;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
 import com.darya.jobassistant.candidates.PreferenceImportance;
@@ -119,7 +120,7 @@ class JobSearchQueryPlannerTest {
                 "Java Backend Developer", "Senior",
                 List.of(new CandidateSkill("Java", SkillProficiency.STRONG, null),
                         new CandidateSkill("Docker", SkillProficiency.BASIC, null)),
-                List.of("English"), 6,
+                List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -137,7 +138,7 @@ class JobSearchQueryPlannerTest {
         CandidateProfile profile = new CandidateProfile(
                 "Java Backend Developer", "Senior",
                 List.of(new CandidateSkill("Docker", SkillProficiency.BASIC, null)),
-                List.of("English"), 6,
+                List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -157,7 +158,7 @@ class JobSearchQueryPlannerTest {
                 List.of(new CandidateSkill("Java", SkillProficiency.EXPERT, null),
                         new CandidateSkill("java", SkillProficiency.STRONG, null),
                         new CandidateSkill("Kafka", SkillProficiency.STRONG, null)),
-                List.of("English"), 6,
+                List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -187,7 +188,7 @@ class JobSearchQueryPlannerTest {
         // each variant's own composed text, not against targetRole.
         CandidateProfile profile = new CandidateProfile(
                 "Java Developer", "Backend",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -201,7 +202,7 @@ class JobSearchQueryPlannerTest {
     void primaryQuery_doesNotDuplicateRemote_whenTargetRoleAlreadyContainsIt() {
         CandidateProfile profile = new CandidateProfile(
                 "Remote Java Backend Developer", "Senior",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, "Remote", List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -217,7 +218,7 @@ class JobSearchQueryPlannerTest {
         // collapses to exactly the primary query and is dropped by whole-query dedup.
         CandidateProfile profile = new CandidateProfile(
                 "Backend Engineer", "Backend",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -253,7 +254,7 @@ class JobSearchQueryPlannerTest {
         CandidateProfile profile = new CandidateProfile(
                 "Java Backend Developer", "Senior",
                 List.of(new CandidateSkill("Java", SkillProficiency.STRONG, null)),
-                List.of("English"), 6,
+                List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -266,7 +267,7 @@ class JobSearchQueryPlannerTest {
     void missingSkills_stillAllowsRoleBasedQuery() {
         CandidateProfile profile = new CandidateProfile(
                 "Java Backend Developer", "Senior",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -280,7 +281,7 @@ class JobSearchQueryPlannerTest {
     void queries_normalizedForWhitespace() {
         CandidateProfile profile = new CandidateProfile(
                 "  Senior  Java   Backend Developer  ", "Senior",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -295,7 +296,7 @@ class JobSearchQueryPlannerTest {
         // normalization must only fix whitespace, never delete a repeated word from real input.
         CandidateProfile profile = new CandidateProfile(
                 "Java  Java   Developer", "Senior",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -308,7 +309,7 @@ class JobSearchQueryPlannerTest {
     void duplicateQueries_removedCaseInsensitively_preservingFirstOccurrenceAndOrder() {
         CandidateProfile profile = new CandidateProfile(
                 "Backend Engineer", "Backend",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(DEFAULT_PROPERTIES);
 
@@ -322,7 +323,7 @@ class JobSearchQueryPlannerTest {
         JobSearchQueryPlanningProperties properties = new JobSearchQueryPlanningProperties(2, 10, 3);
         CandidateProfile profile = new CandidateProfile(
                 "Backend Engineer", "Backend",
-                List.of(), List.of("English"), 6,
+                List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 preferences(null, null, List.of(), List.of()));
         JobSearchQueryPlanner planner = new JobSearchQueryPlanner(properties);
 
@@ -378,7 +379,7 @@ class JobSearchQueryPlannerTest {
                         new CandidateSkill("Docker", SkillProficiency.BASIC, null),
                         new CandidateSkill("PostgreSQL", SkillProficiency.EXPERT, null),
                         new CandidateSkill("Kafka", SkillProficiency.STRONG, null)),
-                List.of("English", "Polish"),
+                List.of(new CandidateLanguageEntry("English", "Fluent"), new CandidateLanguageEntry("Polish", "Conversational")),
                 6,
                 preferences(null, "Remote", List.of("Poland"), List.of("B2B")));
     }

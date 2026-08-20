@@ -8,11 +8,11 @@
 # Most of `candidate:` feeds the AI vacancy-analysis prompt (JobAnalysisService): target
 # role/seniority/experience, skills with proficiency, languages, and work preferences.
 #
-# The `email`/`phone`/`linkedin-url`/`cv-location`/`cv-headline`/`education`/`personal-projects`
-# fields below (Sprint 11 Step 5) are the exception: fixed, factual CV-presentation data that
-# JobAnalysisService never reads and AI never generates or rewrites. `cv-headline` is deliberately
-# separate from `target-role` above - target-role drives job search/matching, cv-headline is the
-# fixed title printed on the CV document itself.
+# The `full-name`/`email`/`phone`/`linkedin-url`/`cv-location`/`cv-headline`/`education`/
+# `personal-projects` fields below (Sprint 11 Step 5) are the exception: fixed, factual
+# CV-presentation data that JobAnalysisService never reads and AI never generates or rewrites.
+# `cv-headline` is deliberately separate from `target-role` above - target-role drives job
+# search/matching, cv-headline is the fixed title printed on the CV document itself.
 candidate:
   # Role and seniority you're targeting - used to judge fit against a vacancy's stated role.
   target-role: Senior Java Backend Developer
@@ -22,8 +22,12 @@ candidate:
   # (if any) - a small gap has a small effect on the AI match score, not an automatic zero.
   experience-years: 5
 
+  # Acceptance correction: structured entries - both `language` and `proficiency` are required.
+  # List position determines CV presentation order (first entry = displayOrder 0, etc.) - there is
+  # no separate order field to keep in sync.
   languages:
-    - English
+    - language: English
+      proficiency: Fluent
 
   # A skill absent from this list is treated as unknown, negligible, or intentionally excluded -
   # don't add an entry just to say "no". Supported proficiency values, most to least confident:
@@ -70,6 +74,7 @@ candidate:
   # --- Fixed factual CV-presentation data (Sprint 11 Step 5) - never read for AI matching, never AI-generated ---
 
   # All optional; leave any of these blank if you don't want them on the CV yet.
+  full-name:
   email:
   phone:
   linkedin-url:

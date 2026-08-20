@@ -223,7 +223,7 @@ class PersonalProjectRepositoryAdapterTest {
         int updatedRows = candidateProfileRepository.updateIfVersionMatches(
                 candidateProfileId, candidateProfile.getProfileKey(), "Updated Role", "Senior", 6,
                 null, null, null, null, null, null, null, false, null,
-                null, null, null, null, null, java.time.Instant.now(), candidateProfile.getVersion());
+                null, null, null, null, null, null, java.time.Instant.now(), candidateProfile.getVersion());
         assertThat(updatedRows).isEqualTo(1);
         entityManager.flush();
         entityManager.clear();

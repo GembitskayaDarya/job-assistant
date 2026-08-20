@@ -39,6 +39,37 @@ public final class CandidateProfileSemanticComparator {
 
     public static CandidateProfileDiff diff(CandidateProfileAggregate a, CandidateProfileAggregate b) {
         List<String> changed = new ArrayList<>();
+        addAnalysisScopedDifferences(changed, a, b);
+        addHeaderAndEducationDifferences(changed, a, b);
+        return new CandidateProfileDiff(changed.isEmpty(), changed);
+    }
+
+    /**
+     * Acceptance correction: {@link CandidateProfileParityVerifier} round-trips {@code reloaded}
+     * through {@link CandidateProfileAnalysisAssembler#toAnalysisProfile} - which intentionally
+     * drops {@link CandidateProfileAggregate#fullName()}/email/phone/linkedinUrl/cvLocation/
+     * cvHeadline/education, since none of those are part of the analysis-profile shape {@code
+     * JobAnalysisService} actually consumes (see that assembler's javadoc). Comparing the full
+     * {@link #diff} (which does check those fields) against that deliberately-narrowed round trip
+     * would report a false parity failure for every profile with real header-fact data - this
+     * method exists so the parity verifier can check only the fields the analysis round trip is
+     * actually meant to preserve; {@link #headerAndEducationFieldsEqual} covers the rest directly
+     * against the freshly-persisted aggregate instead.
+     */
+    static boolean analysisScopedFieldsEqual(CandidateProfileAggregate a, CandidateProfileAggregate b) {
+        List<String> changed = new ArrayList<>();
+        addAnalysisScopedDifferences(changed, a, b);
+        return changed.isEmpty();
+    }
+
+    /** See {@link #analysisScopedFieldsEqual} - the complementary half of the same split. */
+    static boolean headerAndEducationFieldsEqual(CandidateProfileAggregate a, CandidateProfileAggregate b) {
+        List<String> changed = new ArrayList<>();
+        addHeaderAndEducationDifferences(changed, a, b);
+        return changed.isEmpty();
+    }
+
+    private static void addAnalysisScopedDifferences(List<String> changed, CandidateProfileAggregate a, CandidateProfileAggregate b) {
         addIfDifferent(changed, "profileKey", a.profileKey(), b.profileKey());
         addIfDifferent(changed, "targetRole", a.targetRole(), b.targetRole());
         addIfDifferent(changed, "seniority", a.seniority(), b.seniority());
@@ -52,11 +83,6 @@ public final class CandidateProfileSemanticComparator {
         addIfDifferent(changed, "currentCountry", a.currentCountry(), b.currentCountry());
         addIfDifferent(changed, "relocationAllowed", a.relocationAllowed(), b.relocationAllowed());
         addIfDifferent(changed, "salaryExpectationNote", a.salaryExpectationNote(), b.salaryExpectationNote());
-        addIfDifferent(changed, "email", a.email(), b.email());
-        addIfDifferent(changed, "phone", a.phone(), b.phone());
-        addIfDifferent(changed, "linkedinUrl", a.linkedinUrl(), b.linkedinUrl());
-        addIfDifferent(changed, "cvLocation", a.cvLocation(), b.cvLocation());
-        addIfDifferent(changed, "cvHeadline", a.cvHeadline(), b.cvHeadline());
         if (!skillSet(a.skills()).equals(skillSet(b.skills()))) {
             changed.add("skills");
         }
@@ -66,10 +92,18 @@ public final class CandidateProfileSemanticComparator {
         if (!preferencesEqual(a.preferences(), b.preferences())) {
             changed.add("preferences");
         }
+    }
+
+    private static void addHeaderAndEducationDifferences(List<String> changed, CandidateProfileAggregate a, CandidateProfileAggregate b) {
+        addIfDifferent(changed, "fullName", a.fullName(), b.fullName());
+        addIfDifferent(changed, "email", a.email(), b.email());
+        addIfDifferent(changed, "phone", a.phone(), b.phone());
+        addIfDifferent(changed, "linkedinUrl", a.linkedinUrl(), b.linkedinUrl());
+        addIfDifferent(changed, "cvLocation", a.cvLocation(), b.cvLocation());
+        addIfDifferent(changed, "cvHeadline", a.cvHeadline(), b.cvHeadline());
         if (!orderedEducation(a.education()).equals(orderedEducation(b.education()))) {
             changed.add("education");
         }
-        return new CandidateProfileDiff(changed.isEmpty(), changed);
     }
 
     private static String normalizedSalary(CandidateProfileAggregate profile) {

@@ -1,6 +1,7 @@
 package com.darya.jobassistant.candidates.migration;
 
 import com.darya.jobassistant.candidates.CandidateEducationEntry;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.aggregate.CandidateEducation;
@@ -55,6 +56,7 @@ public final class CandidateProfileYamlImportMapper {
                 source.preferences().currentCountry(),
                 source.preferences().relocationAllowed(),
                 source.preferences().salaryExpectation(),
+                source.fullName(),
                 source.email(),
                 source.phone(),
                 source.linkedinUrl(),
@@ -76,12 +78,16 @@ public final class CandidateProfileYamlImportMapper {
     /**
      * {@code displayOrder} is assigned from this list's own position (Sprint 11 Step 5) - the
      * YAML {@code languages:} list order is the intended CV presentation order, the same
-     * convention already used for {@code preferredContractTypes}.
+     * convention already used for {@code preferredContractTypes}. {@link CandidateLanguageEntry
+     * #proficiency} is carried through unchanged (acceptance correction) - the previous plain
+     * {@code List<String>} shape had no field to carry it, so it was always imported as {@code
+     * null}.
      */
-    private static List<CandidateLanguage> toLanguages(List<String> languageNames) {
+    private static List<CandidateLanguage> toLanguages(List<CandidateLanguageEntry> languages) {
         List<CandidateLanguage> result = new ArrayList<>();
-        for (int i = 0; i < languageNames.size(); i++) {
-            result.add(new CandidateLanguage(CandidateProfileLanguageCodes.codeForName(languageNames.get(i)), null, i));
+        for (int i = 0; i < languages.size(); i++) {
+            CandidateLanguageEntry entry = languages.get(i);
+            result.add(new CandidateLanguage(CandidateProfileLanguageCodes.codeForName(entry.language()), entry.proficiency(), i));
         }
         return result;
     }

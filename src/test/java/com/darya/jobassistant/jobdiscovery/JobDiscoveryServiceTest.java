@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.candidates.CandidatePreferences;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateProfileProvider;
 import com.darya.jobassistant.integrations.jobsearch.DiscoveredJobReference;
@@ -918,7 +919,7 @@ class JobDiscoveryServiceTest {
 
     private CandidateProfile validProfile() {
         return new CandidateProfile(
-                "Backend Engineer", "Senior", List.of(), List.of("English"), 6,
+                "Backend Engineer", "Senior", List.of(), List.of(new CandidateLanguageEntry("English", "Fluent")), 6,
                 new CandidatePreferences(null, "Remote", null, List.of(), false, List.of(), null, null, null, null));
     }
 

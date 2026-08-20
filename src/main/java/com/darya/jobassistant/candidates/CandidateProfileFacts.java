@@ -34,6 +34,7 @@ public record CandidateProfileFacts(
         List<CandidateLanguageFacts> languages,
         int experienceYears,
         CandidatePreferences preferences,
+        String fullName,
         String email,
         String phone,
         String linkedinUrl,
@@ -59,6 +60,7 @@ public record CandidateProfileFacts(
         }
         skills = skills == null ? List.of() : List.copyOf(skills);
         languages = languages == null ? List.of() : List.copyOf(languages);
+        fullName = trimToNull(fullName);
         email = trimToNull(email);
         phone = trimToNull(phone);
         linkedinUrl = trimToNull(linkedinUrl);
@@ -78,7 +80,21 @@ public record CandidateProfileFacts(
             String targetRole, String targetSeniority, List<CandidateSkillFacts> skills,
             List<CandidateLanguageFacts> languages, int experienceYears, CandidatePreferences preferences) {
         this(targetRole, targetSeniority, skills, languages, experienceYears, preferences,
-                null, null, null, null, null, List.of());
+                null, null, null, null, null, null, List.of());
+    }
+
+    /**
+     * Convenience constructor matching this type's shape from the first Sprint 11 Step 5 round
+     * (email/phone/linkedinUrl/cvLocation/cvHeadline/education, no {@link #fullName}) - defaults
+     * {@link #fullName} to {@code null}.
+     */
+    public CandidateProfileFacts(
+            String targetRole, String targetSeniority, List<CandidateSkillFacts> skills,
+            List<CandidateLanguageFacts> languages, int experienceYears, CandidatePreferences preferences,
+            String email, String phone, String linkedinUrl, String cvLocation, String cvHeadline,
+            List<CandidateEducationFacts> education) {
+        this(targetRole, targetSeniority, skills, languages, experienceYears, preferences,
+                null, email, phone, linkedinUrl, cvLocation, cvHeadline, education);
     }
 
     private static String trimToNull(String value) {

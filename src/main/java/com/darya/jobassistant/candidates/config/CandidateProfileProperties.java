@@ -25,9 +25,10 @@ public record CandidateProfileProperties(
         String targetRole,
         String targetSeniority,
         List<SkillProperties> skills,
-        List<String> languages,
+        List<LanguageProperties> languages,
         int experienceYears,
         PreferencesProperties preferences,
+        String fullName,
         String email,
         String phone,
         String linkedinUrl,
@@ -47,6 +48,19 @@ public record CandidateProfileProperties(
             String name,
             SkillProficiency proficiency,
             String note
+    ) {
+    }
+
+    /**
+     * Acceptance correction: binding shape for one {@code candidate.languages[]} entry - replaces
+     * the previous plain {@code List<String>} representation, which had no way to express {@code
+     * proficiency} at all (it was always imported as {@code null}). List position still determines
+     * {@code displayOrder} (see {@code CandidateProfileYamlImportMapper#toLanguages}); nothing new
+     * needs to be authored in YAML for ordering.
+     */
+    public record LanguageProperties(
+            String language,
+            String proficiency
     ) {
     }
 

@@ -110,6 +110,15 @@ class CandidateProfileFingerprintTest {
 
     // ---- Sprint 11 Step 5: header facts, education, and language ordering ----
 
+    /** Acceptance correction. */
+    @Test
+    void sha256_meaningfulFullNameChange_changesTheFingerprint() {
+        CandidateProfileAggregate a = profileWithFullName("Jane Doe");
+        CandidateProfileAggregate b = profileWithFullName("John Smith");
+
+        assertThat(CandidateProfileFingerprint.sha256(a)).isNotEqualTo(CandidateProfileFingerprint.sha256(b));
+    }
+
     @Test
     void sha256_meaningfulCvHeadlineChange_changesTheFingerprint() {
         CandidateProfileAggregate a = profileWithHeadline("Senior Java Backend Engineer");
@@ -134,6 +143,13 @@ class CandidateProfileFingerprintTest {
                 List.of(new CandidateLanguage("en", null, 1), new CandidateLanguage("pl", null, 0)));
 
         assertThat(CandidateProfileFingerprint.sha256(a)).isNotEqualTo(CandidateProfileFingerprint.sha256(b));
+    }
+
+    private CandidateProfileAggregate profileWithFullName(String fullName) {
+        return new CandidateProfileAggregate(
+                UUID.randomUUID(), "primary", "Backend Engineer", "Senior", 6,
+                null, null, null, null, null, new BigDecimal("5000.00"), null, false, null,
+                fullName, null, null, null, null, null, List.of(), List.of(), List.of(), List.of(), 0L);
     }
 
     private CandidateProfileAggregate profileWithHeadline(String cvHeadline) {

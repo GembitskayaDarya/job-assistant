@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.candidates.CandidatePreferences;
+import com.darya.jobassistant.candidates.CandidateLanguageEntry;
 import com.darya.jobassistant.candidates.CandidateProfile;
 import com.darya.jobassistant.candidates.CandidateSkill;
 import com.darya.jobassistant.candidates.PreferenceImportance;
@@ -348,7 +349,7 @@ class CandidateProfileMigrationUseCaseTest {
     void apply_unrecognizedLanguageName_returnsValidationFailed_andCreatesNoRow() {
         String key = "apply-invalid-" + UUID.randomUUID();
         CandidateProfile invalidSource = new CandidateProfile(
-                "Backend Engineer", "Senior", List.of(), List.of("Klingon"), 6, minimalPreferences());
+                "Backend Engineer", "Senior", List.of(), List.of(new CandidateLanguageEntry("Klingon", "Fluent")), 6, minimalPreferences());
 
         CandidateProfileMigrationResult result = useCase().apply(invalidSource, key);
 
@@ -360,7 +361,7 @@ class CandidateProfileMigrationUseCaseTest {
     @Test
     void dryRun_unrecognizedLanguageName_returnsValidationFailed_withoutReadingDestination() {
         CandidateProfile invalidSource = new CandidateProfile(
-                "Backend Engineer", "Senior", List.of(), List.of("Klingon"), 6, minimalPreferences());
+                "Backend Engineer", "Senior", List.of(), List.of(new CandidateLanguageEntry("Klingon", "Fluent")), 6, minimalPreferences());
 
         CandidateProfileMigrationResult result = useCase().dryRun(invalidSource, "dry-invalid-" + UUID.randomUUID());
 
@@ -516,7 +517,7 @@ class CandidateProfileMigrationUseCaseTest {
                 "Senior Java Backend Engineer", "Senior",
                 List.of(new CandidateSkill("Java", SkillProficiency.EXPERT, null),
                         new CandidateSkill("Kafka", SkillProficiency.WORKING, null)),
-                List.of("English", "Polish"), 6, preferences);
+                List.of(new CandidateLanguageEntry("English", "Fluent"), new CandidateLanguageEntry("Polish", "Conversational")), 6, preferences);
     }
 
     private CandidatePreferences minimalPreferences() {

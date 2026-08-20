@@ -105,6 +105,6 @@ class PersonalProjectYamlImportMapperTest {
     private CandidateProfileProperties propertiesWith(List<CandidateProfileProperties.PersonalProjectProperties> personalProjects) {
         return new CandidateProfileProperties(
                 "Backend Engineer", "Senior", List.of(), List.of(), 6, null,
-                null, null, null, null, null, List.of(), personalProjects);
+                null, null, null, null, null, null, List.of(), personalProjects);
     }
 }
