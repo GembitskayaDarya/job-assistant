@@ -37,4 +37,24 @@ final class CvTailoringValidation {
             }
         }
     }
+
+    /**
+     * Sprint 11 Step 6: shared "no null, no duplicate" check for a plain ordered id-selection list -
+     * {@link CvProjectTailoring#orderedTechnologyIds()} and {@link
+     * CvPersonalProjectTailoring}'s {@code orderedHighlightIds}/{@code orderedTechnologyIds} all use
+     * exactly this shape (unlike responsibilities/achievements, a plain {@code List<UUID>} carries no
+     * rewrite alongside the id), mirroring {@link CvTailoringResult#orderedSkillIds()}'s own inline
+     * check.
+     */
+    static void requireNoNullOrDuplicateIds(List<UUID> ids, String fieldDescription) {
+        Set<UUID> seen = new HashSet<>();
+        for (UUID id : ids) {
+            if (id == null) {
+                throw new IllegalArgumentException(fieldDescription + " must not contain a null id");
+            }
+            if (!seen.add(id)) {
+                throw new IllegalArgumentException("Duplicate reference in " + fieldDescription + ": " + id);
+            }
+        }
+    }
 }

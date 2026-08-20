@@ -2,11 +2,16 @@ package com.darya.jobassistant.candidatecontext.cv.tailoring.validation;
 
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceAchievement;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceCompany;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProject;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProjectHighlight;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProjectTechnology;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePosition;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceProject;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceResponsibility;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceSnapshot;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourceTechnology;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvAchievementTailoring;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvPersonalProjectTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvPositionTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvProjectTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvResponsibilityTailoring;
@@ -148,6 +153,31 @@ public final class CvTailoringValidator {
             validateAchievementOwnership(
                     projectTailoring.achievements(), ids(project.achievements(), CvSourceAchievement::careerAchievementId),
                     CvTailoringViolationCategory.PROJECT_ACHIEVEMENT_NOT_OWNED, projectTailoring.careerProjectId(), violations);
+            validateIdOwnership(
+                    projectTailoring.orderedTechnologyIds(), ids(project.technologies(), CvSourceTechnology::careerTechnologyId),
+                    CvTailoringViolationCategory.PROJECT_TECHNOLOGY_NOT_OWNED, projectTailoring.careerProjectId(), violations);
+        }
+
+        Map<UUID, CvSourcePersonalProject> personalProjectsById = new HashMap<>();
+        for (CvSourcePersonalProject personalProject : snapshot.personalProjects()) {
+            personalProjectsById.put(personalProject.personalProjectId(), personalProject);
+        }
+
+        for (CvPersonalProjectTailoring personalProjectTailoring : tailoringResult.personalProjectTailoring()) {
+            CvSourcePersonalProject personalProject = personalProjectsById.get(personalProjectTailoring.personalProjectId());
+            if (personalProject == null) {
+                violations.add(new CvTailoringViolation(
+                        CvTailoringViolationCategory.UNKNOWN_PERSONAL_PROJECT_REFERENCE, personalProjectTailoring.personalProjectId(), null));
+                continue;
+            }
+            validateIdOwnership(
+                    personalProjectTailoring.orderedHighlightIds(),
+                    ids(personalProject.highlights(), CvSourcePersonalProjectHighlight::personalProjectHighlightId),
+                    CvTailoringViolationCategory.PERSONAL_PROJECT_HIGHLIGHT_NOT_OWNED, personalProjectTailoring.personalProjectId(), violations);
+            validateIdOwnership(
+                    personalProjectTailoring.orderedTechnologyIds(),
+                    ids(personalProject.technologies(), CvSourcePersonalProjectTechnology::personalProjectTechnologyId),
+                    CvTailoringViolationCategory.PERSONAL_PROJECT_TECHNOLOGY_NOT_OWNED, personalProjectTailoring.personalProjectId(), violations);
         }
 
         return new CvTailoringValidationResult(violations);
@@ -159,6 +189,17 @@ public final class CvTailoringValidator {
         for (CvResponsibilityTailoring responsibility : referenced) {
             if (!ownedIds.contains(responsibility.careerResponsibilityId())) {
                 violations.add(new CvTailoringViolation(category, responsibility.careerResponsibilityId(), parentId));
+            }
+        }
+    }
+
+    /** Ownership check for a plain {@code List<UUID>} selection (technologies, Personal Project highlights/technologies). */
+    private static void validateIdOwnership(
+            List<UUID> referenced, Set<UUID> ownedIds, CvTailoringViolationCategory category,
+            UUID parentId, List<CvTailoringViolation> violations) {
+        for (UUID id : referenced) {
+            if (!ownedIds.contains(id)) {
+                violations.add(new CvTailoringViolation(category, id, parentId));
             }
         }
     }

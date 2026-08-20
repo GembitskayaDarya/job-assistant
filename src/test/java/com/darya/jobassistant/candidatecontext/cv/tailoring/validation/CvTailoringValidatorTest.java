@@ -6,11 +6,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceAchievement;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceCompany;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProject;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProjectHighlight;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePersonalProjectTechnology;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePosition;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceProject;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceResponsibility;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceSnapshot;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourceTechnology;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvAchievementTailoring;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvPersonalProjectTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvPositionTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvProjectTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvResponsibilityTailoring;
@@ -49,6 +54,16 @@ class CvTailoringValidatorTest {
     private static final UUID PROJECT_P2 = UUID.randomUUID();
     private static final UUID PROJECT_P2_RESPONSIBILITY = UUID.randomUUID();
     private static final UUID PROJECT_P2_ACHIEVEMENT = UUID.randomUUID();
+
+    private static final UUID PROJECT_P1_TECHNOLOGY = UUID.randomUUID();
+    private static final UUID PROJECT_P2_TECHNOLOGY = UUID.randomUUID();
+
+    private static final UUID PERSONAL_PROJECT_1 = UUID.randomUUID();
+    private static final UUID PERSONAL_PROJECT_1_HIGHLIGHT = UUID.randomUUID();
+    private static final UUID PERSONAL_PROJECT_1_TECHNOLOGY = UUID.randomUUID();
+    private static final UUID PERSONAL_PROJECT_2 = UUID.randomUUID();
+    private static final UUID PERSONAL_PROJECT_2_HIGHLIGHT = UUID.randomUUID();
+    private static final UUID PERSONAL_PROJECT_2_TECHNOLOGY = UUID.randomUUID();
 
     // ==================== 1. Minimal/empty result ====================
 
@@ -209,6 +224,95 @@ class CvTailoringValidatorTest {
 
         assertThat(result.violations()).containsExactly(new CvTailoringViolation(
                 CvTailoringViolationCategory.PROJECT_ACHIEVEMENT_NOT_OWNED, POSITION_A_ACHIEVEMENT, PROJECT_P1));
+    }
+
+    // ==================== Project technology ownership (Step 6) ====================
+
+    @Test
+    void validate_projectTechnology_ownedByThatProject_passes() {
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(
+                new CvProjectTailoring(PROJECT_P1, List.of(), List.of(), List.of(PROJECT_P1_TECHNOLOGY))));
+
+        assertThat(CvTailoringValidator.validate(snapshot(), tailoring).valid()).isTrue();
+    }
+
+    @Test
+    void validate_projectTechnology_belongingToAnotherProject_fails() {
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(
+                new CvProjectTailoring(PROJECT_P1, List.of(), List.of(), List.of(PROJECT_P2_TECHNOLOGY))));
+
+        CvTailoringValidationResult result = CvTailoringValidator.validate(snapshot(), tailoring);
+
+        assertThat(result.violations()).containsExactly(new CvTailoringViolation(
+                CvTailoringViolationCategory.PROJECT_TECHNOLOGY_NOT_OWNED, PROJECT_P2_TECHNOLOGY, PROJECT_P1));
+    }
+
+    @Test
+    void validate_unknownProjectTechnologyReference_fails() {
+        UUID unknownTechnology = UUID.randomUUID();
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(
+                new CvProjectTailoring(PROJECT_P1, List.of(), List.of(), List.of(unknownTechnology))));
+
+        CvTailoringValidationResult result = CvTailoringValidator.validate(snapshot(), tailoring);
+
+        assertThat(result.violations()).containsExactly(new CvTailoringViolation(
+                CvTailoringViolationCategory.PROJECT_TECHNOLOGY_NOT_OWNED, unknownTechnology, PROJECT_P1));
+    }
+
+    // ==================== Personal Project ownership (Step 6) ====================
+
+    @Test
+    void validate_personalProjectHighlightAndTechnology_ownedByThatProject_passes() {
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(), List.of(
+                new CvPersonalProjectTailoring(PERSONAL_PROJECT_1, List.of(PERSONAL_PROJECT_1_HIGHLIGHT), List.of(PERSONAL_PROJECT_1_TECHNOLOGY))));
+
+        assertThat(CvTailoringValidator.validate(snapshot(), tailoring).valid()).isTrue();
+    }
+
+    @Test
+    void validate_unknownPersonalProjectReference_isReported() {
+        UUID unknownPersonalProject = UUID.randomUUID();
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(), List.of(
+                new CvPersonalProjectTailoring(unknownPersonalProject, List.of(), List.of())));
+
+        CvTailoringValidationResult result = CvTailoringValidator.validate(snapshot(), tailoring);
+
+        assertThat(result.violations()).containsExactly(
+                new CvTailoringViolation(CvTailoringViolationCategory.UNKNOWN_PERSONAL_PROJECT_REFERENCE, unknownPersonalProject, null));
+    }
+
+    @Test
+    void validate_unknownPersonalProjectWithChildren_reportsOnlyTheParentViolation() {
+        UUID unknownPersonalProject = UUID.randomUUID();
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(), List.of(
+                new CvPersonalProjectTailoring(unknownPersonalProject, List.of(PERSONAL_PROJECT_1_HIGHLIGHT), List.of(PERSONAL_PROJECT_1_TECHNOLOGY))));
+
+        CvTailoringValidationResult result = CvTailoringValidator.validate(snapshot(), tailoring);
+
+        assertThat(result.violations()).containsExactly(
+                new CvTailoringViolation(CvTailoringViolationCategory.UNKNOWN_PERSONAL_PROJECT_REFERENCE, unknownPersonalProject, null));
+    }
+
+    @Test
+    void validate_personalProjectHighlight_belongingToAnotherProject_fails() {
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(), List.of(
+                new CvPersonalProjectTailoring(PERSONAL_PROJECT_1, List.of(PERSONAL_PROJECT_2_HIGHLIGHT), List.of())));
+
+        CvTailoringValidationResult result = CvTailoringValidator.validate(snapshot(), tailoring);
+
+        assertThat(result.violations()).containsExactly(new CvTailoringViolation(
+                CvTailoringViolationCategory.PERSONAL_PROJECT_HIGHLIGHT_NOT_OWNED, PERSONAL_PROJECT_2_HIGHLIGHT, PERSONAL_PROJECT_1));
+    }
+
+    @Test
+    void validate_personalProjectTechnology_belongingToAnotherProject_fails() {
+        CvTailoringResult tailoring = new CvTailoringResult(null, List.of(), List.of(), List.of(), List.of(
+                new CvPersonalProjectTailoring(PERSONAL_PROJECT_1, List.of(), List.of(PERSONAL_PROJECT_2_TECHNOLOGY))));
+
+        CvTailoringValidationResult result = CvTailoringValidator.validate(snapshot(), tailoring);
+
+        assertThat(result.violations()).containsExactly(new CvTailoringViolation(
+                CvTailoringViolationCategory.PERSONAL_PROJECT_TECHNOLOGY_NOT_OWNED, PERSONAL_PROJECT_2_TECHNOLOGY, PERSONAL_PROJECT_1));
     }
 
     // ==================== 16/17. Unknown position/project + unknown-parent policy ====================
@@ -373,7 +477,7 @@ class CvTailoringValidatorTest {
                 LocalDate.of(2021, 1, 1), LocalDate.of(2022, 1, 1),
                 List.of(new CvSourceResponsibility(PROJECT_P1_RESPONSIBILITY, "Built the billing pipeline")),
                 List.of(new CvSourceAchievement(PROJECT_P1_ACHIEVEMENT, "Cut billing errors by 30%")),
-                List.of());
+                List.of(new CvSourceTechnology(PROJECT_P1_TECHNOLOGY, "Kafka", "Messaging")));
         CvSourcePosition positionA = new CvSourcePosition(POSITION_A, "Senior Backend Engineer", "Full-time", "Remote", "Remote",
                 LocalDate.of(2021, 1, 1), null, true, "Owned backend services",
                 List.of(new CvSourceResponsibility(POSITION_A_RESPONSIBILITY, "Led the backend team")),
@@ -384,7 +488,7 @@ class CvTailoringValidatorTest {
                 LocalDate.of(2018, 1, 1), LocalDate.of(2019, 1, 1),
                 List.of(new CvSourceResponsibility(PROJECT_P2_RESPONSIBILITY, "Rebuilt the search index pipeline")),
                 List.of(new CvSourceAchievement(PROJECT_P2_ACHIEVEMENT, "Reduced search latency by 40%")),
-                List.of());
+                List.of(new CvSourceTechnology(PROJECT_P2_TECHNOLOGY, "Elasticsearch", "Search")));
         CvSourcePosition positionB = new CvSourcePosition(POSITION_B, "Backend Engineer", "Full-time", "Berlin", "Hybrid",
                 LocalDate.of(2018, 1, 1), LocalDate.of(2020, 12, 31), false, "Built internal tools",
                 List.of(new CvSourceResponsibility(POSITION_B_RESPONSIBILITY, "Maintained internal tooling")),
@@ -401,6 +505,16 @@ class CvTailoringValidatorTest {
                 List.of(), 6,
                 new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
 
-        return new CvSourceSnapshot(profile, CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
+        CvSourcePersonalProject personalProject1 = new CvSourcePersonalProject(PERSONAL_PROJECT_1, "Home Lab Monitoring",
+                "Self-hosted metrics stack", "https://github.test/example/homelab", LocalDate.of(2022, 1, 1), null,
+                List.of(new CvSourcePersonalProjectHighlight(PERSONAL_PROJECT_1_HIGHLIGHT, "Built a Grafana dashboard for home metrics")),
+                List.of(new CvSourcePersonalProjectTechnology(PERSONAL_PROJECT_1_TECHNOLOGY, "Grafana", "Observability")));
+        CvSourcePersonalProject personalProject2 = new CvSourcePersonalProject(PERSONAL_PROJECT_2, "Recipe Finder",
+                "Small hobby web app", "https://github.test/example/recipes", LocalDate.of(2020, 1, 1), LocalDate.of(2020, 6, 1),
+                List.of(new CvSourcePersonalProjectHighlight(PERSONAL_PROJECT_2_HIGHLIGHT, "Shipped a search feature")),
+                List.of(new CvSourcePersonalProjectTechnology(PERSONAL_PROJECT_2_TECHNOLOGY, "React", "Frontend")));
+
+        return new CvSourceSnapshot(
+                profile, CareerHistoryAvailability.AVAILABLE, List.of(company), List.of(personalProject1, personalProject2));
     }
 }

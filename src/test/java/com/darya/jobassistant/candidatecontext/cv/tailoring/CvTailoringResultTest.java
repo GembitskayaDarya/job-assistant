@@ -341,18 +341,152 @@ class CvTailoringResultTest {
         assertThat(result.projectTailoring()).isEmpty();
     }
 
+    // ==================== 15/16. Project technology tailoring (Step 6) ====================
+
+    @Test
+    void projectOrderedTechnologyIds_preservesSelectionAndOrder() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+
+        CvProjectTailoring tailoring = new CvProjectTailoring(UUID.randomUUID(), List.of(), List.of(), List.of(second, first));
+
+        assertThat(tailoring.orderedTechnologyIds()).containsExactly(second, first);
+    }
+
+    @Test
+    void projectOrderedTechnologyIds_duplicateReference_isRejected() {
+        UUID technologyId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> new CvProjectTailoring(UUID.randomUUID(), List.of(), List.of(), List.of(technologyId, technologyId)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void projectOrderedTechnologyIds_nullElement_isRejected() {
+        List<UUID> withNull = new java.util.ArrayList<>();
+        withNull.add(UUID.randomUUID());
+        withNull.add(null);
+
+        assertThatThrownBy(() -> new CvProjectTailoring(UUID.randomUUID(), List.of(), List.of(), withNull))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void projectOrderedTechnologyIds_nullList_becomesEmpty() {
+        CvProjectTailoring tailoring = new CvProjectTailoring(UUID.randomUUID(), List.of(), List.of(), null);
+
+        assertThat(tailoring.orderedTechnologyIds()).isEmpty();
+    }
+
+    @Test
+    void projectTailoring_oldArityConstructor_defaultsOrderedTechnologyIdsToEmpty() {
+        CvProjectTailoring tailoring = new CvProjectTailoring(UUID.randomUUID(), List.of(), List.of());
+
+        assertThat(tailoring.orderedTechnologyIds()).isEmpty();
+    }
+
+    // ==================== 17-20. Personal project tailoring (Step 6) ====================
+
+    @Test
+    void personalProjectTailoring_preservesPersonalProjectId() {
+        UUID personalProjectId = UUID.randomUUID();
+        CvPersonalProjectTailoring tailoring = new CvPersonalProjectTailoring(personalProjectId, List.of(), List.of());
+
+        CvTailoringResult result = new CvTailoringResult(null, List.of(), List.of(), List.of(), List.of(tailoring));
+
+        assertThat(result.personalProjectTailoring()).hasSize(1);
+        assertThat(result.personalProjectTailoring().get(0).personalProjectId()).isEqualTo(personalProjectId);
+    }
+
+    @Test
+    void personalProjectTailoring_nullPersonalProjectId_isRejected() {
+        assertThatThrownBy(() -> new CvPersonalProjectTailoring(null, List.of(), List.of()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void personalProjectHighlightIds_preserveSelectionAndOrder() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+
+        CvPersonalProjectTailoring tailoring = new CvPersonalProjectTailoring(UUID.randomUUID(), List.of(second, first), List.of());
+
+        assertThat(tailoring.orderedHighlightIds()).containsExactly(second, first);
+    }
+
+    @Test
+    void personalProjectHighlightIds_duplicateReference_isRejected() {
+        UUID highlightId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> new CvPersonalProjectTailoring(UUID.randomUUID(), List.of(highlightId, highlightId), List.of()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void personalProjectTechnologyIds_preserveSelectionAndOrder() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+
+        CvPersonalProjectTailoring tailoring = new CvPersonalProjectTailoring(UUID.randomUUID(), List.of(), List.of(second, first));
+
+        assertThat(tailoring.orderedTechnologyIds()).containsExactly(second, first);
+    }
+
+    @Test
+    void personalProjectTechnologyIds_duplicateReference_isRejected() {
+        UUID technologyId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> new CvPersonalProjectTailoring(UUID.randomUUID(), List.of(), List.of(technologyId, technologyId)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void personalProjectTailoring_nullChildLists_becomeEmpty() {
+        CvPersonalProjectTailoring tailoring = new CvPersonalProjectTailoring(UUID.randomUUID(), null, null);
+
+        assertThat(tailoring.orderedHighlightIds()).isEmpty();
+        assertThat(tailoring.orderedTechnologyIds()).isEmpty();
+    }
+
+    @Test
+    void personalProjectTailoring_duplicatePersonalProjectId_isRejected() {
+        UUID personalProjectId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> new CvTailoringResult(null, List.of(), List.of(), List.of(), List.of(
+                new CvPersonalProjectTailoring(personalProjectId, List.of(), List.of()),
+                new CvPersonalProjectTailoring(personalProjectId, List.of(), List.of()))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void tailoringResult_nullPersonalProjectTailoringList_becomesEmpty() {
+        CvTailoringResult result = new CvTailoringResult(null, List.of(), List.of(), List.of(), null);
+
+        assertThat(result.personalProjectTailoring()).isEmpty();
+    }
+
+    @Test
+    void tailoringResult_oldArityConstructor_defaultsPersonalProjectTailoringToEmpty() {
+        CvTailoringResult result = new CvTailoringResult(null, List.of(), List.of(), List.of());
+
+        assertThat(result.personalProjectTailoring()).isEmpty();
+    }
+
     // ==================== 13. Immutability ====================
 
     @Test
     void collections_areUnmodifiable() {
         CvProjectTailoring projectTailoring = new CvProjectTailoring(UUID.randomUUID(),
                 List.of(new CvResponsibilityTailoring(UUID.randomUUID(), null)),
-                List.of(new CvAchievementTailoring(UUID.randomUUID(), null)));
+                List.of(new CvAchievementTailoring(UUID.randomUUID(), null)),
+                List.of(UUID.randomUUID()));
         CvPositionTailoring positionTailoring = new CvPositionTailoring(UUID.randomUUID(),
                 List.of(new CvResponsibilityTailoring(UUID.randomUUID(), null)),
                 List.of(new CvAchievementTailoring(UUID.randomUUID(), null)));
+        CvPersonalProjectTailoring personalProjectTailoring = new CvPersonalProjectTailoring(
+                UUID.randomUUID(), List.of(UUID.randomUUID()), List.of(UUID.randomUUID()));
         CvTailoringResult result = new CvTailoringResult(
-                null, List.of(UUID.randomUUID()), List.of(positionTailoring), List.of(projectTailoring));
+                null, List.of(UUID.randomUUID()), List.of(positionTailoring), List.of(projectTailoring), List.of(personalProjectTailoring));
 
         assertThatThrownBy(() -> result.orderedSkillIds().add(UUID.randomUUID()))
                 .isInstanceOf(UnsupportedOperationException.class);
@@ -360,13 +494,21 @@ class CvTailoringResultTest {
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> result.projectTailoring().add(projectTailoring))
                 .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> result.personalProjectTailoring().add(personalProjectTailoring))
+                .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> projectTailoring.responsibilities().add(projectTailoring.responsibilities().get(0)))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> projectTailoring.achievements().add(projectTailoring.achievements().get(0)))
                 .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> projectTailoring.orderedTechnologyIds().add(UUID.randomUUID()))
+                .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> positionTailoring.responsibilities().add(positionTailoring.responsibilities().get(0)))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> positionTailoring.achievements().add(positionTailoring.achievements().get(0)))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> personalProjectTailoring.orderedHighlightIds().add(UUID.randomUUID()))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> personalProjectTailoring.orderedTechnologyIds().add(UUID.randomUUID()))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
@@ -379,17 +521,22 @@ class CvTailoringResultTest {
         UUID projectId = UUID.randomUUID();
         UUID responsibilityId = UUID.randomUUID();
         UUID achievementId = UUID.randomUUID();
+        UUID technologyId = UUID.randomUUID();
+        UUID personalProjectId = UUID.randomUUID();
+        UUID highlightId = UUID.randomUUID();
 
         CvTailoringResult resultA = new CvTailoringResult("Summary", List.of(skillId),
                 List.of(new CvPositionTailoring(positionId, List.of(new CvResponsibilityTailoring(responsibilityId, "rewrite")),
                         List.of(new CvAchievementTailoring(achievementId, null)))),
                 List.of(new CvProjectTailoring(projectId, List.of(new CvResponsibilityTailoring(responsibilityId, "rewrite")),
-                        List.of(new CvAchievementTailoring(achievementId, null)))));
+                        List.of(new CvAchievementTailoring(achievementId, null)), List.of(technologyId))),
+                List.of(new CvPersonalProjectTailoring(personalProjectId, List.of(highlightId), List.of(technologyId))));
         CvTailoringResult resultB = new CvTailoringResult("Summary", List.of(skillId),
                 List.of(new CvPositionTailoring(positionId, List.of(new CvResponsibilityTailoring(responsibilityId, "rewrite")),
                         List.of(new CvAchievementTailoring(achievementId, null)))),
                 List.of(new CvProjectTailoring(projectId, List.of(new CvResponsibilityTailoring(responsibilityId, "rewrite")),
-                        List.of(new CvAchievementTailoring(achievementId, null)))));
+                        List.of(new CvAchievementTailoring(achievementId, null)), List.of(technologyId))),
+                List.of(new CvPersonalProjectTailoring(personalProjectId, List.of(highlightId), List.of(technologyId))));
 
         assertThat(resultA).isEqualTo(resultB);
         assertThat(resultA.hashCode()).isEqualTo(resultB.hashCode());

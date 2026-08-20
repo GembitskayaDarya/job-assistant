@@ -38,5 +38,33 @@ public enum CvTailoringViolationCategory {
     PROJECT_RESPONSIBILITY_NOT_OWNED,
 
     /** The achievement counterpart of {@link #PROJECT_RESPONSIBILITY_NOT_OWNED}. */
-    PROJECT_ACHIEVEMENT_NOT_OWNED
+    PROJECT_ACHIEVEMENT_NOT_OWNED,
+
+    /**
+     * Sprint 11 Step 6: a technology referenced through {@code CvProjectTailoring.orderedTechnologyIds}
+     * is not among that exact project's own factual technologies - either it does not exist at all or
+     * belongs to a different project.
+     */
+    PROJECT_TECHNOLOGY_NOT_OWNED,
+
+    /**
+     * Sprint 11 Step 6: a {@code CvPersonalProjectTailoring.personalProjectId} does not match any
+     * Personal Project in the snapshot.
+     */
+    UNKNOWN_PERSONAL_PROJECT_REFERENCE,
+
+    /**
+     * Sprint 11 Step 6: a highlight referenced through {@code
+     * CvPersonalProjectTailoring.orderedHighlightIds} is not among that exact Personal Project's own
+     * factual highlights - either it does not exist at all or belongs to a different Personal Project.
+     */
+    PERSONAL_PROJECT_HIGHLIGHT_NOT_OWNED,
+
+    /**
+     * Sprint 11 Step 6: a technology referenced through {@code
+     * CvPersonalProjectTailoring.orderedTechnologyIds} is not among that exact Personal Project's own
+     * factual technologies - either it does not exist at all or belongs to a different Personal
+     * Project.
+     */
+    PERSONAL_PROJECT_TECHNOLOGY_NOT_OWNED
 }

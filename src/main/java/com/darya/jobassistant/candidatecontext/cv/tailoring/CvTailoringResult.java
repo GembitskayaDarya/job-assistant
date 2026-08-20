@@ -54,15 +54,19 @@ import java.util.UUID;
  * <p>{@link #positionTailoring} holds at most one {@link CvPositionTailoring} per {@code
  * careerPositionId} - zero or more entries, one per position's own (non-project) bullets the AI
  * chooses to tailor. {@link #projectTailoring} holds at most one {@link CvProjectTailoring} per
- * {@code careerProjectId} - zero or more entries, one per project the AI chooses to tailor. The two
- * lists are independent id spaces (positions and projects are different source rows) and are
- * intentionally never cross-checked against each other in this structural contract.
+ * {@code careerProjectId} - zero or more entries, one per project the AI chooses to tailor. {@link
+ * #personalProjectTailoring} (Sprint 11 Step 6) holds at most one {@link CvPersonalProjectTailoring}
+ * per {@code personalProjectId} - zero or more entries, one per Personal Project the AI chooses to
+ * tailor. All three lists are independent id spaces (positions, career projects, and Personal
+ * Projects are different source rows) and are intentionally never cross-checked against each other
+ * in this structural contract.
  */
 public record CvTailoringResult(
         String professionalSummary,
         List<UUID> orderedSkillIds,
         List<CvPositionTailoring> positionTailoring,
-        List<CvProjectTailoring> projectTailoring
+        List<CvProjectTailoring> projectTailoring,
+        List<CvPersonalProjectTailoring> personalProjectTailoring
 ) {
 
     public CvTailoringResult {
@@ -78,6 +82,19 @@ public record CvTailoringResult(
         requireNoDuplicatePositionIds(positionTailoring);
         projectTailoring = projectTailoring == null ? List.of() : List.copyOf(projectTailoring);
         requireNoDuplicateProjectIds(projectTailoring);
+        personalProjectTailoring = personalProjectTailoring == null ? List.of() : List.copyOf(personalProjectTailoring);
+        requireNoDuplicatePersonalProjectIds(personalProjectTailoring);
+    }
+
+    /**
+     * Convenience constructor matching this type's pre-Sprint-11-Step-6 shape - defaults {@link
+     * #personalProjectTailoring} to empty, so the many existing call sites built before Personal
+     * Project tailoring existed keep compiling unchanged.
+     */
+    public CvTailoringResult(
+            String professionalSummary, List<UUID> orderedSkillIds,
+            List<CvPositionTailoring> positionTailoring, List<CvProjectTailoring> projectTailoring) {
+        this(professionalSummary, orderedSkillIds, positionTailoring, projectTailoring, List.of());
     }
 
     private static void requireNoNullOrDuplicateSkillIds(List<UUID> skillIds) {
@@ -108,6 +125,16 @@ public record CvTailoringResult(
             if (!seen.add(tailoring.careerProjectId())) {
                 throw new IllegalArgumentException(
                         "Duplicate project tailoring entry for project: " + tailoring.careerProjectId());
+            }
+        }
+    }
+
+    private static void requireNoDuplicatePersonalProjectIds(List<CvPersonalProjectTailoring> personalProjectTailoring) {
+        Set<UUID> seen = new HashSet<>();
+        for (CvPersonalProjectTailoring tailoring : personalProjectTailoring) {
+            if (!seen.add(tailoring.personalProjectId())) {
+                throw new IllegalArgumentException(
+                        "Duplicate personal project tailoring entry for project: " + tailoring.personalProjectId());
             }
         }
     }

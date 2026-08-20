@@ -18,18 +18,24 @@ import java.util.UUID;
  * independent id spaces (backed by different source rows) and are intentionally never cross-checked
  * against each other.
  *
- * <p>Project technologies are deliberately absent from this contract - they remain factual data
- * owned by {@code CvSourceSnapshot}; this step does not allow the AI to add, remove, or rewrite
- * them.
+ * <p>{@link #orderedTechnologyIds} (Sprint 11 Step 6) references {@code
+ * CvSourceTechnology#careerTechnologyId()} - list position expresses both which of this exact
+ * project's factual technologies are shown and in what order, the same "selection and order via
+ * list position alone" contract {@link CvTailoringResult#orderedSkillIds()} already uses. The AI can
+ * never invent a free-form technology name this way, add a technology the project does not actually
+ * have, or edit a technology's name/category - only choose which of the project's own factual
+ * technologies to feature and in what order.
  *
- * <p>Whether {@link #careerProjectId} actually exists in a particular {@code CvSourceSnapshot} is
- * intentionally NOT checked here - that source-aware validation belongs to Sprint 11 Step 3's
+ * <p>Whether {@link #careerProjectId} actually exists in a particular {@code CvSourceSnapshot}, and
+ * whether every {@link #orderedTechnologyIds} entry actually belongs to that exact project, is
+ * intentionally NOT checked here - that source-aware validation belongs to Sprint 11 Step 3/6's
  * guardrails, not this structural contract.
  */
 public record CvProjectTailoring(
         UUID careerProjectId,
         List<CvResponsibilityTailoring> responsibilities,
-        List<CvAchievementTailoring> achievements
+        List<CvAchievementTailoring> achievements,
+        List<UUID> orderedTechnologyIds
 ) {
 
     public CvProjectTailoring {
@@ -40,5 +46,20 @@ public record CvProjectTailoring(
         achievements = achievements == null ? List.of() : List.copyOf(achievements);
         CvTailoringValidation.requireNoDuplicateResponsibilityIds(responsibilities, "project tailoring");
         CvTailoringValidation.requireNoDuplicateAchievementIds(achievements, "project tailoring");
+        // Validated on the raw, caller-supplied list before defensively copying - see
+        // CvTailoringResult#orderedSkillIds's compact constructor for why this ordering matters.
+        CvTailoringValidation.requireNoNullOrDuplicateIds(
+                orderedTechnologyIds == null ? List.of() : orderedTechnologyIds, "project tailoring orderedTechnologyIds");
+        orderedTechnologyIds = orderedTechnologyIds == null ? List.of() : List.copyOf(orderedTechnologyIds);
+    }
+
+    /**
+     * Convenience constructor matching this type's pre-Sprint-11-Step-6 shape - defaults {@link
+     * #orderedTechnologyIds} to empty, so the many existing call sites built before project
+     * technology tailoring existed keep compiling unchanged.
+     */
+    public CvProjectTailoring(
+            UUID careerProjectId, List<CvResponsibilityTailoring> responsibilities, List<CvAchievementTailoring> achievements) {
+        this(careerProjectId, responsibilities, achievements, List.of());
     }
 }
