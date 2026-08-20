@@ -14,14 +14,20 @@ public enum ApplicationMaterialsGenerationFailureCode {
     /** The current Candidate Profile/Career History no longer matches what the generation recorded. */
     CANDIDATE_CONTEXT_VERSION_MISMATCH,
 
+    /** Sprint 11 Big Block 7: no Candidate Profile is configured at all for the runtime profile key. */
+    CANDIDATE_CONTEXT_NOT_CONFIGURED,
+
     /** The AI provider request itself failed (network, auth, rate limit, provider-side error). */
     AI_PROVIDER_ERROR,
 
     /** The AI response could not be parsed into the expected structured shape. */
     MALFORMED_AI_RESPONSE,
 
-    /** The parsed AI response failed deterministic provenance/structural validation. */
+    /** The parsed cover-letter AI response failed deterministic provenance/structural validation. */
     RESULT_VALIDATION_FAILED,
+
+    /** Sprint 11 Big Block 7: the CV tailoring AI response failed source-aware validation ({@code CvTailoringValidator}) - distinct from {@link #RESULT_VALIDATION_FAILED}, which now covers the cover letter only. */
+    CV_TAILORING_VALIDATION_FAILED,
 
     /** A validated result could not be persisted, but a safe FAILED transition was still possible. */
     PERSISTENCE_FAILURE,

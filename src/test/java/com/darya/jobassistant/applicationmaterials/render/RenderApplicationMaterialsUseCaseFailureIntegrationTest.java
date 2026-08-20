@@ -11,11 +11,13 @@ import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterial
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationStatus;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetter;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetterParagraph;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCv;
+import com.darya.jobassistant.applicationmaterials.render.ats.AtsPdfTextExtractorPort;
 import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMaterialDocumentRendererPort;
 import com.darya.jobassistant.applicationmaterials.render.model.DocumentRenderingException;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryRepositoryPort;
@@ -69,6 +71,9 @@ class RenderApplicationMaterialsUseCaseFailureIntegrationTest extends AbstractIn
     @MockitoBean
     private FileStoragePort fileStoragePort;
 
+    @MockitoBean
+    private AtsPdfTextExtractorPort atsTextExtractorPort;
+
     private static final Instant REQUESTED_AT = Instant.parse("2026-01-01T00:00:00Z");
 
     // ==================== 26. Generation remains COMPLETED when rendering fails ====================
@@ -93,6 +98,10 @@ class RenderApplicationMaterialsUseCaseFailureIntegrationTest extends AbstractIn
     void render_storageFailure_keepsGenerationCompletedAndThrowsStorageFailed() {
         when(rendererPort.renderCv(any())).thenReturn(
                 new com.darya.jobassistant.applicationmaterials.render.model.RenderedDocument(new byte[]{1, 2, 3}, "application/pdf"));
+        // Empty TailoredCvDocument fixture (see completedGenerationWithEmptyResult) has nothing for
+        // AtsCvVerifier to require, so any non-blank extracted text passes ATS verification -
+        // isolating this test to the storage-failure path it actually targets.
+        when(atsTextExtractorPort.extractText(any())).thenReturn("stub extracted text");
         when(fileStoragePort.store(any(), any(), any())).thenThrow(new FileStorageException("disk full"));
         UUID generationId = completedGenerationWithEmptyResult();
 
@@ -118,7 +127,8 @@ class RenderApplicationMaterialsUseCaseFailureIntegrationTest extends AbstractIn
         ApplicationMaterialGeneration started = generationRepositoryPort.save(pending.start(Instant.now()));
         ApplicationMaterialGeneration completed = generationRepositoryPort.save(started.complete(Instant.now()));
 
-        GeneratedCv cv = new GeneratedCv("Senior Java Backend Engineer", "Experienced backend engineer.", List.of(), List.of(), List.of());
+        TailoredCvDocument cv = new TailoredCvDocument(
+                new TailoredCvHeader(null, null, null, null, null, null), null, List.of(), List.of(), List.of(), List.of(), List.of());
         GeneratedCoverLetter coverLetter = new GeneratedCoverLetter(
                 null, List.of(new GeneratedCoverLetterParagraph("I am excited to apply.", List.of())), "Sincerely");
         resultRepositoryPort.save(ApplicationMaterialGenerationResult.create(

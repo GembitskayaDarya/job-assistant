@@ -298,7 +298,8 @@ public class PrepareApplicationPackageUseCase {
             case ALREADY_FAILED, FAILED -> {
                 log.warn("Application material generation {} is failed (failureCode={})",
                         outcome.generation().id(), outcome.generation().failureCode());
-                yield new PrepareApplicationPackageOutcome.Failed(outcome.generation().id());
+                yield new PrepareApplicationPackageOutcome.Failed(
+                        outcome.generation().id(), failureReasonFor(outcome.generation().failureCode()));
             }
         };
     }
@@ -309,7 +310,7 @@ public class PrepareApplicationPackageUseCase {
             renderResult = renderApplicationMaterialsUseCase.render(generation.id());
         } catch (RenderApplicationMaterialsException e) {
             log.error("Failed to render application materials for generation {}", generation.id(), e);
-            return new PrepareApplicationPackageOutcome.Failed(generation.id());
+            return new PrepareApplicationPackageOutcome.Failed(generation.id(), failureReasonFor(e.reason()));
         }
 
         try {
@@ -320,12 +321,50 @@ public class PrepareApplicationPackageUseCase {
                     new PreparedApplicationPackage(generation.id(), reused, cv, coverLetter));
         } catch (FileStorageException e) {
             log.error("Failed to load application material artifact content for generation {}", generation.id(), e);
-            return new PrepareApplicationPackageOutcome.Failed(generation.id());
+            return new PrepareApplicationPackageOutcome.Failed(generation.id(), ApplicationPackageFailureReason.DOCUMENT_DELIVERY_FAILED);
         }
     }
 
     private PreparedDocument loadDocument(ApplicationMaterialArtifact artifact) {
         StoredFileContent content = fileStoragePort.load(artifact.storageKey());
         return new PreparedDocument(artifact.fileName(), artifact.contentType(), content.content());
+    }
+
+    /**
+     * Sprint 11 Big Block 7 (Part 11): maps a persisted {@link ApplicationMaterialsGenerationFailureCode}
+     * name to the safe, Telegram-presentable {@link ApplicationPackageFailureReason} - the only place
+     * that translation happens, so {@code ApplicationMaterialsGenerationFailureCode} (internal,
+     * persistence-adjacent) never needs to be understood by the Telegram layer directly. An unknown/
+     * unparseable code (should not happen for a code this application itself wrote) safely falls back
+     * to {@link ApplicationPackageFailureReason#UNKNOWN}.
+     */
+    private ApplicationPackageFailureReason failureReasonFor(String failureCode) {
+        if (failureCode == null) {
+            return ApplicationPackageFailureReason.UNKNOWN;
+        }
+        try {
+            return switch (ApplicationMaterialsGenerationFailureCode.valueOf(failureCode)) {
+                case CANDIDATE_CONTEXT_NOT_CONFIGURED -> ApplicationPackageFailureReason.CANDIDATE_CONTEXT_NOT_CONFIGURED;
+                case CANDIDATE_CONTEXT_VERSION_MISMATCH -> ApplicationPackageFailureReason.CANDIDATE_CONTEXT_VERSION_MISMATCH;
+                case AI_PROVIDER_ERROR -> ApplicationPackageFailureReason.AI_PROVIDER_ERROR;
+                case MALFORMED_AI_RESPONSE -> ApplicationPackageFailureReason.MALFORMED_AI_RESPONSE;
+                case CV_TAILORING_VALIDATION_FAILED -> ApplicationPackageFailureReason.CV_TAILORING_VALIDATION_FAILED;
+                case RESULT_VALIDATION_FAILED -> ApplicationPackageFailureReason.COVER_LETTER_VALIDATION_FAILED;
+                case PERSISTENCE_FAILURE, STALE_IN_PROGRESS -> ApplicationPackageFailureReason.UNKNOWN;
+            };
+        } catch (IllegalArgumentException e) {
+            return ApplicationPackageFailureReason.UNKNOWN;
+        }
+    }
+
+    /** Sprint 11 Big Block 7 (Part 11): maps a {@link RenderApplicationMaterialsException.Reason} to the safe, Telegram-presentable category. */
+    private ApplicationPackageFailureReason failureReasonFor(RenderApplicationMaterialsException.Reason reason) {
+        return switch (reason) {
+            case RENDERING_FAILED -> ApplicationPackageFailureReason.RENDERING_FAILED;
+            case ATS_VERIFICATION_FAILED -> ApplicationPackageFailureReason.ATS_VERIFICATION_FAILED;
+            case GENERATION_NOT_COMPLETED, SEMANTIC_RESULT_MISSING, STORAGE_FAILED,
+                    STORAGE_CONTENT_CONFLICT, SNAPSHOT_PERSISTENCE_FAILED, ARTIFACT_METADATA_PERSISTENCE_FAILED ->
+                    ApplicationPackageFailureReason.UNKNOWN;
+        };
     }
 }

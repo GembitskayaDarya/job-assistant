@@ -15,15 +15,13 @@ import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationM
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsAiPort;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationFailureCode;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationResponse;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedApplicationMaterials;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetter;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetterParagraph;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCv;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCvExperience;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedExperienceBullet;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -33,6 +31,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -67,6 +66,21 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
 
     @MockitoBean
     private ApplicationMaterialsAiPort aiPort;
+
+    @MockitoBean
+    private CvTailoringAiPort cvTailoringAiPort;
+
+    /**
+     * Sprint 11 Big Block 7: every test in this class that reaches CV tailoring at all needs a
+     * successful {@link CvTailoringAiPort#tailor} result - this class's own focus is cover-letter/
+     * lifecycle behavior, not CV tailoring failure classification (see {@code
+     * CvTailoringUseCaseTest} for that). An empty {@link CvTailoringResult} always validates
+     * successfully against any candidate context, since it references no ids at all.
+     */
+    @BeforeEach
+    void stubCvTailoringToSucceedByDefault() {
+        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+    }
 
     // ==================== 1-3. Successful generation, lifecycle, result persisted once ====================
 
@@ -149,22 +163,36 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
     // ==================== Validation failure ====================
 
     @Test
-    void generate_resultValidationFailure_transitionsToFailedWithValidationFailedCode() {
+    void generate_coverLetterValidationFailure_transitionsToFailedWithValidationFailedCode() {
         UUID vacancyId = aVacancy("validation-failure-" + UUID.randomUUID()).getId();
         UUID generationId = createMatchingGeneration(vacancyId);
-        GeneratedCvExperience experienceWithUnknownPosition = new GeneratedCvExperience(
-                UUID.randomUUID(), List.of(new GeneratedExperienceBullet("Did work", List.of(UUID.randomUUID()))));
-        GeneratedApplicationMaterials invalidMaterials = new GeneratedApplicationMaterials(
-                new GeneratedCv("Headline", "Summary", List.of(), List.of(experienceWithUnknownPosition), List.of()),
-                minimalCoverLetter());
+        GeneratedCoverLetter coverLetterWithUnknownSourceId = new GeneratedCoverLetter(
+                null, List.of(new GeneratedCoverLetterParagraph("Did work", List.of(UUID.randomUUID()))), "Sincerely");
         when(aiPort.generate(any(), any()))
-                .thenReturn(new ApplicationMaterialsGenerationResponse(invalidMaterials, "openai", "gpt-4o-mini", 1));
+                .thenReturn(new ApplicationMaterialsGenerationResponse(coverLetterWithUnknownSourceId, "openai", "gpt-4o-mini", 1));
 
         GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
 
         assertThat(outcome.generation().failureCode())
                 .isEqualTo(ApplicationMaterialsGenerationFailureCode.RESULT_VALIDATION_FAILED.name());
         assertThat(resultRepositoryPort.findByGenerationId(generationId)).isEmpty();
+    }
+
+    @Test
+    void generate_cvTailoringValidationFailure_transitionsToFailedWithCvTailoringValidationFailedCode() {
+        UUID vacancyId = aVacancy("cv-validation-failure-" + UUID.randomUUID()).getId();
+        UUID generationId = createMatchingGeneration(vacancyId);
+        // Unknown skill id - CvTailoringValidator rejects this against any real candidate context.
+        when(cvTailoringAiPort.tailor(any(), any()))
+                .thenReturn(new CvTailoringResult(null, List.of(UUID.randomUUID()), List.of(), List.of()));
+
+        GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
+
+        assertThat(outcome.status()).isEqualTo(GenerationOutcomeStatus.FAILED);
+        assertThat(outcome.generation().failureCode())
+                .isEqualTo(ApplicationMaterialsGenerationFailureCode.CV_TAILORING_VALIDATION_FAILED.name());
+        assertThat(resultRepositoryPort.findByGenerationId(generationId)).isEmpty();
+        verify(aiPort, never()).generate(any(), any());
     }
 
     // ==================== 14. Duplicate concurrent start ====================
@@ -300,15 +328,7 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
     }
 
     private ApplicationMaterialsGenerationResponse validAiResponse() {
-        return new ApplicationMaterialsGenerationResponse(minimalMaterials(), "openai", "gpt-4o-mini", 1);
-    }
-
-    private GeneratedApplicationMaterials minimalMaterials() {
-        return new GeneratedApplicationMaterials(minimalCv(), minimalCoverLetter());
-    }
-
-    private GeneratedCv minimalCv() {
-        return new GeneratedCv("Senior Backend Engineer", "Experienced backend engineer.", List.of(), List.of(), List.of());
+        return new ApplicationMaterialsGenerationResponse(minimalCoverLetter(), "openai", "gpt-4o-mini", 1);
     }
 
     private GeneratedCoverLetter minimalCoverLetter() {

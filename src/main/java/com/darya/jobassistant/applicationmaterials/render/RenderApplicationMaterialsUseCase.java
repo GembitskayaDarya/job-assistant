@@ -7,21 +7,23 @@ import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterial
 import com.darya.jobassistant.applicationmaterials.artifact.aggregate.ApplicationMaterialArtifact;
 import com.darya.jobassistant.applicationmaterials.artifact.aggregate.ApplicationMaterialArtifactAlreadyExistsException;
 import com.darya.jobassistant.applicationmaterials.artifact.aggregate.ApplicationMaterialArtifactRepositoryPort;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedApplicationMaterials;
+import com.darya.jobassistant.applicationmaterials.render.ats.AtsCvVerifier;
+import com.darya.jobassistant.applicationmaterials.render.ats.AtsPdfTextExtractorPort;
+import com.darya.jobassistant.applicationmaterials.render.ats.AtsTextExtractionException;
+import com.darya.jobassistant.applicationmaterials.render.ats.AtsVerificationResult;
 import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMaterialDocumentRendererPort;
 import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMaterialFormat;
 import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMaterialType;
 import com.darya.jobassistant.applicationmaterials.render.model.DocumentRenderingException;
 import com.darya.jobassistant.applicationmaterials.render.model.RenderModelAssembler;
 import com.darya.jobassistant.applicationmaterials.render.model.RenderableApplicationMaterials;
+import com.darya.jobassistant.applicationmaterials.render.model.RenderableCoverLetter;
 import com.darya.jobassistant.applicationmaterials.render.model.RenderedDocument;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshot;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotAlreadyExistsException;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
-import com.darya.jobassistant.candidatecontext.applicationmaterials.ApplicationMaterialsCandidateContextProvider;
-import com.darya.jobassistant.candidatecontext.applicationmaterials.model.CandidateContextForApplicationMaterials;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.CandidateContextVersionMismatchException;
 import com.darya.jobassistant.integrations.filestorage.FileStorageContentConflictException;
 import com.darya.jobassistant.integrations.filestorage.FileStorageException;
@@ -43,9 +45,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Sprint 10 Step 4: the application use case orchestrating rendering of a {@code COMPLETED}
  * generation's CV and cover letter into stored PDF artifacts. The only caller of {@link
- * ApplicationMaterialDocumentRendererPort} and {@link FileStoragePort} in this codebase. Makes no
- * AI call whatsoever - it operates entirely on an already-completed generation's persisted semantic
- * result.
+ * ApplicationMaterialDocumentRendererPort}, {@link AtsPdfTextExtractorPort}, and {@link
+ * FileStoragePort} in this codebase. Makes no AI call whatsoever - it operates entirely on an
+ * already-completed generation's persisted semantic result.
  *
  * <h2>Flow</h2>
  *
@@ -57,16 +59,35 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       GenerateApplicationMaterialsUseCase} persist it eagerly, in the same transaction as the
  *       semantic result and the {@code COMPLETED} transition (see that class's javadoc). {@link
  *       #createSnapshot} below is a <em>legacy fallback</em>, kept only for generations completed
- *       before that fix and therefore missing a snapshot of their own; it is the only point that
- *       calls {@link ApplicationMaterialsCandidateContextProvider} (enforcing the generation's
- *       expected Candidate Profile/Career History versions) - once a snapshot exists, by either
- *       path, it is reused forever, and Candidate Profile/Career History drifting after that point
- *       never blocks re-rendering.
- *   <li>For each of {@link ApplicationMaterialType#CV}/{@link ApplicationMaterialType#COVER_LETTER}:
- *       reuse the existing {@link ApplicationMaterialArtifact} if one is already recorded for this
- *       exact (generation, material, format, renderer version); otherwise render, store, and
- *       persist metadata for a new one.
+ *       before that fix and therefore missing a snapshot of their own - Sprint 11 Big Block 7
+ *       simplified it further: since {@link ApplicationMaterialGenerationResult#cv()} is already a
+ *       fully-assembled {@code TailoredCvDocument} (no more raw AI CV output needing canonical-fact
+ *       resolution against a reloaded Candidate Profile/Career History context), this fallback no
+ *       longer calls any candidate-context provider at all - only the cover letter still needs
+ *       {@link com.darya.jobassistant.integrations.jobsource.JobOffer} to assemble its {@code
+ *       RenderableCoverLetter}. Once a snapshot exists, by either path, it is reused forever.
+ *   <li>For {@link ApplicationMaterialType#CV}: render, then run {@link AtsCvVerifier#verify}
+ *       (via {@link AtsPdfTextExtractorPort} to extract the rendered PDF's text) <em>before</em>
+ *       storing anything - see {@link #verifyAtsReadability} and the "ATS verification gate"
+ *       section below. For both {@link ApplicationMaterialType#CV}/{@link
+ *       ApplicationMaterialType#COVER_LETTER}: reuse the existing {@link ApplicationMaterialArtifact}
+ *       if one is already recorded for this exact (generation, material, format, renderer version);
+ *       otherwise render (and, for CV, verify), store, and persist metadata for a new one.
  * </ol>
+ *
+ * <h2>ATS verification gate (Sprint 11 Big Block 7)</h2>
+ *
+ * A freshly-rendered CV PDF is never stored, and its {@link ApplicationMaterialArtifact} metadata is
+ * never persisted, unless {@link AtsCvVerifier#verify} reports {@link
+ * com.darya.jobassistant.applicationmaterials.render.ats.AtsVerificationStatus#ATS_READABLE}. A
+ * failure throws {@link RenderApplicationMaterialsException} with {@link
+ * RenderApplicationMaterialsException.Reason#ATS_VERIFICATION_FAILED} - the specific violations are
+ * logged (categories/short factual details only, never full bullet/summary prose - see {@link
+ * com.darya.jobassistant.applicationmaterials.render.ats.AtsVerificationViolation}'s javadoc) but
+ * never included in the exception message a caller might surface further. This check never runs for
+ * the cover letter (free-form prose has no structural section/ordering contract to verify against).
+ * Content is never automatically weakened or rewritten to force verification to pass - a failure is
+ * always reported as a failure.
  *
  * <h2>Filesystem/PostgreSQL consistency</h2>
  *
@@ -113,10 +134,10 @@ public class RenderApplicationMaterialsUseCase {
     private final ApplicationMaterialGenerationResultRepositoryPort resultRepositoryPort;
     private final ApplicationMaterialRenderSnapshotRepositoryPort snapshotRepositoryPort;
     private final ApplicationMaterialArtifactRepositoryPort artifactRepositoryPort;
-    private final ApplicationMaterialsCandidateContextProvider candidateContextProvider;
     private final VacancyQueryService vacancyQueryService;
     private final VacancyJobOfferMapper vacancyJobOfferMapper;
     private final ApplicationMaterialDocumentRendererPort rendererPort;
+    private final AtsPdfTextExtractorPort atsTextExtractorPort;
     private final FileStoragePort fileStoragePort;
 
     private final TransactionTemplate snapshotTransaction;
@@ -128,20 +149,20 @@ public class RenderApplicationMaterialsUseCase {
             ApplicationMaterialGenerationResultRepositoryPort resultRepositoryPort,
             ApplicationMaterialRenderSnapshotRepositoryPort snapshotRepositoryPort,
             ApplicationMaterialArtifactRepositoryPort artifactRepositoryPort,
-            ApplicationMaterialsCandidateContextProvider candidateContextProvider,
             VacancyQueryService vacancyQueryService,
             VacancyJobOfferMapper vacancyJobOfferMapper,
             ApplicationMaterialDocumentRendererPort rendererPort,
+            AtsPdfTextExtractorPort atsTextExtractorPort,
             FileStoragePort fileStoragePort,
             PlatformTransactionManager transactionManager) {
         this.generationRepositoryPort = generationRepositoryPort;
         this.resultRepositoryPort = resultRepositoryPort;
         this.snapshotRepositoryPort = snapshotRepositoryPort;
         this.artifactRepositoryPort = artifactRepositoryPort;
-        this.candidateContextProvider = candidateContextProvider;
         this.vacancyQueryService = vacancyQueryService;
         this.vacancyJobOfferMapper = vacancyJobOfferMapper;
         this.rendererPort = rendererPort;
+        this.atsTextExtractorPort = atsTextExtractorPort;
         this.fileStoragePort = fileStoragePort;
 
         this.snapshotTransaction = newRequiresNewTransaction(transactionManager);
@@ -184,27 +205,22 @@ public class RenderApplicationMaterialsUseCase {
     }
 
     /**
-     * Legacy fallback only - see this class's javadoc. Reloads current Candidate Profile/Career
-     * History and re-validates the generation's recorded versions against it, exactly as {@code
-     * GenerateApplicationMaterialsUseCase} did at generation time; a generation completed after the
-     * production-readiness fix never reaches this method, since its snapshot already exists.
+     * Legacy fallback only - see this class's javadoc. Sprint 11 Big Block 7 simplified this: {@link
+     * ApplicationMaterialGenerationResult#cv()} is already a fully-assembled {@code
+     * TailoredCvDocument} (no canonical-fact resolution against candidate context needed any more),
+     * so building the snapshot here is now a pure, framework-free, in-memory operation - no
+     * candidate-context provider call, and therefore no {@link CandidateContextVersionMismatchException}
+     * to handle either. Only {@link VacancyJobOfferMapper} is still needed, for the cover letter's
+     * {@code RenderableCoverLetter} (vacancy title/company). A generation completed after the
+     * original production-readiness fix never reaches this method, since its snapshot already exists.
      */
     private ApplicationMaterialRenderSnapshot createSnapshot(
             ApplicationMaterialGeneration generation, ApplicationMaterialGenerationResult semanticResult) {
         Vacancy vacancy = vacancyQueryService.getById(generation.vacancyId());
         JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
 
-        CandidateContextForApplicationMaterials context;
-        try {
-            context = candidateContextProvider.loadContext(generation, jobOffer);
-        } catch (CandidateContextVersionMismatchException e) {
-            throw new RenderApplicationMaterialsException(
-                    RenderApplicationMaterialsException.Reason.CANDIDATE_CONTEXT_VERSION_MISMATCH_BEFORE_FIRST_SNAPSHOT,
-                    generation.id(), e.getMessage(), e);
-        }
-
-        GeneratedApplicationMaterials semanticContent = new GeneratedApplicationMaterials(semanticResult.cv(), semanticResult.coverLetter());
-        RenderableApplicationMaterials renderable = RenderModelAssembler.assemble(semanticContent, context, jobOffer);
+        RenderableCoverLetter renderableCoverLetter = RenderModelAssembler.assembleCoverLetter(semanticResult.coverLetter(), jobOffer);
+        RenderableApplicationMaterials renderable = new RenderableApplicationMaterials(semanticResult.cv(), renderableCoverLetter);
         ApplicationMaterialRenderSnapshot toSave = ApplicationMaterialRenderSnapshot.create(generation.id(), renderable);
 
         try {
@@ -237,6 +253,9 @@ public class RenderApplicationMaterialsUseCase {
         }
 
         RenderedDocument document = renderDocument(generation.id(), snapshot, materialType);
+        if (materialType == ApplicationMaterialType.CV) {
+            verifyAtsReadability(generation.id(), snapshot, document);
+        }
         String storageKey = storageKey(generation.vacancyId(), generation.id(), materialType);
         String fileName = ApplicationMaterialFileNames.forType(materialType, snapshot.content().coverLetter().vacancyTitle());
 
@@ -282,6 +301,32 @@ public class RenderApplicationMaterialsUseCase {
                     RenderApplicationMaterialsException.Reason.RENDERING_FAILED, generationId,
                     "failed to render " + materialType, e);
         }
+    }
+
+    /**
+     * Sprint 11 Big Block 7: the ATS verification gate - see class javadoc. Runs only for {@link
+     * ApplicationMaterialType#CV}. Throws before the caller ever stores {@code document}'s bytes or
+     * persists artifact metadata for it.
+     */
+    private void verifyAtsReadability(UUID generationId, ApplicationMaterialRenderSnapshot snapshot, RenderedDocument document) {
+        String extractedText;
+        try {
+            extractedText = atsTextExtractorPort.extractText(document.content());
+        } catch (AtsTextExtractionException e) {
+            log.error("Failed to extract text from rendered CV PDF for ATS verification, generation {}", generationId, e);
+            throw new RenderApplicationMaterialsException(
+                    RenderApplicationMaterialsException.Reason.ATS_VERIFICATION_FAILED, generationId,
+                    "failed to extract text from the rendered CV PDF", e);
+        }
+
+        AtsVerificationResult result = AtsCvVerifier.verify(snapshot.content().cv(), extractedText);
+        if (!result.readable()) {
+            log.error("Generated CV PDF failed ATS structural verification for generation {}: {}", generationId, result.violations());
+            throw new RenderApplicationMaterialsException(
+                    RenderApplicationMaterialsException.Reason.ATS_VERIFICATION_FAILED, generationId,
+                    "generated CV PDF failed structural ATS verification with " + result.violations().size() + " violation(s)");
+        }
+        log.info("ATS structural verification passed for generation {}", generationId);
     }
 
     private StoredFile store(UUID generationId, String storageKey, RenderedDocument document) {

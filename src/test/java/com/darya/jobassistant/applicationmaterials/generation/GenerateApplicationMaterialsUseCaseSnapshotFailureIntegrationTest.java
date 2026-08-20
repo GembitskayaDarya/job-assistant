@@ -11,13 +11,13 @@ import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterial
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsAiPort;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationFailureCode;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationResponse;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedApplicationMaterials;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetter;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetterParagraph;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCv;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -62,6 +62,9 @@ class GenerateApplicationMaterialsUseCaseSnapshotFailureIntegrationTest extends 
     private ApplicationMaterialsAiPort aiPort;
 
     @MockitoBean
+    private CvTailoringAiPort cvTailoringAiPort;
+
+    @MockitoBean
     private ApplicationMaterialRenderSnapshotRepositoryPort snapshotRepositoryPort;
 
     @Test
@@ -69,6 +72,7 @@ class GenerateApplicationMaterialsUseCaseSnapshotFailureIntegrationTest extends 
         Vacancy vacancy = aVacancy("snapshot-failure-" + UUID.randomUUID());
         UUID generationId = createMatchingGeneration(vacancy.getId());
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
+        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
         when(snapshotRepositoryPort.save(any())).thenThrow(new RuntimeException("simulated snapshot persistence failure"));
 
         GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
@@ -102,15 +106,7 @@ class GenerateApplicationMaterialsUseCaseSnapshotFailureIntegrationTest extends 
     }
 
     private ApplicationMaterialsGenerationResponse validAiResponse() {
-        return new ApplicationMaterialsGenerationResponse(minimalMaterials(), "openai", "gpt-4o-mini", 1);
-    }
-
-    private GeneratedApplicationMaterials minimalMaterials() {
-        return new GeneratedApplicationMaterials(minimalCv(), minimalCoverLetter());
-    }
-
-    private GeneratedCv minimalCv() {
-        return new GeneratedCv("Senior Backend Engineer", "Experienced backend engineer.", List.of(), List.of(), List.of());
+        return new ApplicationMaterialsGenerationResponse(minimalCoverLetter(), "openai", "gpt-4o-mini", 1);
     }
 
     private GeneratedCoverLetter minimalCoverLetter() {

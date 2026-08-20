@@ -1,0 +1,66 @@
+# Example baseline CV selection - NOT real personal data. Copy to config/private/baseline-cv-
+# selection.yml and edit the values below to author your own approved Universal CV, or point
+# BASELINE_CV_SELECTION_PATH at a file of your own anywhere on disk.
+#
+# Every company/position/project/personal-project reference below must match the corresponding
+# CvSourceCompany#name()/CvSourcePosition#title()/CvSourceProject#name()/CvSourcePersonalProject#name()
+# EXACTLY - these are the same factual company/position/project names your Career History/Personal
+# Projects source already produces. Every "responsibilities"/"achievements"/"technologies"/
+# "highlights" list has exactly three meanings:
+#   ["*"]        - select every factual item for that node, unchanged, in source order
+#   [ "a", "b" ] - select and order only those exact factual values (exact text/name match)
+#   []           - a deliberate, explicit "show none for this node" selection
+#
+# See BaselineCvSelectionResolver's javadoc for why natural values (not raw ids) are used here.
+baseline-cv:
+  professional-summary: >
+    Senior Backend Engineer with 6+ years of experience designing and building high-throughput,
+    low-latency Java/Spring Boot services. Currently leads component architecture and service
+    extraction for a platform handling thousands of requests per second, with hands-on experience
+    in event-driven messaging, distributed caching, and both relational and NoSQL data stores.
+
+  skills:
+    - Java
+    - Spring Boot
+    - Apache Kafka
+    - PostgreSQL
+    - Redis
+    - Microservices
+    - Docker
+
+  positions:
+    - company: "Acme Platform Inc"
+      position: "Tech Lead"
+      responsibilities: ["*"]
+      achievements: ["*"]
+      projects:
+        - project: "Core Payments Service"
+          technologies: ["*"]
+
+    - company: "Acme Platform Inc"
+      position: "Senior Backend Engineer"
+      responsibilities: ["*"]
+      achievements: ["*"]
+      projects:
+        - project: "Core Payments Service"
+          technologies:
+            - "Java"
+            - "Spring Boot"
+            - "Kafka"
+            - "PostgreSQL"
+
+    - company: "Legacy Systems Corp"
+      position: "Software Engineer"
+      responsibilities: ["*"]
+      achievements:
+        - "Reduced production incident rate by refactoring the highest-risk module of the billing pipeline."
+      projects:
+        - project: "Billing Integration"
+          technologies:
+            - "Java"
+            - "Spring Boot"
+
+  personal-projects:
+    - project: "Open Source Side Project"
+      highlights: ["*"]
+      technologies: ["*"]

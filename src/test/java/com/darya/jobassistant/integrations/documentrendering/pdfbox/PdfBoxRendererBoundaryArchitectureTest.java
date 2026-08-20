@@ -20,16 +20,23 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
- * Sprint 10 Step 4: guards {@code integrations.documentrendering.pdfbox} - the document-rendering
- * adapter boundary - against ever depending on persistence, file storage, Telegram, or another AI
- * provider. {@link PdfBoxApplicationMaterialDocumentRenderer} converts an already-assembled, trusted
- * render model into bytes and nothing else; it must never query a repository, call OpenAI, access
- * Telegram, write to the filesystem, or know a storage root path - see that class's javadoc.
+ * Sprint 10 Step 4 (Sprint 11 Big Block 7 correction): guards {@code
+ * integrations.documentrendering.pdfbox} - the document-rendering adapter boundary - against ever
+ * depending on persistence, file storage, Telegram, or another AI provider. {@link
+ * PdfBoxApplicationMaterialDocumentRenderer} converts an already-assembled, trusted render model
+ * into bytes and nothing else; it must never query a repository, call OpenAI, access Telegram, write
+ * to the filesystem, or know a storage root path - see that class's javadoc.
  *
  * <p>A denylist, not an allowlist (mirrors {@code AiIntegrationBoundaryArchitectureTest}'s
  * convention): {@code org.apache.pdfbox.*}, JDK types, and the bounded {@code
- * applicationmaterials.render.model} contract this package implements are all expected and
- * permitted; only the specific forbidden categories below are checked.
+ * applicationmaterials.render.model}/{@code applicationmaterials.render.ats} contracts this package
+ * implements are all expected and permitted; only the specific forbidden categories below are
+ * checked. {@code candidatecontext.cv.document.model} (Sprint 11 Big Block 7) is a deliberate,
+ * narrow carve-out from the otherwise-forbidden {@code candidatecontext} tree - mirrors {@code
+ * AiIntegrationBoundaryArchitectureTest}'s carve-out for {@code candidatecontext.analysis}: {@link
+ * PdfBoxApplicationMaterialDocumentRenderer#renderCv} needs {@code TailoredCvDocument} in its
+ * signature (the port it implements requires it), but every other {@code candidatecontext}
+ * sub-package (the raw snapshot, tailoring/AI, career history projections) remains forbidden.
  */
 class PdfBoxRendererBoundaryArchitectureTest {
 
@@ -48,7 +55,15 @@ class PdfBoxRendererBoundaryArchitectureTest {
             "com.darya.jobassistant.applicationmaterials.result",
             "com.darya.jobassistant.applicationmaterials.artifact",
             "com.darya.jobassistant.applicationmaterials.render.snapshot",
-            "com.darya.jobassistant.candidatecontext",
+            "com.darya.jobassistant.candidatecontext.analysis",
+            "com.darya.jobassistant.candidatecontext.applicationmaterials",
+            "com.darya.jobassistant.candidatecontext.runtime",
+            "com.darya.jobassistant.candidatecontext.cv.model",
+            "com.darya.jobassistant.candidatecontext.cv.tailoring",
+            "com.darya.jobassistant.candidatecontext.cv.document.CvAssembler",
+            "com.darya.jobassistant.candidatecontext.CandidateContextSnapshot",
+            "com.darya.jobassistant.candidatecontext.CandidateContextProvider",
+            "com.darya.jobassistant.candidatecontext.CareerHistoryAvailability",
             "com.darya.jobassistant.vacancies");
 
     @Test

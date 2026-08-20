@@ -8,11 +8,12 @@ import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterial
 import com.darya.jobassistant.applicationmaterials.persistence.ApplicationMaterialGenerationRepositoryAdapter;
 import com.darya.jobassistant.applicationmaterials.render.model.RenderableApplicationMaterials;
 import com.darya.jobassistant.applicationmaterials.render.model.RenderableCoverLetter;
-import com.darya.jobassistant.applicationmaterials.render.model.RenderableCv;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshot;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotAlreadyExistsException;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.repository.ApplicationMaterialRenderSnapshotRepository;
 import com.darya.jobassistant.applicationmaterials.repository.ApplicationMaterialGenerationRepository;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
@@ -122,7 +123,8 @@ class ApplicationMaterialRenderSnapshotRepositoryAdapterTest {
                         .toString();
         assertThat(columnType).isEqualToIgnoringCase("jsonb");
 
-        Object headline = entityManager.createNativeQuery("SELECT content -> 'cv' ->> 'headline' FROM application_material_render_snapshot WHERE id = ?1")
+        Object headline = entityManager.createNativeQuery(
+                        "SELECT content -> 'cv' -> 'header' ->> 'cvHeadline' FROM application_material_render_snapshot WHERE id = ?1")
                 .setParameter(1, saved.id())
                 .getSingleResult();
         assertThat(headline).isEqualTo("Tailored Backend Engineer");
@@ -181,8 +183,9 @@ class ApplicationMaterialRenderSnapshotRepositoryAdapterTest {
     }
 
     private RenderableApplicationMaterials sampleContent() {
-        RenderableCv cv = new RenderableCv("Senior Java Backend Engineer", "Senior", 6, "Tailored Backend Engineer",
-                "Experienced backend engineer.", List.of(), List.of(), List.of("English"));
+        TailoredCvDocument cv = new TailoredCvDocument(
+                new TailoredCvHeader("Jane Candidate", "Tailored Backend Engineer", "Remote", "jane@example.test", null, null),
+                "Experienced backend engineer.", List.of(), List.of(), List.of(), List.of(), List.of());
         RenderableCoverLetter coverLetter = new RenderableCoverLetter(
                 null, List.of("Paragraph one."), "Sincerely", "Backend Engineer", "Acme Corp");
         return new RenderableApplicationMaterials(cv, coverLetter);

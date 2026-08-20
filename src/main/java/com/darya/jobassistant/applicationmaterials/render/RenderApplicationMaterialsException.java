@@ -21,11 +21,16 @@ public class RenderApplicationMaterialsException extends RuntimeException {
         /** The generation is {@code COMPLETED} but has no persisted {@code ApplicationMaterialGenerationResult}. */
         SEMANTIC_RESULT_MISSING,
 
-        /** No render snapshot exists yet, and the current Candidate Profile/Career History no longer matches the generation's expected versions. */
-        CANDIDATE_CONTEXT_VERSION_MISMATCH_BEFORE_FIRST_SNAPSHOT,
-
         /** The document renderer failed to produce bytes from an otherwise-valid render snapshot. */
         RENDERING_FAILED,
+
+        /**
+         * Sprint 11 Big Block 7: the freshly-rendered CV PDF failed {@code AtsCvVerifier}'s
+         * structural readability check (or its text could not be extracted at all) - the CV is never
+         * stored or given an artifact when this is thrown; see {@code RenderApplicationMaterialsUseCase}'s
+         * "ATS verification gate" javadoc.
+         */
+        ATS_VERIFICATION_FAILED,
 
         /** {@code FileStoragePort#store} failed for a reason other than a content conflict. */
         STORAGE_FAILED,

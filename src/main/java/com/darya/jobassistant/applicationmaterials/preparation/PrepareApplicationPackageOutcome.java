@@ -36,8 +36,13 @@ public sealed interface PrepareApplicationPackageOutcome {
      * Generation, rendering, or artifact loading failed for a controlled, safe-to-report reason -
      * see the use case's log output for the underlying cause. {@code generationId} is present
      * whenever a generation row exists to reference (every case except a candidate-context
-     * version race detected before any generation was created).
+     * version race detected before any generation was created). {@link #reason} (Sprint 11 Big
+     * Block 7) is the safe, Telegram-presentable category - see {@link ApplicationPackageFailureReason}.
      */
-    record Failed(UUID generationId) implements PrepareApplicationPackageOutcome {
+    record Failed(UUID generationId, ApplicationPackageFailureReason reason) implements PrepareApplicationPackageOutcome {
+
+        public Failed {
+            reason = reason == null ? ApplicationPackageFailureReason.UNKNOWN : reason;
+        }
     }
 }

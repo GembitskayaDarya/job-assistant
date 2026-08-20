@@ -7,6 +7,7 @@ import com.darya.jobassistant.telegram.callback.VacancyImportCallbackHandler;
 import com.darya.jobassistant.telegram.callback.VacancyImportCallbackOutcome;
 import com.darya.jobassistant.telegram.command.BotResponse;
 import com.darya.jobassistant.telegram.command.CommandRegistry;
+import com.darya.jobassistant.telegram.command.TelegramSendResult;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,11 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
     private final VacancyAnalysisCallbackHandler vacancyAnalysisCallbackHandler;
     private final ApplicationPackageCallbackHandler applicationPackageCallbackHandler;
 
+    private static final String DOCUMENT_DELIVERY_FAILURE_MESSAGE = """
+            I generated your documents but couldn't deliver them here.
+
+            Please try again.""";
+
     @Override
     public String getBotToken() {
         return telegramProperties.token();
@@ -59,7 +65,15 @@ public class JobAssistantTelegramBot extends DefaultLongPollingUpdateConsumer im
             return;
         }
         Message message = update.getMessage();
-        telegramMessageSender.send(message.getChatId(), handleMessage(message));
+        TelegramSendResult sendResult = telegramMessageSender.send(message.getChatId(), handleMessage(message));
+        // Release-gate fix: a generic, safe safety net - covers /prepare (and any future command
+        // whose BotResponse carries documents) without coupling this generic dispatcher to
+        // applicationmaterials-specific failure-reason types. Never fires for a plain text-only
+        // response (BotResponse.documents() is empty, so allDocumentsDelivered() is vacuously true).
+        if (!sendResult.allDocumentsDelivered()) {
+            log.error("Failed to deliver one or more documents to chat {}", message.getChatId());
+            telegramMessageSender.send(message.getChatId(), BotResponse.text(DOCUMENT_DELIVERY_FAILURE_MESSAGE));
+        }
     }
 
     @AfterBotRegistration

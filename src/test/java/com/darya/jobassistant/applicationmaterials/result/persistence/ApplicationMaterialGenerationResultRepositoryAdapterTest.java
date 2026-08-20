@@ -7,14 +7,11 @@ import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterial
 import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetter;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetterParagraph;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCv;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCvExperience;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCvSkill;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedExperienceBullet;
 import com.darya.jobassistant.applicationmaterials.persistence.ApplicationMaterialGenerationRepositoryAdapter;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultAlreadyExistsException;
-import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.config.JpaAuditingConfig;
@@ -95,13 +92,8 @@ class ApplicationMaterialGenerationResultRepositoryAdapterTest {
     @Test
     void save_thenFindByGenerationId_roundTripsCvAndCoverLetterContentThroughRealJsonb() {
         UUID generationId = createGeneration();
-        UUID positionId = UUID.randomUUID();
         UUID responsibilityId = UUID.randomUUID();
-        GeneratedCv cv = new GeneratedCv("Senior Backend Engineer", "Experienced backend engineer.",
-                List.of(new GeneratedCvSkill("Java", SkillProficiency.EXPERT), new GeneratedCvSkill("Kafka", null)),
-                List.of(new GeneratedCvExperience(positionId,
-                        List.of(new GeneratedExperienceBullet("Built backend services", List.of(responsibilityId))))),
-                List.of("en", "pl"));
+        TailoredCvDocument cv = fullCv();
         GeneratedCoverLetter coverLetter = new GeneratedCoverLetter("Dear Hiring Manager,",
                 List.of(new GeneratedCoverLetterParagraph("I am excited to apply.", List.of(responsibilityId))),
                 "Sincerely, the candidate");
@@ -153,11 +145,11 @@ class ApplicationMaterialGenerationResultRepositoryAdapterTest {
         assertThat(columnType).isEqualToIgnoringCase("jsonb");
 
         Object queried = entityManager.createNativeQuery("""
-                        SELECT cv_content ->> 'headline' FROM application_material_generation_result WHERE id = ?1
+                        SELECT cv_content -> 'header' ->> 'fullName' FROM application_material_generation_result WHERE id = ?1
                         """)
                 .setParameter(1, saved.id())
                 .getSingleResult();
-        assertThat(queried).isEqualTo("Headline");
+        assertThat(queried).isEqualTo("Jane Candidate");
     }
 
     // ==================== Idempotency / uniqueness ====================
@@ -236,13 +228,16 @@ class ApplicationMaterialGenerationResultRepositoryAdapterTest {
                 .build());
     }
 
-    private GeneratedCv minimalCv() {
-        UUID positionId = UUID.randomUUID();
-        UUID responsibilityId = UUID.randomUUID();
-        return new GeneratedCv("Headline", "Summary", List.of(),
-                List.of(new GeneratedCvExperience(positionId,
-                        List.of(new GeneratedExperienceBullet("Did work", List.of(responsibilityId))))),
-                List.of());
+    private TailoredCvDocument minimalCv() {
+        return new TailoredCvDocument(
+                new TailoredCvHeader("Jane Candidate", "Headline", null, null, null, null),
+                "Summary", List.of(), List.of(), List.of(), List.of(), List.of());
+    }
+
+    private TailoredCvDocument fullCv() {
+        return new TailoredCvDocument(
+                new TailoredCvHeader("Jane Candidate", "Senior Backend Engineer", "Remote", "jane@example.test", "+1 555 0100", null),
+                "Experienced backend engineer.", List.of("Java", "Kafka"), List.of(), List.of(), List.of(), List.of());
     }
 
     private GeneratedCoverLetter minimalCoverLetter() {

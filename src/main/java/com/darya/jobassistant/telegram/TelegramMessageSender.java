@@ -2,8 +2,12 @@ package com.darya.jobassistant.telegram;
 
 import com.darya.jobassistant.telegram.command.BotResponse;
 import com.darya.jobassistant.telegram.command.TelegramDocument;
+import com.darya.jobassistant.telegram.command.TelegramDocumentDeliveryResult;
+import com.darya.jobassistant.telegram.command.TelegramSendResult;
 import com.darya.jobassistant.util.TelegramMessageUtils;
 import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -36,32 +40,45 @@ public class TelegramMessageSender {
 
     private final TelegramClient telegramClient;
 
-    public void send(Long chatId, BotResponse response) {
+    /**
+     * Release-gate fix: returns a {@link TelegramSendResult} rather than {@code void} - a document
+     * upload failure is never thrown (a single flaky document must never abort delivery of the
+     * others, or of the text message that already succeeded), but it must be <em>observable</em>: a
+     * caller that promised the user "your documents are ready" needs to know whether that was
+     * actually true before treating the interaction as finished - see {@code
+     * ApplicationPackageCallbackHandler}/{@code JobAssistantTelegramBot} for how that observation is
+     * used. Every pre-existing caller that never inspected the old {@code void} return value keeps
+     * compiling and behaving identically - ignoring a return value requires no code change.
+     */
+    public TelegramSendResult send(Long chatId, BotResponse response) {
         SendMessage sendMessage = SendMessage.builder()
                 .chatId(chatId)
                 .text(TelegramMessageUtils.truncate(response.text()))
                 .parseMode(response.parseMode())
                 .replyMarkup(response.keyboard())
                 .build();
+        boolean textDelivered = true;
         try {
             telegramClient.execute(sendMessage);
         } catch (TelegramApiException e) {
             log.error("Failed to send Telegram message to chat {}", chatId, e);
+            textDelivered = false;
         }
+        List<TelegramDocumentDeliveryResult> documentResults = new ArrayList<>();
         for (TelegramDocument document : response.documents()) {
-            sendDocument(chatId, document);
+            documentResults.add(sendDocument(chatId, document));
         }
+        return new TelegramSendResult(textDelivered, documentResults);
     }
 
     /**
      * Uploads {@code document}'s bytes directly via the Telegram Bot API's multipart upload
-     * mechanism ({@link InputFile}'s stream constructor) - never a local filesystem path. Failures
-     * are logged and swallowed here, matching {@link #send}/{@link #editMessage}: a delivery
-     * failure must never propagate into (and be mistaken for) a generation/render/storage failure
-     * by this class's callers - see {@code PrepareApplicationPackageUseCase}'s Telegram-delivery-
-     * failure-semantics note.
+     * mechanism ({@link InputFile}'s stream constructor) - never a local filesystem path. A failure
+     * is logged here (full exception, for debugging) and reported back as a non-delivered {@link
+     * TelegramDocumentDeliveryResult} - never thrown - so {@link #send} always attempts every
+     * remaining document in {@code response.documents()} regardless of an earlier one's outcome.
      */
-    private void sendDocument(Long chatId, TelegramDocument document) {
+    private TelegramDocumentDeliveryResult sendDocument(Long chatId, TelegramDocument document) {
         SendDocument sendDocument = SendDocument.builder()
                 .chatId(chatId)
                 .document(new InputFile(new ByteArrayInputStream(document.content()), document.fileName()))
@@ -69,8 +86,10 @@ public class TelegramMessageSender {
         try {
             telegramClient.execute(sendDocument);
             log.info("Sent document '{}' to chat {}", document.fileName(), chatId);
+            return new TelegramDocumentDeliveryResult(document.fileName(), true);
         } catch (TelegramApiException e) {
             log.error("Failed to send document '{}' to chat {}", document.fileName(), chatId, e);
+            return new TelegramDocumentDeliveryResult(document.fileName(), false);
         }
     }
 

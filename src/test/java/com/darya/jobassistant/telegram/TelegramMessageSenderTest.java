@@ -2,6 +2,7 @@ package com.darya.jobassistant.telegram;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -9,7 +10,10 @@ import static org.mockito.Mockito.when;
 
 import com.darya.jobassistant.telegram.command.BotResponse;
 import com.darya.jobassistant.telegram.command.TelegramDocument;
+import com.darya.jobassistant.telegram.command.TelegramDocumentDeliveryResult;
+import com.darya.jobassistant.telegram.command.TelegramSendResult;
 import java.util.List;
+import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,8 +36,15 @@ class TelegramMessageSenderTest {
     private TelegramMessageSender sender;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws TelegramApiException {
         sender = new TelegramMessageSender(telegramClient);
+        // Stubbed unconditionally - works around a Mockito strict-stubbing quirk where stubbing
+        // only one overload of TelegramClient's many per-message-type execute(...) methods can
+        // misreport an unrelated, unstubbed overload invocation as a "potential stubbing problem".
+        // Individual tests override either stub (Mockito's normal last-registered-wins semantics)
+        // when they need that specific call to fail instead.
+        lenient().when(telegramClient.execute(any(SendMessage.class))).thenReturn(null);
+        lenient().when(telegramClient.execute(any(SendDocument.class))).thenReturn(null);
     }
 
     @Test
@@ -60,14 +71,63 @@ class TelegramMessageSenderTest {
         assertThat(captor.getAllValues()).allSatisfy(d -> assertThat(d.getChatId()).isEqualTo(String.valueOf(CHAT_ID)));
     }
 
+    // ==================== Release-gate fix: delivery outcome must be observable, never swallowed ====================
+
     @Test
-    void send_documentUploadFails_isLoggedAndSwallowedWithoutThrowing() throws TelegramApiException {
-        TelegramDocument document = new TelegramDocument("CV.pdf", "bytes".getBytes());
-        when(telegramClient.execute(any(SendMessage.class))).thenReturn(null);
+    void send_cvAndCoverLetterBothUploadSuccessfully_resultReportsFullDelivery() throws TelegramApiException {
+        TelegramDocument cv = new TelegramDocument("CV.pdf", "cv-bytes".getBytes());
+        TelegramDocument coverLetter = new TelegramDocument("CoverLetter.pdf", "cl-bytes".getBytes());
+
+        TelegramSendResult result = sender.send(CHAT_ID, new BotResponse("ready", null, null, List.of(cv, coverLetter)));
+
+        assertThat(result.textDelivered()).isTrue();
+        assertThat(result.allDocumentsDelivered()).isTrue();
+        assertThat(result.fullyDelivered()).isTrue();
+        assertThat(result.documentResults()).extracting("fileName", "delivered")
+                .containsExactly(Tuple.tuple("CV.pdf", true), Tuple.tuple("CoverLetter.pdf", true));
+    }
+
+    @Test
+    void send_cvUploadFails_isLoggedAndNeverThrows_butResultReportsTheFailure() throws TelegramApiException {
+        TelegramDocument cv = new TelegramDocument("CV.pdf", "cv-bytes".getBytes());
         when(telegramClient.execute(any(SendDocument.class))).thenThrow(new TelegramApiException("boom"));
 
-        sender.send(CHAT_ID, new BotResponse("ready", null, null, List.of(document)));
+        TelegramSendResult result = sender.send(CHAT_ID, new BotResponse("ready", null, null, List.of(cv)));
 
-        verify(telegramClient).execute(any(SendDocument.class));
+        assertThat(result.allDocumentsDelivered()).isFalse();
+        assertThat(result.documentResults()).containsExactly(new TelegramDocumentDeliveryResult("CV.pdf", false));
+    }
+
+    @Test
+    void send_coverLetterUploadFailsAfterCvSucceeds_stillAttemptsBoth_resultReportsOnlyTheCoverLetterFailure() throws TelegramApiException {
+        TelegramDocument cv = new TelegramDocument("CV.pdf", "cv-bytes".getBytes());
+        TelegramDocument coverLetter = new TelegramDocument("CoverLetter.pdf", "cl-bytes".getBytes());
+        // Consecutive-call stubbing: the CV's upload (first SendDocument invocation) succeeds, the
+        // cover letter's (second) throws - avoids relying on argument-matcher disambiguation across
+        // TelegramClient's many per-message-type execute(...) overloads.
+        when(telegramClient.execute(any(SendDocument.class))).thenReturn(null).thenThrow(new TelegramApiException("boom"));
+
+        TelegramSendResult result = sender.send(CHAT_ID, new BotResponse("ready", null, null, List.of(cv, coverLetter)));
+
+        // Both uploads were attempted (the CV's earlier success does not short-circuit the loop),
+        // and the result distinguishes which specific document failed.
+        verify(telegramClient, times(2)).execute(any(SendDocument.class));
+        assertThat(result.allDocumentsDelivered()).isFalse();
+        assertThat(result.documentResults()).extracting("fileName", "delivered")
+                .containsExactly(
+                        Tuple.tuple("CV.pdf", true),
+                        Tuple.tuple("CoverLetter.pdf", false));
+    }
+
+    @Test
+    void send_textMessageFailsButDocumentsSucceed_resultDistinguishesTextFromDocumentDelivery() throws TelegramApiException {
+        TelegramDocument cv = new TelegramDocument("CV.pdf", "cv-bytes".getBytes());
+        when(telegramClient.execute(any(SendMessage.class))).thenThrow(new TelegramApiException("boom"));
+
+        TelegramSendResult result = sender.send(CHAT_ID, new BotResponse("ready", null, null, List.of(cv)));
+
+        assertThat(result.textDelivered()).isFalse();
+        assertThat(result.allDocumentsDelivered()).isTrue();
+        assertThat(result.fullyDelivered()).isFalse();
     }
 }

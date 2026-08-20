@@ -38,6 +38,11 @@ import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.retry.NonTransientAiException;
 
+/**
+ * Sprint 10 Step 3 (Sprint 11 Big Block 7 correction): adapted to the cover-letter-only contract -
+ * see {@link SpringAiApplicationMaterialsAdapter}'s javadoc for why CV generation was removed
+ * entirely rather than kept-and-discarded.
+ */
 @ExtendWith(MockitoExtension.class)
 class SpringAiApplicationMaterialsAdapterTest {
 
@@ -63,7 +68,7 @@ class SpringAiApplicationMaterialsAdapterTest {
 
     @Test
     void generate_success_mapsResponseAndCapturesProviderModelAndPromptVersion() {
-        GeneratedApplicationMaterialsResponseDto dto = validResponseDto();
+        GeneratedCoverLetterResponseDto dto = validResponseDto();
         stubChatClient(dto, "gpt-4o-mini");
 
         ApplicationMaterialsGenerationResponse response = adapter.generate(context(), vacancy());
@@ -71,20 +76,10 @@ class SpringAiApplicationMaterialsAdapterTest {
         assertThat(response.aiProvider()).isEqualTo("openai");
         assertThat(response.aiModel()).isEqualTo("gpt-4o-mini");
         assertThat(response.promptVersion()).isEqualTo(SpringAiApplicationMaterialsAdapter.PROMPT_VERSION);
-        assertThat(response.materials().cv().headline()).isEqualTo("Senior Backend Engineer");
-        assertThat(response.materials().cv().experiences()).hasSize(1);
-        assertThat(response.materials().cv().experiences().get(0).careerPositionId()).isEqualTo(positionId);
-        assertThat(response.materials().cv().experiences().get(0).bullets().get(0).sourceIds()).containsExactly(responsibilityId);
-        assertThat(response.materials().coverLetter().closing()).isEqualTo("Sincerely, the candidate");
-    }
-
-    @Test
-    void generate_languagesArePopulatedFromContext_neverFromAiResponse() {
-        stubChatClient(validResponseDto(), "gpt-4o-mini");
-
-        ApplicationMaterialsGenerationResponse response = adapter.generate(context(), vacancy());
-
-        assertThat(response.materials().cv().languages()).containsExactly("en");
+        assertThat(response.coverLetter().greeting()).isEqualTo("Dear Hiring Manager,");
+        assertThat(response.coverLetter().paragraphs()).hasSize(1);
+        assertThat(response.coverLetter().paragraphs().get(0).sourceIds()).containsExactly(responsibilityId);
+        assertThat(response.coverLetter().closing()).isEqualTo("Sincerely, the candidate");
     }
 
     @Test
@@ -102,6 +97,7 @@ class SpringAiApplicationMaterialsAdapterTest {
         assertThat(systemPrompt).contains("EVIDENCE ONLY");
         assertThat(systemPrompt).contains("NOT EVIDENCE ABOUT THE CANDIDATE");
         assertThat(systemPrompt).contains("sourceIds");
+        assertThat(systemPrompt).contains("PROVENANCE");
 
         String userPrompt = userPromptCaptor.getValue();
         assertThat(userPrompt).contains(companyId.toString());
@@ -112,11 +108,8 @@ class SpringAiApplicationMaterialsAdapterTest {
 
     @Test
     void generate_malformedUuidInSourceIds_throwsApplicationMaterialsAiException() {
-        GeneratedApplicationMaterialsResponseDto malformed = new GeneratedApplicationMaterialsResponseDto(
-                new GeneratedCvResponseDto("Headline", "Summary", List.of("Java"),
-                        List.of(new GeneratedCvExperienceResponseDto(positionId.toString(),
-                                List.of(new GeneratedExperienceBulletResponseDto("Did work", List.of("not-a-uuid")))))),
-                new GeneratedCoverLetterResponseDto(null, List.of(new GeneratedCoverLetterParagraphResponseDto("Text", List.of())), "Closing"));
+        GeneratedCoverLetterResponseDto malformed = new GeneratedCoverLetterResponseDto(
+                null, List.of(new GeneratedCoverLetterParagraphResponseDto("Text", List.of("not-a-uuid"))), "Closing");
         stubChatClient(malformed, "gpt-4o-mini");
 
         assertThatThrownBy(() -> adapter.generate(context(), vacancy()))
@@ -139,7 +132,7 @@ class SpringAiApplicationMaterialsAdapterTest {
         when(requestSpec.system(any(String.class))).thenReturn(requestSpec);
         when(requestSpec.user(any(String.class))).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(callResponseSpec);
-        when(callResponseSpec.responseEntity(GeneratedApplicationMaterialsResponseDto.class)).thenThrow(providerFailure);
+        when(callResponseSpec.responseEntity(GeneratedCoverLetterResponseDto.class)).thenThrow(providerFailure);
 
         assertThatThrownBy(() -> adapter.generate(context(), vacancy()))
                 .isInstanceOf(ApplicationMaterialsAiException.class)
@@ -148,9 +141,21 @@ class SpringAiApplicationMaterialsAdapterTest {
                 .hasMessageNotContaining("insufficient_quota");
     }
 
+    @Test
+    void generate_neverReferencesAnyRendererType() {
+        // Sprint 11 Big Block 7 Part 9: cover-letter generation stays entirely independent of the
+        // CV renderer - this adapter's only output type is GeneratedCoverLetter/ApplicationMaterialsGenerationResponse.
+        for (var method : SpringAiApplicationMaterialsAdapter.class.getDeclaredMethods()) {
+            assertThat(method.getReturnType().getPackageName()).doesNotContain("render");
+            for (var parameter : method.getParameterTypes()) {
+                assertThat(parameter.getPackageName()).doesNotContain("render");
+            }
+        }
+    }
+
     // ==================== Fixtures ====================
 
-    private void stubChatClient(GeneratedApplicationMaterialsResponseDto dto, String model) {
+    private void stubChatClient(GeneratedCoverLetterResponseDto dto, String model) {
         when(chatClient.prompt()).thenReturn(requestSpec);
         when(requestSpec.system(any(String.class))).thenReturn(requestSpec);
         when(requestSpec.user(any(String.class))).thenReturn(requestSpec);
@@ -159,19 +164,14 @@ class SpringAiApplicationMaterialsAdapterTest {
                 .generations(List.of())
                 .metadata(ChatResponseMetadata.builder().model(model).build())
                 .build();
-        when(callResponseSpec.responseEntity(GeneratedApplicationMaterialsResponseDto.class))
+        when(callResponseSpec.responseEntity(GeneratedCoverLetterResponseDto.class))
                 .thenReturn(new ResponseEntity<>(chatResponse, dto));
     }
 
-    private GeneratedApplicationMaterialsResponseDto validResponseDto() {
-        return new GeneratedApplicationMaterialsResponseDto(
-                new GeneratedCvResponseDto("Senior Backend Engineer", "Experienced backend engineer.", List.of("Java"),
-                        List.of(new GeneratedCvExperienceResponseDto(positionId.toString(),
-                                List.of(new GeneratedExperienceBulletResponseDto(
-                                        "Built backend services", List.of(responsibilityId.toString())))))),
-                new GeneratedCoverLetterResponseDto(
-                        "Dear Hiring Manager,", List.of(new GeneratedCoverLetterParagraphResponseDto("I am excited to apply.", List.of())),
-                        "Sincerely, the candidate"));
+    private GeneratedCoverLetterResponseDto validResponseDto() {
+        return new GeneratedCoverLetterResponseDto(
+                "Dear Hiring Manager,", List.of(new GeneratedCoverLetterParagraphResponseDto("I am excited to apply.", List.of(responsibilityId.toString()))),
+                "Sincerely, the candidate");
     }
 
     private CandidateContextForApplicationMaterials context() {

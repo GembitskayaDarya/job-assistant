@@ -37,7 +37,7 @@ import org.hibernate.type.SqlTypes;
  * {@code @JdbcTypeCode(SqlTypes.JSON)} on a plain {@link String} field tells Hibernate to write/read
  * that string as opaque JSON text via the driver's JSON type support, rather than reflecting over
  * the Java type to build a schema itself. The actual (de)serialization between this string and the
- * framework-free {@code GeneratedCv}/{@code GeneratedCoverLetter} domain types is owned entirely by
+ * framework-free {@code TailoredCvDocument}/{@code GeneratedCoverLetter} domain types is owned entirely by
  * {@code ApplicationMaterialGenerationResultContentMapper} - this entity never sees those domain
  * types directly.
  */

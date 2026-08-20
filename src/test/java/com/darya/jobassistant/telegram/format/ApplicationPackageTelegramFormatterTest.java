@@ -2,10 +2,14 @@ package com.darya.jobassistant.telegram.format;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.darya.jobassistant.applicationmaterials.preparation.ApplicationPackageFailureReason;
 import com.darya.jobassistant.applicationmaterials.preparation.PrepareApplicationPackageOutcome;
 import com.darya.jobassistant.applicationmaterials.preparation.PreparedApplicationPackage;
 import com.darya.jobassistant.applicationmaterials.preparation.PreparedDocument;
 import com.darya.jobassistant.telegram.command.BotResponse;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -61,11 +65,54 @@ class ApplicationPackageTelegramFormatterTest {
     }
 
     @Test
-    void toBotResponse_failed_sendsGenericFailureWithoutLeakingDetails() {
-        BotResponse response = formatter.toBotResponse(new PrepareApplicationPackageOutcome.Failed(UUID.randomUUID()));
+    void toBotResponse_unknownFailureReason_sendsGenericFailureWithoutLeakingDetails() {
+        BotResponse response = formatter.toBotResponse(
+                new PrepareApplicationPackageOutcome.Failed(UUID.randomUUID(), ApplicationPackageFailureReason.UNKNOWN));
 
         assertThat(response.text()).doesNotContain("Exception", "OpenAI", "storage key", "/var/", "429");
         assertThat(response.text()).contains("couldn't prepare");
+        assertThat(response.documents()).isEmpty();
+    }
+
+    /**
+     * Sprint 11 Big Block 7 (Part 11): every {@link ApplicationPackageFailureReason} other than
+     * {@link ApplicationPackageFailureReason#UNKNOWN} must render its own distinct, non-generic
+     * message - never the same catch-all text - and never leak a stack trace/exception detail.
+     */
+    @Test
+    void toBotResponse_everyFailureReasonOtherThanUnknown_hasItsOwnDistinctSafeMessage() {
+        BotResponse genericResponse = formatter.toBotResponse(
+                new PrepareApplicationPackageOutcome.Failed(UUID.randomUUID(), ApplicationPackageFailureReason.UNKNOWN));
+        Set<String> seenTexts = new HashSet<>();
+
+        for (ApplicationPackageFailureReason reason : EnumSet.complementOf(EnumSet.of(ApplicationPackageFailureReason.UNKNOWN))) {
+            BotResponse response = formatter.toBotResponse(new PrepareApplicationPackageOutcome.Failed(UUID.randomUUID(), reason));
+
+            assertThat(response.text())
+                    .as("reason %s must not fall back to the generic message", reason)
+                    .isNotEqualTo(genericResponse.text());
+            assertThat(seenTexts.add(response.text()))
+                    .as("reason %s must have a message distinct from every other reason already seen", reason)
+                    .isTrue();
+            assertThat(response.text()).doesNotContain("Exception", "OpenAI", "storage key", "/var/", "429");
+            assertThat(response.documents()).isEmpty();
+        }
+    }
+
+    @Test
+    void toBotResponse_candidateContextNotConfigured_mentionsCandidateProfile() {
+        BotResponse response = formatter.toBotResponse(
+                new PrepareApplicationPackageOutcome.Failed(UUID.randomUUID(), ApplicationPackageFailureReason.CANDIDATE_CONTEXT_NOT_CONFIGURED));
+
+        assertThat(response.text()).containsIgnoringCase("candidate profile");
+    }
+
+    @Test
+    void toBotResponse_atsVerificationFailed_warnsAgainstSubmitting() {
+        BotResponse response = formatter.toBotResponse(
+                new PrepareApplicationPackageOutcome.Failed(UUID.randomUUID(), ApplicationPackageFailureReason.ATS_VERIFICATION_FAILED));
+
+        assertThat(response.text()).containsIgnoringCase("document validation");
         assertThat(response.documents()).isEmpty();
     }
 }

@@ -333,7 +333,7 @@ class PrepareApplicationPackageUseCaseTest {
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
 
-        assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.Failed(failed.id()));
+        assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.Failed(failed.id(), ApplicationPackageFailureReason.AI_PROVIDER_ERROR));
         verify(renderApplicationMaterialsUseCase, never()).render(any());
     }
 
@@ -352,7 +352,29 @@ class PrepareApplicationPackageUseCaseTest {
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
 
-        assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.Failed(completed.id()));
+        assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.Failed(completed.id(), ApplicationPackageFailureReason.RENDERING_FAILED));
+    }
+
+    @Test
+    void prepare_renderThrowsAtsVerificationFailed_returnsFailedOutcomeWithAtsVerificationFailedReason() {
+        // Sprint 11 Big Block 7 (Part 15): the ATS delivery gate (RenderApplicationMaterialsUseCase
+        // throwing Reason.ATS_VERIFICATION_FAILED) must surface all the way through prepare() as its
+        // own distinct ApplicationPackageFailureReason - never collapsed into the generic RENDERING_FAILED.
+        stubVacancyFound();
+        stubCurrentVersions(1L, null);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
+        ApplicationMaterialGeneration pending = pendingGeneration(1L, null);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
+        ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(pending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, completed, null));
+        when(renderApplicationMaterialsUseCase.render(completed.id())).thenThrow(new RenderApplicationMaterialsException(
+                RenderApplicationMaterialsException.Reason.ATS_VERIFICATION_FAILED, completed.id(), "missing section heading"));
+
+        PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
+
+        assertThat(outcome).isEqualTo(
+                new PrepareApplicationPackageOutcome.Failed(completed.id(), ApplicationPackageFailureReason.ATS_VERIFICATION_FAILED));
     }
 
     @Test
@@ -372,7 +394,7 @@ class PrepareApplicationPackageUseCaseTest {
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
 
-        assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.Failed(completed.id()));
+        assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.Failed(completed.id(), ApplicationPackageFailureReason.DOCUMENT_DELIVERY_FAILED));
     }
 
     // ==================== Repeated ("duplicate click") requests reuse, never re-call AI ====================

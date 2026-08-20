@@ -9,7 +9,16 @@ spring:
     # import is "optional:" so normal startup never requires this file to exist or bind
     # successfully; YamlCandidateProfileMigrationSource performs its own explicit validation when
     # migration mode is actually active, and fails clearly there instead.
-    import: optional:file:${CANDIDATE_PROFILE_PATH:./config/candidate-profile.yml}
+    # Sprint 11 Big Block 7 added the second (BaselineCvSelectionProperties) import, comma-appended
+    # to keep this a single scalar string rather than a YAML list - CandidateProfileExternalConfigTest
+    # parses this raw value and asserts it starts with "optional:"; a list would still be optional/
+    # correct but stringifies as "[optional:..., optional:...]", breaking that assertion for no
+    # behavioral benefit. Defaults straight into config/private/ (blanket-gitignored, see .gitignore)
+    # since this is always real, private curated content, never a migration-tool input like
+    # candidate-profile.yml - GenerateBaselineCvUseCase is simply unusable (throws
+    # BaselineCvSelectionResolutionException on an empty config) until a real file exists here; see
+    # config/examples/baseline-cv-selection.example.yml for a fake worked example.
+    import: optional:file:${CANDIDATE_PROFILE_PATH:./config/candidate-profile.yml},optional:file:${BASELINE_CV_SELECTION_PATH:./config/private/baseline-cv-selection.yml}
 
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:job_assistant}

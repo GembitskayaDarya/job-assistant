@@ -1,9 +1,11 @@
 package com.darya.jobassistant.telegram.callback;
 
+import com.darya.jobassistant.applicationmaterials.preparation.ApplicationPackageFailureReason;
 import com.darya.jobassistant.applicationmaterials.preparation.PrepareApplicationPackageOutcome;
 import com.darya.jobassistant.applicationmaterials.preparation.PrepareApplicationPackageUseCase;
 import com.darya.jobassistant.telegram.TelegramMessageSender;
 import com.darya.jobassistant.telegram.command.BotResponse;
+import com.darya.jobassistant.telegram.command.TelegramSendResult;
 import com.darya.jobassistant.telegram.format.ApplicationPackageTelegramFormatter;
 import java.util.Optional;
 import java.util.UUID;
@@ -74,11 +76,34 @@ public class ApplicationPackageCallbackHandler {
         UUID vacancyId = parsed.get().vacancyId();
         try {
             PrepareApplicationPackageOutcome outcome = prepareApplicationPackageUseCase.prepare(vacancyId);
-            telegramMessageSender.send(chatId, formatter.toBotResponse(outcome));
+            TelegramSendResult sendResult = telegramMessageSender.send(chatId, formatter.toBotResponse(outcome));
+            correctIfDeliveryFailed(outcome, sendResult, chatId);
         } catch (RuntimeException e) {
             log.error("Failed to process application package preparation callback for vacancy {} chat {}", vacancyId, chatId, e);
             telegramMessageSender.send(chatId, BotResponse.text(FAILURE_MESSAGE));
         }
         return true;
+    }
+
+    /**
+     * Release-gate fix: {@link PrepareApplicationPackageUseCase#prepare} only ever knows the package
+     * was <em>prepared</em> (PDFs loaded into memory) - never whether it was actually delivered,
+     * since delivery happens afterward, here. A {@link PrepareApplicationPackageOutcome.Prepared}
+     * whose documents failed to reach Telegram must never be left standing as the final signal the
+     * user sees; this sends the exact same {@link ApplicationPackageFailureReason#DOCUMENT_DELIVERY_FAILED}
+     * message {@code PrepareApplicationPackageUseCase} already uses for a pre-send delivery failure
+     * (e.g. a {@code FileStorageException} loading the artifact), so the user gets one consistent,
+     * safe, honest message regardless of which stage the failure actually happened at. A no-op for
+     * every other outcome (nothing was ever attached to send) and whenever delivery succeeded.
+     */
+    private void correctIfDeliveryFailed(PrepareApplicationPackageOutcome outcome, TelegramSendResult sendResult, long chatId) {
+        if (sendResult.allDocumentsDelivered() || !(outcome instanceof PrepareApplicationPackageOutcome.Prepared prepared)) {
+            return;
+        }
+        log.error("Failed to deliver one or more application package documents for generation {} chat {}",
+                prepared.preparedPackage().generationId(), chatId);
+        PrepareApplicationPackageOutcome.Failed deliveryFailure = new PrepareApplicationPackageOutcome.Failed(
+                prepared.preparedPackage().generationId(), ApplicationPackageFailureReason.DOCUMENT_DELIVERY_FAILED);
+        telegramMessageSender.send(chatId, formatter.toBotResponse(deliveryFailure));
     }
 }

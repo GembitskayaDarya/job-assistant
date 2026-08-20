@@ -13,12 +13,12 @@ import com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterial
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsAiPort;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationFailureCode;
 import com.darya.jobassistant.applicationmaterials.generation.model.ApplicationMaterialsGenerationResponse;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedApplicationMaterials;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetter;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetterParagraph;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCv;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryRepositoryPort;
@@ -37,6 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -102,6 +103,14 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
 
     @MockitoBean
     private ApplicationMaterialsAiPort aiPort;
+
+    @MockitoBean
+    private CvTailoringAiPort cvTailoringAiPort;
+
+    @BeforeEach
+    void stubCvTailoringToSucceedByDefault() {
+        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+    }
 
     @Test
     @Order(1)
@@ -292,15 +301,7 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
     }
 
     private ApplicationMaterialsGenerationResponse validAiResponse() {
-        return new ApplicationMaterialsGenerationResponse(minimalMaterials(), "openai", "gpt-4o-mini", 1);
-    }
-
-    private GeneratedApplicationMaterials minimalMaterials() {
-        return new GeneratedApplicationMaterials(minimalCv(), minimalCoverLetter());
-    }
-
-    private GeneratedCv minimalCv() {
-        return new GeneratedCv("Senior Backend Engineer", "Experienced backend engineer.", List.of(), List.of(), List.of());
+        return new ApplicationMaterialsGenerationResponse(minimalCoverLetter(), "openai", "gpt-4o-mini", 1);
     }
 
     private GeneratedCoverLetter minimalCoverLetter() {

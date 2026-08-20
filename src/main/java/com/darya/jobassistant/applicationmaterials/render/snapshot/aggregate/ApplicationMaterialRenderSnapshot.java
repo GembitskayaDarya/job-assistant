@@ -31,8 +31,11 @@ public record ApplicationMaterialRenderSnapshot(
      * (the AI semantic result's own schema) and of a renderer/template version (a presentation
      * concern, not a content-shape one) - bumped only if {@link RenderableApplicationMaterials}'s
      * shape changes in a way a reader of already-persisted JSONB content needs to distinguish.
+     * Bumped to 2 in Sprint 11 Big Block 7 when {@link RenderableApplicationMaterials#cv()} changed
+     * from {@code RenderableCv} to {@code TailoredCvDocument} - no reader of a v1-stamped row exists
+     * in production (no real generations predate this block).
      */
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    public static final int CURRENT_SCHEMA_VERSION = 2;
 
     public ApplicationMaterialRenderSnapshot {
         if (generationId == null) {

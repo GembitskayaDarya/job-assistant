@@ -53,20 +53,25 @@ public class CvTailoringUseCase {
     }
 
     public TailoredCvDocument tailor(JobOffer vacancy, CvSourceSnapshot snapshot) {
+        log.info("CV tailoring started for vacancy '{}'", vacancy.id());
         CvTailoringResult tailoringResult;
         try {
             tailoringResult = aiPort.tailor(vacancy, snapshot);
         } catch (CvTailoringAiException e) {
-            log.error("CV tailoring AI request failed", e);
+            log.error("CV tailoring AI request failed for vacancy '{}'", vacancy.id(), e);
             throw e;
         }
 
         CvTailoringValidationResult validation = CvTailoringValidator.validate(snapshot, tailoringResult);
         if (!validation.valid()) {
-            log.warn("CV tailoring result failed source-aware validation with {} violation(s)", validation.violations().size());
+            log.warn("CV tailoring result failed source-aware validation for vacancy '{}' with {} violation(s)",
+                    vacancy.id(), validation.violations().size());
             throw new CvTailoringValidationException(validation.violations());
         }
+        log.info("CV tailoring validation passed for vacancy '{}'", vacancy.id());
 
-        return CvAssembler.assembleTailored(snapshot, tailoringResult);
+        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, tailoringResult);
+        log.info("CV tailoring completed for vacancy '{}'", vacancy.id());
+        return document;
     }
 }

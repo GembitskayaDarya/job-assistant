@@ -11,21 +11,18 @@ import com.darya.jobassistant.applicationmaterials.artifact.aggregate.Applicatio
 import com.darya.jobassistant.applicationmaterials.artifact.repository.ApplicationMaterialArtifactRepository;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetter;
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetterParagraph;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCv;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCvExperience;
-import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedExperienceBullet;
 import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMaterialFormat;
 import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMaterialType;
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvCompany;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPosition;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
-import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
-import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryRepositoryPort;
-import com.darya.jobassistant.careerhistory.aggregate.CareerPosition;
-import com.darya.jobassistant.careerhistory.aggregate.CareerResponsibility;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -98,8 +95,8 @@ class RenderApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegrati
 
     @Test
     void render_completedGenerationWithCareerHistory_createsSnapshotAndBothArtifacts() {
-        UUID positionId = ensureCareerHistory();
-        UUID generationId = completedGenerationReferencingPosition(positionId);
+        Vacancy vacancy = aVacancy("with-position-" + UUID.randomUUID());
+        UUID generationId = completedGenerationWithEmptyResult(vacancy, currentProfileVersion(), currentCareerHistoryVersionOrNull());
 
         RenderApplicationMaterialsResult result = useCase.render(generationId);
 
@@ -117,8 +114,8 @@ class RenderApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegrati
 
     @Test
     void render_secondCall_reusesExistingArtifactsWithoutRewriting() {
-        UUID positionId = ensureCareerHistory();
-        UUID generationId = completedGenerationReferencingPosition(positionId);
+        Vacancy vacancy = aVacancy("second-call-" + UUID.randomUUID());
+        UUID generationId = completedGenerationWithEmptyResult(vacancy, currentProfileVersion(), currentCareerHistoryVersionOrNull());
 
         RenderApplicationMaterialsResult first = useCase.render(generationId);
         RenderApplicationMaterialsResult second = useCase.render(generationId);
@@ -157,19 +154,27 @@ class RenderApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegrati
                 .isEqualTo(RenderApplicationMaterialsException.Reason.SEMANTIC_RESULT_MISSING);
     }
 
-    // ==================== 7. Version mismatch prevents first snapshot creation ====================
+    // ==================== 7. Legacy snapshot fallback no longer needs a matching candidate profile version ====================
 
+    /**
+     * Sprint 11 Big Block 7 simplification: {@link ApplicationMaterialGenerationResult#cv()} is
+     * already a fully-assembled {@code TailoredCvDocument} - the legacy fallback snapshot-creation
+     * path no longer reloads/re-validates candidate context at all (see {@code
+     * RenderApplicationMaterialsUseCase#createSnapshot}'s javadoc), so a generation recorded against
+     * a candidate profile version that no longer matches the current one still renders successfully -
+     * replaces the old {@code CANDIDATE_CONTEXT_VERSION_MISMATCH_BEFORE_FIRST_SNAPSHOT} test, which
+     * covered a check this class no longer performs.
+     */
     @Test
-    void render_candidateProfileVersionMismatch_beforeFirstSnapshot_throws() {
+    void render_recordedCandidateProfileVersionNoLongerMatchesCurrent_stillRendersSuccessfully() {
         Vacancy vacancy = aVacancy("version-mismatch-" + UUID.randomUUID());
-        long wrongVersion = currentProfileVersion() + 999;
-        UUID generationId = completedGenerationWithEmptyResult(vacancy, wrongVersion, currentCareerHistoryVersionOrNull());
+        long staleVersion = currentProfileVersion() + 999;
+        UUID generationId = completedGenerationWithEmptyResult(vacancy, staleVersion, currentCareerHistoryVersionOrNull());
 
-        assertThatThrownBy(() -> useCase.render(generationId))
-                .isInstanceOf(RenderApplicationMaterialsException.class)
-                .extracting(e -> ((RenderApplicationMaterialsException) e).reason())
-                .isEqualTo(RenderApplicationMaterialsException.Reason.CANDIDATE_CONTEXT_VERSION_MISMATCH_BEFORE_FIRST_SNAPSHOT);
-        assertThat(snapshotRepositoryPort.findByGenerationId(generationId)).isEmpty();
+        RenderApplicationMaterialsResult result = useCase.render(generationId);
+
+        assertThat(result.cv().format()).isEqualTo(ApplicationMaterialFormat.PDF);
+        assertThat(snapshotRepositoryPort.findByGenerationId(generationId)).isPresent();
     }
 
     // ==================== 8. Existing snapshot remains renderable after candidate profile changes ====================
@@ -265,53 +270,26 @@ class RenderApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegrati
         return candidateProfileRepositoryPort.findByProfileKey("primary").orElseThrow().id();
     }
 
-    /** Idempotent: creates Career History for "primary" only the first time it's called across this test class's run. */
-    private UUID ensureCareerHistory() {
-        return careerHistoryRepositoryPort.findByCandidateProfileId(candidateProfileId())
-                .map(history -> history.companies().get(0).positions().get(0).id())
-                .orElseGet(this::createCareerHistory);
-    }
-
-    private UUID createCareerHistory() {
-        UUID positionId = UUID.randomUUID();
-        UUID responsibilityId = UUID.randomUUID();
-        CareerPosition position = new CareerPosition(positionId, "Senior Backend Engineer", null, null, null,
-                LocalDate.of(2020, 1, 1), null, true, null, 0,
-                List.of(new CareerResponsibility(responsibilityId, "Built backend services", 0)), List.of(), List.of());
-        CareerCompany company = new CareerCompany(null, "Acme Corp", null, null, null, null, 0, List.of(position));
-        CareerHistoryAggregate toSave = new CareerHistoryAggregate(null, candidateProfileId(), List.of(company), 0L);
-        careerHistoryRepositoryPort.save(toSave);
-        return positionId;
-    }
-
-    private UUID completedGenerationReferencingPosition(UUID positionId) {
-        Vacancy vacancy = aVacancy("with-position-" + UUID.randomUUID());
-        ApplicationMaterialGeneration pending = generationRepositoryPort.save(
-                ApplicationMaterialGeneration.requestNew(vacancy.getId(), currentProfileVersion(), currentCareerHistoryVersionOrNull(), REQUESTED_AT));
-        ApplicationMaterialGeneration started = generationRepositoryPort.save(pending.start(Instant.now()));
-        ApplicationMaterialGeneration completed = generationRepositoryPort.save(started.complete(Instant.now()));
-
-        UUID responsibilityId = careerHistoryRepositoryPort.findByCandidateProfileId(candidateProfileId()).orElseThrow()
-                .companies().get(0).positions().get(0).responsibilities().get(0).id();
-        GeneratedCvExperience experience = new GeneratedCvExperience(
-                positionId, List.of(new GeneratedExperienceBullet("Built backend services", List.of(responsibilityId))));
-        GeneratedCv cv = new GeneratedCv("Senior Java Backend Engineer", "Experienced backend engineer.", List.of(),
-                List.of(experience), List.of());
-        resultRepositoryPort.save(ApplicationMaterialGenerationResult.create(
-                completed.id(), cv, validCoverLetter(), "openai", "gpt-4o-mini", 1, Instant.now()));
-        return completed.id();
-    }
-
     private UUID completedGenerationWithEmptyResult(Vacancy vacancy, long candidateProfileVersion, Long careerHistoryVersion) {
         ApplicationMaterialGeneration pending = generationRepositoryPort.save(
                 ApplicationMaterialGeneration.requestNew(vacancy.getId(), candidateProfileVersion, careerHistoryVersion, REQUESTED_AT));
         ApplicationMaterialGeneration started = generationRepositoryPort.save(pending.start(Instant.now()));
         ApplicationMaterialGeneration completed = generationRepositoryPort.save(started.complete(Instant.now()));
 
-        GeneratedCv cv = new GeneratedCv("Senior Java Backend Engineer", "Experienced backend engineer.", List.of(), List.of(), List.of());
+        TailoredCvDocument cv = minimalTailoredCv();
         resultRepositoryPort.save(ApplicationMaterialGenerationResult.create(
                 completed.id(), cv, validCoverLetter(), "openai", "gpt-4o-mini", 1, Instant.now()));
         return completed.id();
+    }
+
+    private TailoredCvDocument minimalTailoredCv() {
+        TailoredCvPosition position = new TailoredCvPosition("Senior Backend Engineer", null, null, null,
+                LocalDate.of(2020, 1, 1), null, true, null,
+                List.of("Built backend services"), List.of(), List.of());
+        TailoredCvCompany company = new TailoredCvCompany("Acme Corp", null, null, null, null, List.of(position));
+        return new TailoredCvDocument(
+                new TailoredCvHeader("Jane Candidate", "Senior Java Backend Engineer", "Remote", "jane@example.test", null, null),
+                "Experienced backend engineer.", List.of(), List.of(company), List.of(), List.of(), List.of());
     }
 
     private GeneratedCoverLetter validCoverLetter() {
