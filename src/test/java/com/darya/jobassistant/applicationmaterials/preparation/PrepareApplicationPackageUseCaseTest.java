@@ -3,6 +3,7 @@ package com.darya.jobassistant.applicationmaterials.preparation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -560,6 +561,82 @@ class PrepareApplicationPackageUseCaseTest {
         assertThat(outcome).isEqualTo(new PrepareApplicationPackageOutcome.Failed(completed.id(), ApplicationPackageFailureReason.DOCUMENT_DELIVERY_FAILED));
     }
 
+    // ==================== Package lifecycle: ATS/render failure never falsely reports READY (Part 4-6) ====================
+
+    /**
+     * Real production scenario: AI content generation succeeds (generation reaches {@code
+     * COMPLETED}), but rendering then fails ATS verification. A second, unchanged {@code prepare()}
+     * call must find and retry the SAME {@code COMPLETED} generation (never create a new one, never
+     * call {@link GenerateApplicationMaterialsUseCase#generate} again) - and once the underlying
+     * rendering defect is fixed (simulated here by the mock render call simply succeeding on the
+     * second attempt), that same retry reaches a READY package with no additional AI call.
+     */
+    @Test
+    void prepare_atsVerificationFailsThenPasses_secondCallReusesSameGenerationReachesReadyWithoutNewAiCall() {
+        stubVacancyFound();
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
+        ApplicationMaterialGeneration pending = pendingGeneration(5L, 2L, fingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
+        ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(pending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, completed, null));
+        when(renderApplicationMaterialsUseCase.render(completed.id())).thenThrow(new RenderApplicationMaterialsException(
+                RenderApplicationMaterialsException.Reason.ATS_VERIFICATION_FAILED, completed.id(), "missing skill term"));
+
+        PrepareApplicationPackageOutcome firstOutcome = useCase.prepare(VACANCY_ID);
+
+        assertThat(firstOutcome).isEqualTo(
+                new PrepareApplicationPackageOutcome.Failed(completed.id(), ApplicationPackageFailureReason.ATS_VERIFICATION_FAILED));
+        verify(generateApplicationMaterialsUseCase, times(1)).generate(any());
+        verify(generationRepositoryPort, times(1)).save(any());
+
+        // Second, unchanged call: the same COMPLETED generation is found again (same fingerprint) -
+        // and this time rendering succeeds, simulating the underlying rendering defect having been fixed.
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(completed));
+        stubSuccessfulRenderAndLoad(completed.id());
+
+        PrepareApplicationPackageOutcome secondOutcome = useCase.prepare(VACANCY_ID);
+
+        assertPrepared(secondOutcome, completed.id(), true);
+        // Still exactly one AI generation call and one created row across both prepare() calls - the
+        // retry never re-triggers AI content generation, only rendering.
+        verify(generateApplicationMaterialsUseCase, times(1)).generate(any());
+        verify(generationRepositoryPort, times(1)).save(any());
+    }
+
+    /**
+     * The known-bad-state must not endlessly grow: repeated failing prepare() calls against a
+     * generation whose rendering keeps failing (e.g. genuinely invalid content) always resolve to the
+     * exact same generation id and never create a second row or call the AI again.
+     */
+    @Test
+    void prepare_repeatedAtsVerificationFailure_alwaysReturnsSameGenerationId_neverCreatesANewOne() {
+        stubVacancyFound();
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
+        ApplicationMaterialGeneration pending = pendingGeneration(5L, 2L, fingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
+        ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(pending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, completed, null));
+        when(renderApplicationMaterialsUseCase.render(completed.id())).thenThrow(new RenderApplicationMaterialsException(
+                RenderApplicationMaterialsException.Reason.ATS_VERIFICATION_FAILED, completed.id(), "missing skill term"));
+
+        PrepareApplicationPackageOutcome first = useCase.prepare(VACANCY_ID);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(completed));
+        PrepareApplicationPackageOutcome second = useCase.prepare(VACANCY_ID);
+        PrepareApplicationPackageOutcome third = useCase.prepare(VACANCY_ID);
+
+        PrepareApplicationPackageOutcome.Failed expected =
+                new PrepareApplicationPackageOutcome.Failed(completed.id(), ApplicationPackageFailureReason.ATS_VERIFICATION_FAILED);
+        assertThat(first).isEqualTo(expected);
+        assertThat(second).isEqualTo(expected);
+        assertThat(third).isEqualTo(expected);
+        verify(generateApplicationMaterialsUseCase, times(1)).generate(any());
+        verify(generationRepositoryPort, times(1)).save(any());
+    }
+
     // ==================== Repeated ("duplicate click") requests reuse, never re-call AI ====================
 
     @Test
@@ -786,7 +863,12 @@ class PrepareApplicationPackageUseCaseTest {
     private void stubSuccessfulRenderAndLoad(UUID generationId) {
         ApplicationMaterialArtifact cv = artifact(generationId, ApplicationMaterialType.CV, "cv-key");
         ApplicationMaterialArtifact coverLetter = artifact(generationId, ApplicationMaterialType.COVER_LETTER, "cover-letter-key");
-        when(renderApplicationMaterialsUseCase.render(generationId)).thenReturn(new RenderApplicationMaterialsResult(cv, coverLetter));
+        // doReturn(...).when(...), not when(...).thenReturn(...): safely overrides a prior
+        // thenThrow(...) stub for the exact same invocation (e.g. a test simulating a render retry
+        // that now succeeds) - when(mock.method()) would itself re-trigger the earlier throw while
+        // setting up the new stub.
+        doReturn(new RenderApplicationMaterialsResult(cv, coverLetter))
+                .when(renderApplicationMaterialsUseCase).render(generationId);
         when(fileStoragePort.load("cv-key")).thenReturn(new StoredFileContent("cv-key", "cv-bytes".getBytes(), 8, "a".repeat(64)));
         when(fileStoragePort.load("cover-letter-key")).thenReturn(
                 new StoredFileContent("cover-letter-key", "cl-bytes".getBytes(), 8, "b".repeat(64)));

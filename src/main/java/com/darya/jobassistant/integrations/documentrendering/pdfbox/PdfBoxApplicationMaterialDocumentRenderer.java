@@ -18,6 +18,7 @@ import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvProje
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
@@ -190,7 +191,7 @@ public class PdfBoxApplicationMaterialDocumentRenderer implements ApplicationMat
 
         if (!cv.skills().isEmpty()) {
             writeSectionHeading(cursor, fonts, CvSectionHeadings.TECHNICAL_SKILLS);
-            cursor.writeWrapped(String.join(" | ", cv.skills()), fonts.regular(), FONT_SIZE_BODY, LEADING_BODY, 0);
+            cursor.writeWrappedList(cv.skills(), " | ", fonts.regular(), FONT_SIZE_BODY, LEADING_BODY, 0);
             cursor.addSpacing(SECTION_SPACING);
         }
 
@@ -305,7 +306,7 @@ public class PdfBoxApplicationMaterialDocumentRenderer implements ApplicationMat
             cursor.writeWrapped("- " + achievement, fonts.regular(), FONT_SIZE_BODY, LEADING_BODY, INDENT * 3);
         }
         if (!project.technologies().isEmpty()) {
-            cursor.writeWrapped("Technologies: " + String.join(", ", project.technologies()), fonts.italic(), FONT_SIZE_BODY, LEADING_BODY, INDENT * 2);
+            writeTechnologies(cursor, fonts, project.technologies(), INDENT * 2);
         }
     }
 
@@ -324,9 +325,24 @@ public class PdfBoxApplicationMaterialDocumentRenderer implements ApplicationMat
             cursor.writeWrapped("- " + highlight, fonts.regular(), FONT_SIZE_BODY, LEADING_BODY, INDENT * 2);
         }
         if (!project.technologies().isEmpty()) {
-            cursor.writeWrapped("Technologies: " + String.join(", ", project.technologies()), fonts.italic(), FONT_SIZE_BODY, LEADING_BODY, INDENT);
+            writeTechnologies(cursor, fonts, project.technologies(), INDENT);
         }
         cursor.addSpacing(ITEM_SPACING);
+    }
+
+    /**
+     * Writes a "Technologies: " label followed by {@code technologies}, wrapped at technology-name
+     * boundaries via {@link PdfPageCursor#writeWrappedList} rather than word boundaries - a
+     * multi-word technology name (e.g. {@code "Cassandra Java Driver"}) must never be split across a
+     * wrapped line, matching the Technical Skills fix for the identical defect (see {@link
+     * PdfPageCursor#writeWrappedList}'s javadoc). The label is glued to the first technology as one
+     * atom so it is never separated from it by a wrap either.
+     */
+    private void writeTechnologies(PdfPageCursor cursor, Fonts fonts, List<String> technologies, float indent) throws IOException {
+        List<String> items = new ArrayList<>(technologies.size());
+        items.add("Technologies: " + technologies.get(0));
+        items.addAll(technologies.subList(1, technologies.size()));
+        cursor.writeWrappedList(items, ", ", fonts.italic(), FONT_SIZE_BODY, LEADING_BODY, indent);
     }
 
     private void writeEducation(PdfPageCursor cursor, Fonts fonts, CandidateEducationFacts education) throws IOException {

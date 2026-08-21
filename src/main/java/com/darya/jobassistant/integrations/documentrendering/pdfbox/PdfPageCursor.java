@@ -72,6 +72,29 @@ final class PdfPageCursor implements Closeable {
     }
 
     /**
+     * Wraps a {@code separator}-joined list of atomic {@code items} to fit within {@link
+     * #contentWidth()} minus {@code indent}, writing one {@link #writeLine} per wrapped line - each
+     * item in {@code items} is treated as indivisible and never split across a wrapped line, even
+     * when an item itself contains internal whitespace (e.g. a multi-word skill or technology name
+     * such as {@code "Oracle Database"}).
+     *
+     * <p>Unlike {@link #writeWrapped}, which treats every individual space-separated word as its own
+     * wrappable unit, this exists specifically for content the rest of the pipeline (e.g. {@code
+     * AtsCvVerifier}) may later search for as an exact substring: joining a skills/technologies list
+     * with a separator and then word-wrapping the flat result (the previous behavior for both call
+     * sites) can place a wrap boundary in the middle of a multi-word item - PDFBox then extracts that
+     * item's two halves onto separate lines joined by a newline rather than the original space,
+     * silently breaking any exact-phrase search against it. This method wraps at item boundaries
+     * instead, so no item's own text is ever altered by where a line happens to break.
+     */
+    void writeWrappedList(List<String> items, String separator, PDType0Font font, float fontSize, float leading, float indent)
+            throws IOException {
+        for (String line : wrapAtoms(items, separator, font, fontSize, contentWidth() - indent)) {
+            writeLine(line, font, fontSize, leading, indent);
+        }
+    }
+
+    /**
      * Writes one already-fitting line exactly like {@link #writeLine}, additionally attaching an
      * invisible-border {@link PDAnnotationLink} covering the drawn text's bounding box, pointing at
      * {@code url} - the sole hyperlink mechanism this renderer uses (see {@code
@@ -149,6 +172,35 @@ final class PdfPageCursor implements Closeable {
         List<String> lines = new ArrayList<>();
         for (String paragraphLine : text.split("\n", -1)) {
             lines.addAll(wrapSingleLine(paragraphLine, font, fontSize, maxWidth));
+        }
+        return lines;
+    }
+
+    /**
+     * Greedy packing of already-atomic {@code items} onto lines, joined by {@code separator} within
+     * a line - mirrors {@link #wrapSingleLine}'s greedy-fit algorithm exactly, but the unit that may
+     * never be split is one list item (however many words it contains) rather than one
+     * whitespace-delimited word. A single item wider than {@code maxWidth} on its own is placed on
+     * its own line rather than split or dropped, matching {@link #wrapSingleLine}'s same guarantee.
+     * Each item is sanitized once up front so the width measured here matches exactly what {@link
+     * #writeLine} later draws (which sanitizes again, harmlessly - {@link PdfTextSanitizer#sanitize}
+     * is idempotent).
+     */
+    private List<String> wrapAtoms(List<String> items, String separator, PDType0Font font, float fontSize, float maxWidth) throws IOException {
+        List<String> lines = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String rawItem : items) {
+            String item = PdfTextSanitizer.sanitize(rawItem, font);
+            String candidate = current.isEmpty() ? item : current + separator + item;
+            if (width(candidate, font, fontSize) <= maxWidth || current.isEmpty()) {
+                current = new StringBuilder(candidate);
+            } else {
+                lines.add(current.toString());
+                current = new StringBuilder(item);
+            }
+        }
+        if (!current.isEmpty() || lines.isEmpty()) {
+            lines.add(current.toString());
         }
         return lines;
     }

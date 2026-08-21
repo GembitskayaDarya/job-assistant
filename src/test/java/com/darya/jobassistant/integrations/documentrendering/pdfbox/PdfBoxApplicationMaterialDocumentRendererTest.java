@@ -101,6 +101,63 @@ class PdfBoxApplicationMaterialDocumentRendererTest {
         assertThat(olderCompanyIndex).isGreaterThan(recentCompanyIndex);
     }
 
+    // ==================== Skills/technologies wrap at item boundaries, never mid-phrase (production fix) ====================
+
+    /**
+     * Production fix: a real production generation had "Oracle Database" (a two-word skill) split by
+     * the old word-level greedy wrap exactly between "Oracle" and "Database" - the two halves landed
+     * on separate PDF lines, so {@link PDFTextStripper} extracted them joined by a newline rather than
+     * the original space, and {@link AtsCvVerifier} correctly reported {@code MISSING_SKILL_TERM} for
+     * an exact-match search of "Oracle Database". This list is long enough to force wrapping (proven
+     * below via page/line assertions) and deliberately places multi-word skills at the first, a
+     * middle, and the last position to prove {@link PdfPageCursor#writeWrappedList} never splits any
+     * of them regardless of where in the list a wrap boundary happens to fall.
+     */
+    @Test
+    void renderCv_longSkillsList_wrapsAcrossLinesButPreservesEveryMultiWordSkillIntact() throws IOException {
+        List<String> skills = List.of("Java", "Spring Boot", "Spring Framework", "REST API", "Spring Data JPA",
+                "Apache Kafka", "Oracle Database", "Maven", "OpenAI API", "CI/CD");
+        TailoredCvDocument cv = new TailoredCvDocument(
+                new TailoredCvHeader("Jane Candidate", "Senior Java Backend Engineer", "Remote", "jane@example.test", null, null),
+                null, skills, List.of(), List.of(), List.of(), List.of());
+
+        String text = extractText(renderer.renderCv(cv).content());
+
+        for (String skill : skills) {
+            assertThat(text).as("skill '%s' must survive intact", skill).contains(skill);
+        }
+        // Confirms this test actually exercises multi-line wrapping rather than trivially fitting on
+        // one line - the skills section itself must occupy more than one extracted line.
+        int skillsHeadingIndex = text.indexOf("Technical Skills");
+        int experienceOrEndIndex = text.length();
+        String skillsBlock = text.substring(skillsHeadingIndex, experienceOrEndIndex);
+        assertThat(skillsBlock.split("\n", -1).length).as("skills section must wrap onto more than one line").isGreaterThan(2);
+
+        AtsVerificationResult result = AtsCvVerifier.verify(cv, text);
+        assertThat(result.readable()).as("violations: %s", result.violations()).isTrue();
+    }
+
+    @Test
+    void renderCv_longTechnologiesList_wrapsButPreservesEveryMultiWordTechnologyIntact() throws IOException {
+        List<String> technologies = List.of("Java 25", "Spring Boot", "Kafka", "Redis", "REST API", "PostgreSQL",
+                "AWS Keyspaces", "Apache HttpClient", "AWS Glue Schema Registry", "Cassandra Java Driver");
+        TailoredCvProject project = new TailoredCvProject("Core Service", null, LocalDate.of(2023, 2, 1), null,
+                List.of(), List.of(), technologies);
+        TailoredCvPosition position = new TailoredCvPosition("Software Backend Engineer", null, null, null,
+                LocalDate.of(2023, 2, 1), null, true, null, List.of(), List.of(), List.of(project));
+        TailoredCvCompany company = new TailoredCvCompany("Spribe", null, null, null, null, List.of(position));
+        TailoredCvDocument cv = new TailoredCvDocument(
+                new TailoredCvHeader("Jane Candidate", "Senior Java Backend Engineer", "Remote", "jane@example.test", null, null),
+                null, List.of(), List.of(company), List.of(), List.of(), List.of());
+
+        String text = extractText(renderer.renderCv(cv).content());
+
+        for (String technology : technologies) {
+            assertThat(text).as("technology '%s' must survive intact", technology).contains(technology);
+        }
+        assertThat(text).contains("Technologies: Java 25");
+    }
+
     // ==================== Cover letter PDF generation ====================
 
     @Test
