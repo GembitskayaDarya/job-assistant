@@ -25,7 +25,9 @@ import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryRepositoryPor
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
+import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -101,6 +103,9 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
     @Autowired
     private VacancyRepository vacancyRepository;
 
+    @Autowired
+    private VacancyJobOfferMapper vacancyJobOfferMapper;
+
     @MockitoBean
     private ApplicationMaterialsAiPort aiPort;
 
@@ -157,9 +162,9 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
         // assuming null - this test only cares that a matching stale row gets recovered, not about
         // the null-vs-present distinction itself (see the two concurrent tests below for that).
         CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
-        UUID vacancyId = aVacancy("stale-recovery-single-" + UUID.randomUUID()).getId();
-        UUID staleId = seedStaleInProgressGeneration(vacancyId, snapshot.candidateProfileVersion(),
-                snapshot.careerHistory().map(CareerHistoryAggregate::version).orElse(null));
+        Vacancy vacancy = aVacancy("stale-recovery-single-" + UUID.randomUUID());
+        UUID vacancyId = vacancy.getId();
+        UUID staleId = seedStaleInProgressGeneration(vacancy, snapshot);
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(vacancyId);
@@ -183,8 +188,9 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
         CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
         assertThat(snapshot.careerHistory()).as("this test requires no Career History for the seeded profile").isEmpty();
 
-        UUID vacancyId = aVacancy("stale-recovery-concurrent-null-" + UUID.randomUUID()).getId();
-        UUID staleId = seedStaleInProgressGeneration(vacancyId, snapshot.candidateProfileVersion(), null);
+        Vacancy vacancy = aVacancy("stale-recovery-concurrent-null-" + UUID.randomUUID());
+        UUID vacancyId = vacancy.getId();
+        UUID staleId = seedStaleInProgressGeneration(vacancy, snapshot);
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
 
         List<PrepareApplicationPackageOutcome> outcomes = runConcurrently(vacancyId);
@@ -201,9 +207,9 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
         CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
         assertThat(snapshot.careerHistory()).as("this test requires Career History to exist for the seeded profile").isPresent();
 
-        UUID vacancyId = aVacancy("stale-recovery-concurrent-with-history-" + UUID.randomUUID()).getId();
-        UUID staleId = seedStaleInProgressGeneration(
-                vacancyId, snapshot.candidateProfileVersion(), snapshot.careerHistory().orElseThrow().version());
+        Vacancy vacancy = aVacancy("stale-recovery-concurrent-with-history-" + UUID.randomUUID());
+        UUID vacancyId = vacancy.getId();
+        UUID staleId = seedStaleInProgressGeneration(vacancy, snapshot);
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
 
         List<PrepareApplicationPackageOutcome> outcomes = runConcurrently(vacancyId);
@@ -225,14 +231,24 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
         assertThat(all).filteredOn(g -> !g.id().equals(staleId)).hasSize(1);
     }
 
-    private UUID seedStaleInProgressGeneration(UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
+    /**
+     * Seeds a stale IN_PROGRESS row with the REAL current source fingerprint (computed the same way
+     * {@link PrepareApplicationPackageUseCase#prepare} computes it) rather than a legacy null one -
+     * otherwise, under Sprint 11's fingerprint-based {@code findMatchingGeneration}, {@code prepare()}
+     * would never recognize this seeded row as matching the current source state at all, and none of
+     * the stale-recovery behavior under test would ever trigger.
+     */
+    private UUID seedStaleInProgressGeneration(Vacancy vacancy, CandidateContextSnapshot snapshot) {
         // Comfortably past application.yml's real default stale-in-progress-timeout (15m) -
         // deliberately not overridden in this test class, so this proves the actual configured
         // production default, not an artificially shortened test value.
         Instant oldRequestedAt = Instant.now().minus(Duration.ofMinutes(20));
         Instant oldStartedAt = oldRequestedAt.plusSeconds(1);
-        ApplicationMaterialGeneration pending = generationRepositoryPort.save(
-                ApplicationMaterialGeneration.requestNew(vacancyId, candidateProfileVersion, careerHistoryVersion, oldRequestedAt));
+        JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
+        String sourceFingerprint = ApplicationMaterialSourceFingerprint.sha256(snapshot, jobOffer);
+        ApplicationMaterialGeneration pending = generationRepositoryPort.save(ApplicationMaterialGeneration.requestNew(
+                vacancy.getId(), snapshot.candidateProfileVersion(),
+                snapshot.careerHistory().map(CareerHistoryAggregate::version).orElse(null), sourceFingerprint, oldRequestedAt));
         return generationRepositoryPort.save(pending.start(oldStartedAt)).id();
     }
 

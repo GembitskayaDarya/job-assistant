@@ -33,8 +33,14 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ApplicationMaterialGenerationRepositoryAdapter implements ApplicationMaterialGenerationRepositoryPort {
 
-    /** Must match the constraint name in {@code V25__add_application_material_generation_active_uniqueness.sql}. */
-    private static final String ACTIVE_EFFECTIVE_KEY_UNIQUE_INDEX_NAME = "uk_amg_active_effective_key";
+    /**
+     * Must match the constraint name in {@code V31__add_application_material_generation_source_fingerprint.sql},
+     * which replaced V25's {@code uk_amg_active_effective_key} (keyed on {@code candidateProfileVersion}/
+     * {@code careerHistoryVersion}) with this fingerprint-keyed index - see that migration and {@link
+     * com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGenerationActiveConflictException}'s
+     * javadoc for why.
+     */
+    private static final String ACTIVE_EFFECTIVE_KEY_UNIQUE_INDEX_NAME = "uk_amg_active_source_fingerprint";
 
     private final ApplicationMaterialGenerationRepository generationRepository;
     private final VacancyRepository vacancyRepository;
@@ -74,8 +80,7 @@ public class ApplicationMaterialGenerationRepositoryAdapter implements Applicati
             return generationRepository.saveAndFlush(ApplicationMaterialGenerationPersistenceMapper.toNewEntity(generation, vacancy));
         } catch (DataIntegrityViolationException e) {
             if (isActiveEffectiveKeyConflict(e)) {
-                throw new ApplicationMaterialGenerationActiveConflictException(
-                        generation.vacancyId(), generation.candidateProfileVersion(), generation.careerHistoryVersion());
+                throw new ApplicationMaterialGenerationActiveConflictException(generation.vacancyId(), generation.sourceFingerprint());
             }
             throw e;
         }
@@ -114,6 +119,7 @@ public class ApplicationMaterialGenerationRepositoryAdapter implements Applicati
                 generation.status(),
                 generation.candidateProfileVersion(),
                 generation.careerHistoryVersion(),
+                generation.sourceFingerprint(),
                 generation.startedAt(),
                 generation.completedAt(),
                 generation.failureCode(),

@@ -366,6 +366,53 @@ class CvAssemblerTest {
         assertThatThrownBy(() -> CvAssembler.assembleTailored(snapshot(), tailoring)).isInstanceOf(IllegalStateException.class);
     }
 
+    // ==================== Canonical experience ordering (production fix) ====================
+
+    /**
+     * The real production shape: a candidate promoted within the same project - two positions at one
+     * company, both with a project named "Core Service", persisted in chronological (oldest-first)
+     * source order. {@code CvAssembler} must reorder to current-role-first regardless of source
+     * order, and must never mix up which position's own project/technologies land under which.
+     */
+    @Test
+    void assembleBaseline_twoPositionsAtOneCompany_currentRoleSortsBeforeOlderRole_regardlessOfSourceOrder() {
+        TailoredCvDocument document = CvAssembler.assembleBaseline(snapshotWithPromotionWithinSameProject());
+
+        TailoredCvCompany company = document.experience().get(0);
+        assertThat(company.positions()).hasSize(2);
+        assertThat(company.positions().get(0).title()).isEqualTo("Component Lead");
+        assertThat(company.positions().get(0).currentRole()).isTrue();
+        assertThat(company.positions().get(1).title()).isEqualTo("Senior Backend Engineer");
+        assertThat(company.positions().get(1).currentRole()).isFalse();
+    }
+
+    @Test
+    void assembleBaseline_sameNamedProjectsUnderDifferentPositions_remainAssociatedWithTheCorrectPosition() {
+        TailoredCvDocument document = CvAssembler.assembleBaseline(snapshotWithPromotionWithinSameProject());
+
+        TailoredCvCompany company = document.experience().get(0);
+        TailoredCvPosition componentLead = company.positions().get(0);
+        TailoredCvPosition seniorEngineer = company.positions().get(1);
+
+        assertThat(componentLead.projects()).hasSize(1);
+        assertThat(componentLead.projects().get(0).name()).isEqualTo("Core Service");
+        assertThat(componentLead.projects().get(0).technologies()).containsExactly("Kubernetes");
+
+        assertThat(seniorEngineer.projects()).hasSize(1);
+        assertThat(seniorEngineer.projects().get(0).name()).isEqualTo("Core Service");
+        assertThat(seniorEngineer.projects().get(0).technologies()).containsExactly("Kafka");
+    }
+
+    @Test
+    void assembleTailored_currentRoleSortsBeforeOlderRole_sameAsBaseline() {
+        CvSourceSnapshot snapshot = snapshotWithPromotionWithinSameProject();
+        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, emptyTailoring());
+
+        List<TailoredCvPosition> positions = document.experience().get(0).positions();
+        assertThat(positions.get(0).title()).isEqualTo("Component Lead");
+        assertThat(positions.get(1).title()).isEqualTo("Senior Backend Engineer");
+    }
+
     // ==================== Fixtures ====================
 
     private CvTailoringResult emptyTailoring() {
@@ -374,6 +421,31 @@ class CvAssemblerTest {
 
     private CvTailoringResult positionTailoring(List<CvResponsibilityTailoring> responsibilities, List<CvAchievementTailoring> achievements) {
         return new CvTailoringResult(null, List.of(), List.of(new CvPositionTailoring(POSITION_ID, responsibilities, achievements)), List.of());
+    }
+
+    /**
+     * Two positions at one company, persisted in chronological (oldest-first) source order - the
+     * exact real production shape (a promotion within the same "Core Service" project) that surfaced
+     * the renderer/verifier ordering-disagreement defect this fix addresses.
+     */
+    private CvSourceSnapshot snapshotWithPromotionWithinSameProject() {
+        CvSourceProject seniorProject = new CvSourceProject(UUID.randomUUID(), "Core Service", null,
+                LocalDate.of(2023, 2, 1), LocalDate.of(2026, 2, 28), List.of(), List.of(),
+                List.of(new CvSourceTechnology(UUID.randomUUID(), "Kafka", null)));
+        CvSourcePosition seniorPosition = new CvSourcePosition(UUID.randomUUID(), "Senior Backend Engineer", null, null, null,
+                LocalDate.of(2023, 2, 1), LocalDate.of(2026, 2, 28), false, null, List.of(), List.of(), List.of(seniorProject));
+
+        CvSourceProject leadProject = new CvSourceProject(UUID.randomUUID(), "Core Service", null,
+                LocalDate.of(2026, 2, 1), null, List.of(), List.of(),
+                List.of(new CvSourceTechnology(UUID.randomUUID(), "Kubernetes", null)));
+        CvSourcePosition leadPosition = new CvSourcePosition(UUID.randomUUID(), "Component Lead", null, null, null,
+                LocalDate.of(2026, 2, 1), null, true, null, List.of(), List.of(), List.of(leadProject));
+
+        // Source (persisted display) order is oldest-first - the assembler, not the source, is
+        // responsible for the final most-recent-first display order.
+        CvSourceCompany company = new CvSourceCompany(UUID.randomUUID(), "Spribe", null, null, null, null,
+                List.of(seniorPosition, leadPosition));
+        return new CvSourceSnapshot(profile(), CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
     }
 
     private CvSourceSnapshot snapshotWithTwoPositionResponsibilities(UUID secondResponsibilityId) {

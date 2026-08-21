@@ -91,15 +91,15 @@ class ApplicationMaterialGenerationRepositoryTest {
 
     @Test
     void multipleGenerations_canBePersistedForOneVacancy() {
-        // Distinct candidateProfileVersions - three simultaneously PENDING generations for the same
-        // vacancy and the same effective key would collide with V25's active-uniqueness index (see
-        // ApplicationMaterialGenerationRepositoryAdapterTest's "V25 active-uniqueness" section);
+        // Distinct source fingerprints - three simultaneously PENDING generations for the same
+        // vacancy and the same fingerprint would collide with V31's active-uniqueness index (see
+        // ApplicationMaterialGenerationRepositoryAdapterTest's "V31 active-uniqueness" section);
         // this test is about persisting/listing several rows, not about that invariant.
         Vacancy vacancy = aVacancy("multi-gen-" + UUID.randomUUID());
 
-        generationRepository.save(pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 0L));
-        generationRepository.save(pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 1L));
-        generationRepository.save(pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 2L));
+        generationRepository.save(pendingWithSourceFingerprint(vacancy, REQUESTED_AT, "a".repeat(64)));
+        generationRepository.save(pendingWithSourceFingerprint(vacancy, REQUESTED_AT, "b".repeat(64)));
+        generationRepository.save(pendingWithSourceFingerprint(vacancy, REQUESTED_AT, "c".repeat(64)));
         entityManager.flush();
         entityManager.clear();
 
@@ -108,13 +108,13 @@ class ApplicationMaterialGenerationRepositoryTest {
 
     @Test
     void generations_returnedNewestRequestedFirst() {
-        // Distinct candidateProfileVersions - see multipleGenerations_canBePersistedForOneVacancy.
+        // Distinct source fingerprints - see multipleGenerations_canBePersistedForOneVacancy.
         Vacancy vacancy = aVacancy("ordering-" + UUID.randomUUID());
 
         ApplicationMaterialGenerationEntity oldest = generationRepository.save(
-                pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT, 0L));
+                pendingWithSourceFingerprint(vacancy, REQUESTED_AT, "a".repeat(64)));
         ApplicationMaterialGenerationEntity newest = generationRepository.save(
-                pendingWithCandidateProfileVersion(vacancy, REQUESTED_AT.plus(1, ChronoUnit.DAYS), 1L));
+                pendingWithSourceFingerprint(vacancy, REQUESTED_AT.plus(1, ChronoUnit.DAYS), "b".repeat(64)));
         entityManager.flush();
         entityManager.clear();
 
@@ -429,15 +429,21 @@ class ApplicationMaterialGenerationRepositoryTest {
     }
 
     private ApplicationMaterialGenerationEntity pendingWithRequestedAt(Vacancy vacancy, Instant requestedAt) {
-        return pendingWithCandidateProfileVersion(vacancy, requestedAt, 0L);
-    }
-
-    private ApplicationMaterialGenerationEntity pendingWithCandidateProfileVersion(
-            Vacancy vacancy, Instant requestedAt, long candidateProfileVersion) {
         return ApplicationMaterialGenerationEntity.builder()
                 .vacancy(vacancy)
                 .status(ApplicationMaterialGenerationStatus.PENDING)
-                .candidateProfileVersion(candidateProfileVersion)
+                .candidateProfileVersion(0L)
+                .requestedAt(requestedAt)
+                .build();
+    }
+
+    private ApplicationMaterialGenerationEntity pendingWithSourceFingerprint(
+            Vacancy vacancy, Instant requestedAt, String sourceFingerprint) {
+        return ApplicationMaterialGenerationEntity.builder()
+                .vacancy(vacancy)
+                .status(ApplicationMaterialGenerationStatus.PENDING)
+                .candidateProfileVersion(0L)
+                .sourceFingerprint(sourceFingerprint)
                 .requestedAt(requestedAt)
                 .build();
     }

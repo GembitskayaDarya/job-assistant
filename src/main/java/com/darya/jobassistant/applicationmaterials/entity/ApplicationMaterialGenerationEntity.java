@@ -56,6 +56,16 @@ public class ApplicationMaterialGenerationEntity extends BaseEntity {
     @Column(name = "career_history_version")
     private Long careerHistoryVersion;
 
+    /**
+     * Sprint 11 production hardening: {@code null} for a generation created before this field
+     * existed ("legacy" - see {@link com.darya.jobassistant.applicationmaterials.aggregate.ApplicationMaterialGeneration}'s
+     * own javadoc); every newly requested generation always carries a real 64-hex-char SHA-256
+     * digest. Column stays nullable at the DB level (V31) - deliberately never backfilled for old
+     * rows, which would falsely claim a document was produced from source state it never saw.
+     */
+    @Column(name = "source_fingerprint", length = 64)
+    private String sourceFingerprint;
+
     @Column(name = "requested_at", nullable = false)
     private Instant requestedAt;
 

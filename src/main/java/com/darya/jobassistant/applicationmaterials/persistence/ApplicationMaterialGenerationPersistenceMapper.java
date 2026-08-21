@@ -21,6 +21,7 @@ final class ApplicationMaterialGenerationPersistenceMapper {
                 entity.getStatus(),
                 entity.getCandidateProfileVersion(),
                 entity.getCareerHistoryVersion(),
+                entity.getSourceFingerprint(),
                 entity.getRequestedAt(),
                 entity.getStartedAt(),
                 entity.getCompletedAt(),
@@ -41,6 +42,7 @@ final class ApplicationMaterialGenerationPersistenceMapper {
                 .status(generation.status())
                 .candidateProfileVersion(generation.candidateProfileVersion())
                 .careerHistoryVersion(generation.careerHistoryVersion())
+                .sourceFingerprint(generation.sourceFingerprint())
                 .requestedAt(generation.requestedAt())
                 .startedAt(generation.startedAt())
                 .completedAt(generation.completedAt())

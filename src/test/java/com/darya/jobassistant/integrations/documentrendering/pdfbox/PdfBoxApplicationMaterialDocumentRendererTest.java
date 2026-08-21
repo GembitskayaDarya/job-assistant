@@ -2,19 +2,31 @@ package com.darya.jobassistant.integrations.documentrendering.pdfbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.darya.jobassistant.applicationmaterials.render.ats.AtsCvVerifier;
+import com.darya.jobassistant.applicationmaterials.render.ats.AtsVerificationResult;
 import com.darya.jobassistant.applicationmaterials.render.model.RenderableCoverLetter;
 import com.darya.jobassistant.applicationmaterials.render.model.RenderedDocument;
+import com.darya.jobassistant.candidatecontext.CareerHistoryAvailability;
+import com.darya.jobassistant.candidatecontext.cv.document.CvAssembler;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvCompany;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPersonalProject;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPosition;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvProject;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourceCompany;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourcePosition;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourceProject;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourceSnapshot;
+import com.darya.jobassistant.candidatecontext.cv.model.CvSourceTechnology;
 import com.darya.jobassistant.candidates.CandidateEducationFacts;
 import com.darya.jobassistant.candidates.CandidateLanguageFacts;
+import com.darya.jobassistant.candidates.CandidatePreferences;
+import com.darya.jobassistant.candidates.CandidateProfileFacts;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -281,6 +293,76 @@ class PdfBoxApplicationMaterialDocumentRendererTest {
         assertThat(text).contains("Готов приступить к работе немедленно");
         assertThat(text).contains("Z poważaniem");
         assertThat(text).contains("Łódzka Firma");
+    }
+
+    // ==================== Order preservation (production fix) ====================
+
+    /**
+     * Production fix: this renderer previously re-sorted positions into recency order at render time
+     * independently of {@code TailoredCvDocument}'s own order, which could disagree with what {@code
+     * AtsCvVerifier} (which walks {@code TailoredCvDocument} as given) expected. The renderer must now
+     * trust the document's order completely - proven here by feeding it a document deliberately built
+     * in chronological (oldest-first) position order (ordering is {@code CvAssembler}'s job, verified
+     * separately in {@code CvAssemblerTest}) and confirming the PDF text preserves that exact order,
+     * never "fixing" it into recency order.
+     */
+    @Test
+    void renderCv_preservesPositionOrderExactlyAsGiven_performsNoIndependentRecencySorting() throws IOException {
+        TailoredCvPosition olderPosition = new TailoredCvPosition("Senior Backend Engineer", null, null, null,
+                LocalDate.of(2023, 2, 1), LocalDate.of(2026, 2, 28), false, null, List.of(), List.of(), List.of());
+        TailoredCvPosition currentPosition = new TailoredCvPosition("Component Lead", null, null, null,
+                LocalDate.of(2026, 2, 1), null, true, null, List.of(), List.of(), List.of());
+        // Deliberately chronological (oldest-first) - the "wrong" final order, to prove the renderer
+        // itself performs no correction.
+        TailoredCvCompany company = new TailoredCvCompany("Spribe", null, null, null, null, List.of(olderPosition, currentPosition));
+        TailoredCvDocument cv = new TailoredCvDocument(
+                new TailoredCvHeader("Jane Candidate", "Backend Engineer", "Remote", "jane@example.test", "+1 555 0100", null),
+                null, List.of(), List.of(company), List.of(), List.of(), List.of());
+
+        String text = extractText(renderer.renderCv(cv).content());
+
+        assertThat(text.indexOf("Senior Backend Engineer")).isLessThan(text.indexOf("Component Lead"));
+    }
+
+    /**
+     * Full real pipeline for the exact production shape ({@code CvAssembler} -> this real PDFBox
+     * renderer -> real PDF text extraction -> {@code AtsCvVerifier}): a candidate promoted within the
+     * same "Core Service" project, two positions at one company, persisted in chronological source
+     * order. Proves the fix closes the loop end to end - the assembler's canonical order is what both
+     * the renderer draws and the verifier checks, so they can never disagree again.
+     */
+    @Test
+    void renderCv_documentFromCvAssemblerWithPromotionWithinSameProject_passesAtsVerification() throws IOException {
+        CvSourceProject seniorProject = new CvSourceProject(UUID.randomUUID(), "Core Service", null,
+                LocalDate.of(2023, 2, 1), LocalDate.of(2026, 2, 28), List.of(), List.of(),
+                List.of(new CvSourceTechnology(UUID.randomUUID(), "Kafka", null)));
+        CvSourcePosition seniorPosition = new CvSourcePosition(UUID.randomUUID(), "Senior Backend Engineer",
+                null, null, null, LocalDate.of(2023, 2, 1), LocalDate.of(2026, 2, 28), false, null,
+                List.of(), List.of(), List.of(seniorProject));
+        CvSourceProject leadProject = new CvSourceProject(UUID.randomUUID(), "Core Service", null,
+                LocalDate.of(2026, 2, 1), null, List.of(), List.of(),
+                List.of(new CvSourceTechnology(UUID.randomUUID(), "Kubernetes", null)));
+        CvSourcePosition leadPosition = new CvSourcePosition(UUID.randomUUID(), "Component Lead",
+                null, null, null, LocalDate.of(2026, 2, 1), null, true, null, List.of(), List.of(), List.of(leadProject));
+        // Source order is oldest-first, same as this bug's real persisted display_order.
+        CvSourceCompany company = new CvSourceCompany(UUID.randomUUID(), "Spribe",
+                null, null, null, null, List.of(seniorPosition, leadPosition));
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Backend Engineer", "Senior", List.of(), List.of(), 6,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null),
+                "Jane Candidate", null, null, "https://linkedin.test/in/jane", "Remote", "Backend Engineer", List.of());
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile, CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleBaseline(snapshot);
+        String text = extractText(renderer.renderCv(document).content());
+
+        AtsVerificationResult result = AtsCvVerifier.verify(document, text);
+
+        assertThat(result.readable()).isTrue();
+        assertThat(result.violations()).isEmpty();
+        // The rendered PDF itself shows current role first - confirms the assembler's order, not
+        // just the verifier's opinion of it.
+        assertThat(text.indexOf("Component Lead")).isLessThan(text.indexOf("Senior Backend Engineer"));
     }
 
     // ==================== Helpers ====================

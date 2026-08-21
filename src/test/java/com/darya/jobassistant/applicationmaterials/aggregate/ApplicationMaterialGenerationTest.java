@@ -40,6 +40,61 @@ class ApplicationMaterialGenerationTest {
         assertThat(generation.careerHistoryVersion()).isNull();
     }
 
+    // ==================== sourceFingerprint (Sprint 11 Final Cache Correctness Hardening) ====================
+
+    @Test
+    void requestNew_withFingerprint_setsSourceFingerprint() {
+        ApplicationMaterialGeneration generation =
+                ApplicationMaterialGeneration.requestNew(vacancyId, 3L, 7L, "f".repeat(64), requestedAt);
+
+        assertThat(generation.sourceFingerprint()).isEqualTo("f".repeat(64));
+    }
+
+    @Test
+    void requestNew_withFingerprint_nullFingerprint_isRejected() {
+        assertThatThrownBy(() -> ApplicationMaterialGeneration.requestNew(vacancyId, 3L, 7L, null, requestedAt))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void requestNew_withFingerprint_blankFingerprint_isRejected() {
+        assertThatThrownBy(() -> ApplicationMaterialGeneration.requestNew(vacancyId, 3L, 7L, "   ", requestedAt))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void requestNew_legacyFourArgOverload_leavesSourceFingerprintNull() {
+        ApplicationMaterialGeneration generation = ApplicationMaterialGeneration.requestNew(vacancyId, 3L, 7L, requestedAt);
+
+        assertThat(generation.sourceFingerprint()).isNull();
+    }
+
+    @Test
+    void legacyElevenArgConstructor_leavesSourceFingerprintNull() {
+        ApplicationMaterialGeneration generation = new ApplicationMaterialGeneration(
+                null, vacancyId, ApplicationMaterialGenerationStatus.PENDING, 0L, null, requestedAt, null, null, null, null, 0L);
+
+        assertThat(generation.sourceFingerprint()).isNull();
+    }
+
+    @Test
+    void compactConstructor_blankSourceFingerprint_isNormalizedToNull() {
+        ApplicationMaterialGeneration generation = new ApplicationMaterialGeneration(
+                null, vacancyId, ApplicationMaterialGenerationStatus.PENDING, 0L, null, "   ", requestedAt, null, null, null, null, 0L);
+
+        assertThat(generation.sourceFingerprint()).isNull();
+    }
+
+    @Test
+    void transitions_preserveSourceFingerprint() {
+        ApplicationMaterialGeneration completed = ApplicationMaterialGeneration
+                .requestNew(vacancyId, 1L, null, "f".repeat(64), requestedAt)
+                .start(requestedAt.plusSeconds(1))
+                .complete(requestedAt.plusSeconds(2));
+
+        assertThat(completed.sourceFingerprint()).isEqualTo("f".repeat(64));
+    }
+
     // ==================== Constructor validation ====================
 
     @Test

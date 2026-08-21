@@ -28,6 +28,30 @@ import java.util.UUID;
  * truth). No generated CV/cover-letter content, structured or otherwise, is modeled yet - that is
  * later Sprint 10 work, once the AI generation contract exists.
  *
+ * <h2>{@link #sourceFingerprint} - the authoritative reuse-validity key (Sprint 11 production hardening)</h2>
+ *
+ * {@link #candidateProfileVersion}/{@link #careerHistoryVersion} alone could not detect every source
+ * change that can affect generated materials - a production incident showed a Personal-Project-only
+ * edit leaving a stale {@code COMPLETED} generation looking "current" forever, since neither version
+ * field changes for that edit. {@link #sourceFingerprint} is {@code
+ * applicationmaterials.preparation.ApplicationMaterialSourceFingerprint#sha256}'s output: a SHA-256
+ * digest of the <em>complete</em> semantic source state (candidate profile facts, skills, education,
+ * languages, Career History, Personal Projects, and the vacancy fields AI generation reads) at the
+ * moment this generation was requested. {@code PrepareApplicationPackageUseCase} now decides reuse by
+ * comparing this field alone, exact equality - never {@link #candidateProfileVersion}/{@link
+ * #careerHistoryVersion}, which remain persisted purely as audit/debug metadata (see each field's own
+ * javadoc) and are never again a competing definition of "is this generation current."
+ *
+ * <p>{@code null} for a generation created before this field existed ("legacy") - see {@link
+ * #requestNew(UUID, long, Long, Instant)}. A legacy generation is deliberately never reusable: {@code
+ * PrepareApplicationPackageUseCase}'s fingerprint-equality check can never match a {@code null}
+ * stored value against a freshly computed non-null current fingerprint, so the first {@code
+ * prepare()} call after this feature ships always creates a fresh, fingerprinted generation rather
+ * than trusting old {@code candidateProfileVersion}/{@code careerHistoryVersion} coincidentally
+ * matching. Every newly *requested* generation (via {@link #requestNew(UUID, long, Long, String,
+ * Instant)}) always carries a real, non-blank fingerprint - enforced by this record's own compact
+ * constructor whenever one is supplied, and by that factory method requiring a non-null argument.
+ *
  * <h2>Lifecycle</h2>
  *
  * Legal transitions are {@code PENDING -> IN_PROGRESS -> COMPLETED} or {@code PENDING ->
@@ -57,6 +81,7 @@ public record ApplicationMaterialGeneration(
         ApplicationMaterialGenerationStatus status,
         long candidateProfileVersion,
         Long careerHistoryVersion,
+        String sourceFingerprint,
         Instant requestedAt,
         Instant startedAt,
         Instant completedAt,
@@ -78,6 +103,7 @@ public record ApplicationMaterialGeneration(
         if (careerHistoryVersion != null && careerHistoryVersion < 0) {
             throw new IllegalArgumentException("Application material generation career history version must not be negative");
         }
+        sourceFingerprint = blankToNull(sourceFingerprint);
         if (requestedAt == null) {
             throw new IllegalArgumentException("Application material generation requestedAt must not be null");
         }
@@ -99,19 +125,59 @@ public record ApplicationMaterialGeneration(
     }
 
     /**
-     * Creates a newly requested generation in {@link ApplicationMaterialGenerationStatus#PENDING} -
-     * the only domain-safe way to start one. {@link #id} is {@code null} (not yet persisted) and
-     * {@link #version} is {@code 0}, matching {@code CandidateProfileAggregate}/{@code
-     * CareerHistoryAggregate}'s "not yet persisted" convention.
+     * Legacy-shape convenience constructor matching this type's pre-fingerprint canonical
+     * constructor (11 components, no {@link #sourceFingerprint}) - defaults it to {@code null}, so
+     * every pre-existing direct-construction call site throughout this codebase's tests (lifecycle/
+     * persistence/concurrency tests unrelated to reuse/fingerprint behavior) keeps compiling
+     * unchanged. Mirrors {@link #requestNew(UUID, long, Long, Instant)}'s identical rationale.
+     */
+    public ApplicationMaterialGeneration(
+            UUID id, UUID vacancyId, ApplicationMaterialGenerationStatus status,
+            long candidateProfileVersion, Long careerHistoryVersion, Instant requestedAt,
+            Instant startedAt, Instant completedAt, String failureCode, String failureMessage, long version) {
+        this(id, vacancyId, status, candidateProfileVersion, careerHistoryVersion, null, requestedAt,
+                startedAt, completedAt, failureCode, failureMessage, version);
+    }
+
+    /**
+     * Creates a newly requested generation in {@link ApplicationMaterialGenerationStatus#PENDING},
+     * carrying the authoritative {@code sourceFingerprint} that will decide this generation's future
+     * reuse validity - the only domain-safe way to start one going forward. {@link #id} is {@code
+     * null} (not yet persisted) and {@link #version} is {@code 0}, matching {@code
+     * CandidateProfileAggregate}/{@code CareerHistoryAggregate}'s "not yet persisted" convention.
      *
      * @param careerHistoryVersion the Career History revision to associate, or {@code null} when
-     *     no Career History exists for the candidate yet ({@code CareerHistoryAvailability.NOT_PROVIDED})
+     *     no Career History exists for the candidate yet ({@code CareerHistoryAvailability.NOT_PROVIDED});
+     *     audit metadata only - see this record's {@link #sourceFingerprint} javadoc
+     * @param sourceFingerprint the complete-source-state fingerprint this generation was requested
+     *     against - must not be null or blank; use {@code
+     *     applicationmaterials.preparation.ApplicationMaterialSourceFingerprint#sha256} to compute it
+     */
+    public static ApplicationMaterialGeneration requestNew(
+            UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion, String sourceFingerprint, Instant requestedAt) {
+        if (sourceFingerprint == null || sourceFingerprint.isBlank()) {
+            throw new IllegalArgumentException("Application material generation sourceFingerprint must not be null or blank when requesting a new generation");
+        }
+        return new ApplicationMaterialGeneration(
+                null, vacancyId, ApplicationMaterialGenerationStatus.PENDING,
+                candidateProfileVersion, careerHistoryVersion, sourceFingerprint, requestedAt,
+                null, null, null, null, 0);
+    }
+
+    /**
+     * Legacy convenience constructor matching this type's pre-fingerprint shape - defaults {@link
+     * #sourceFingerprint} to {@code null}. Exists only so pre-existing test fixtures unrelated to
+     * reuse/fingerprint behavior keep compiling; production code must always call {@link
+     * #requestNew(UUID, long, Long, String, Instant)} with a real fingerprint - a generation created
+     * through this overload is, by construction, a "legacy" row that {@code
+     * PrepareApplicationPackageUseCase} can never consider reusable (see this record's own {@link
+     * #sourceFingerprint} javadoc).
      */
     public static ApplicationMaterialGeneration requestNew(
             UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion, Instant requestedAt) {
         return new ApplicationMaterialGeneration(
                 null, vacancyId, ApplicationMaterialGenerationStatus.PENDING,
-                candidateProfileVersion, careerHistoryVersion, requestedAt,
+                candidateProfileVersion, careerHistoryVersion, null, requestedAt,
                 null, null, null, null, 0);
     }
 
@@ -124,7 +190,7 @@ public record ApplicationMaterialGeneration(
         requireStatus(ApplicationMaterialGenerationStatus.PENDING, "start");
         return new ApplicationMaterialGeneration(
                 id, vacancyId, ApplicationMaterialGenerationStatus.IN_PROGRESS,
-                candidateProfileVersion, careerHistoryVersion, requestedAt,
+                candidateProfileVersion, careerHistoryVersion, sourceFingerprint, requestedAt,
                 startedAt, null, null, null, version);
     }
 
@@ -137,7 +203,7 @@ public record ApplicationMaterialGeneration(
         requireStatus(ApplicationMaterialGenerationStatus.IN_PROGRESS, "complete");
         return new ApplicationMaterialGeneration(
                 id, vacancyId, ApplicationMaterialGenerationStatus.COMPLETED,
-                candidateProfileVersion, careerHistoryVersion, requestedAt,
+                candidateProfileVersion, careerHistoryVersion, sourceFingerprint, requestedAt,
                 startedAt, completedAt, null, null, version);
     }
 
@@ -155,7 +221,7 @@ public record ApplicationMaterialGeneration(
         }
         return new ApplicationMaterialGeneration(
                 id, vacancyId, ApplicationMaterialGenerationStatus.FAILED,
-                candidateProfileVersion, careerHistoryVersion, requestedAt,
+                candidateProfileVersion, careerHistoryVersion, sourceFingerprint, requestedAt,
                 startedAt, completedAt, failureCode, failureMessage, version);
     }
 

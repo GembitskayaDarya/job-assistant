@@ -31,7 +31,7 @@ logs/
 !.env.example
 
 ### Candidate profile (personal data) ###
-config/private/candidate-profile.yml
+config/candidate-profile.yml
 !config/examples/candidate-profile.example.yml
 
 ### Career history import source (personal data - Sprint 9 Step 7) ###

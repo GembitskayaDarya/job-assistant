@@ -114,12 +114,16 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <h2>Failure handling</h2>
  *
  * Every controlled failure point maps to a small, safe {@link ApplicationMaterialsGenerationFailureCode}
- * persisted as {@link ApplicationMaterialGeneration#failureCode()}. {@link CvTailoringAiException}'s
- * cause presence distinguishes {@link ApplicationMaterialsGenerationFailureCode#AI_PROVIDER_ERROR}
- * from {@link ApplicationMaterialsGenerationFailureCode#MALFORMED_AI_RESPONSE} exactly the same way
- * {@link ApplicationMaterialsAiException} already does for the cover letter - one shared convention
- * across both AI ports. A raw Spring AI/OpenAI exception message, and any stack trace, is logged
- * (see the {@code log.error} calls below) but never persisted.
+ * persisted as {@link ApplicationMaterialGeneration#failureCode()}. {@link CvTailoringAiException#reason()}
+ * (Sprint 11 production-hardening correction - an explicit field, no longer an implicit {@code
+ * getCause() != null} check) distinguishes {@link ApplicationMaterialsGenerationFailureCode#AI_PROVIDER_ERROR}
+ * from {@link ApplicationMaterialsGenerationFailureCode#MALFORMED_AI_RESPONSE}; {@link
+ * ApplicationMaterialsAiException} (the cover letter's own AI exception, unaffected by that
+ * correction) still uses cause presence for the identical classification. By the time a {@link
+ * CvTailoringAiException} reaches this class, {@code CvTailoringUseCase}'s own bounded retry has
+ * already exhausted every retryable attempt - this catch block only ever sees a final, no-longer-
+ * retryable failure. A raw Spring AI/OpenAI exception message, and any stack trace, is logged (see
+ * the {@code log.error} calls below) but never persisted.
  */
 @Service
 @Slf4j
@@ -235,7 +239,7 @@ public class GenerateApplicationMaterialsUseCase {
             return failGeneration(started, ApplicationMaterialsGenerationFailureCode.CANDIDATE_CONTEXT_NOT_CONFIGURED, e.getMessage());
         } catch (CvTailoringAiException e) {
             log.error("CV tailoring AI request failed for generation {}", started.id(), e);
-            ApplicationMaterialsGenerationFailureCode code = e.getCause() != null
+            ApplicationMaterialsGenerationFailureCode code = e.reason() == CvTailoringAiException.Reason.PROVIDER_ERROR
                     ? ApplicationMaterialsGenerationFailureCode.AI_PROVIDER_ERROR
                     : ApplicationMaterialsGenerationFailureCode.MALFORMED_AI_RESPONSE;
             String message = code == ApplicationMaterialsGenerationFailureCode.AI_PROVIDER_ERROR ? GENERIC_AI_FAILURE_MESSAGE : e.getMessage();

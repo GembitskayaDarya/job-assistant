@@ -18,8 +18,6 @@ import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvProje
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.time.LocalDate;
-import java.util.Comparator;
 import java.util.List;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
@@ -45,14 +43,17 @@ import org.springframework.stereotype.Component;
  * content is decided entirely above this class (see {@code GenerateBaselineCvUseCase}/{@code
  * BaselineCvSelectionResolver}), never hardcoded here.
  *
- * <h2>Recency ordering</h2>
+ * <h2>Order preservation (final acceptance correction)</h2>
  *
- * {@link #sortedByRecency(List)}/{@link #sortedPositionsByRecency(List)} reorder {@code
- * TailoredCvDocument#experience()} (never {@code TailoredCvDocument} itself, which stays factual and
- * unordered-by-this-class) into reverse-chronological display order, purely from each position's own
- * {@code startDate}/{@code endDate}/{@code currentRole} - a generic, universally-true resume
- * convention ("most recent/current experience first, closer to the top of page 1") applied to any
- * candidate's data, never a check against a specific company/position name.
+ * This class performs no ordering/sorting of its own whatsoever - {@link TailoredCvDocument#experience()}
+ * and each company's {@code positions()} already carry their final, most-recent/current-first display
+ * order (decided exactly once, by {@code CvAssembler} - see its "Canonical company/position display
+ * order" javadoc section) by the time they reach this renderer. {@link #writeCv}/{@link #writeCompany}
+ * iterate both lists exactly as given. A previous production defect had this class independently
+ * re-sorting positions into recency order at render time while {@code AtsCvVerifier} verified the
+ * assembler's (then still source-order) {@code TailoredCvDocument} - the renderer and verifier
+ * disagreed about where each position's text actually landed on the page, and every real CV with more
+ * than one position at the same company failed ATS verification. Never reintroduce sorting here.
  *
  * <h2>Fonts</h2>
  *
@@ -195,7 +196,7 @@ public class PdfBoxApplicationMaterialDocumentRenderer implements ApplicationMat
 
         if (!cv.experience().isEmpty()) {
             writeSectionHeading(cursor, fonts, CvSectionHeadings.PROFESSIONAL_EXPERIENCE);
-            for (TailoredCvCompany company : sortedByRecency(cv.experience())) {
+            for (TailoredCvCompany company : cv.experience()) {
                 writeCompany(cursor, fonts, company);
             }
             cursor.addSpacing(SECTION_SPACING - ITEM_SPACING);
@@ -252,7 +253,7 @@ public class PdfBoxApplicationMaterialDocumentRenderer implements ApplicationMat
 
     private void writeCompany(PdfPageCursor cursor, Fonts fonts, TailoredCvCompany company) throws IOException {
         cursor.writeWrapped(company.name(), fonts.semiBold(), FONT_SIZE_BODY, LEADING_BODY, 0);
-        for (TailoredCvPosition position : sortedPositionsByRecency(company.positions())) {
+        for (TailoredCvPosition position : company.positions()) {
             writePosition(cursor, fonts, position);
         }
         cursor.addSpacing(ITEM_SPACING);
@@ -347,37 +348,6 @@ public class PdfBoxApplicationMaterialDocumentRenderer implements ApplicationMat
 
     private String formatLanguage(CandidateLanguageFacts language) {
         return language.proficiency() == null ? language.name() : language.name() + ": " + language.proficiency();
-    }
-
-    // ==================== Recency ordering (see class javadoc) ====================
-
-    private List<TailoredCvCompany> sortedByRecency(List<TailoredCvCompany> companies) {
-        return companies.stream()
-                .sorted(Comparator.comparing(this::mostRecentEffectiveDate).reversed())
-                .toList();
-    }
-
-    private List<TailoredCvPosition> sortedPositionsByRecency(List<TailoredCvPosition> positions) {
-        return positions.stream()
-                .sorted(Comparator.comparing(this::effectiveDate).reversed())
-                .toList();
-    }
-
-    private LocalDate mostRecentEffectiveDate(TailoredCvCompany company) {
-        return company.positions().stream()
-                .map(this::effectiveDate)
-                .max(Comparator.naturalOrder())
-                .orElse(LocalDate.MIN);
-    }
-
-    private LocalDate effectiveDate(TailoredCvPosition position) {
-        if (position.currentRole()) {
-            return LocalDate.MAX;
-        }
-        if (position.endDate() != null) {
-            return position.endDate();
-        }
-        return position.startDate() != null ? position.startDate() : LocalDate.MIN;
     }
 
     // ==================== Cover letter ====================

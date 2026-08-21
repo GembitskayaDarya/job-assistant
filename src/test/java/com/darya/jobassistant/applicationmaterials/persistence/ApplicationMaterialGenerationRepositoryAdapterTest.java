@@ -40,11 +40,19 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Sprint 10 Step 1: proves {@link ApplicationMaterialGenerationRepositoryAdapter} against real
- * PostgreSQL - create, version-checked update, vacancy-not-found translation, optimistic
- * concurrency, and newest-first listing through the port. Mirrors {@code
- * CareerHistoryRepositoryAdapterTest}'s {@code @DataJpaTest}/Testcontainers setup, building the
- * adapter directly (a plain {@code @Repository} class, not a Spring Data interface).
+ * Sprint 10 Step 1, re-keyed in Sprint 11 Final Cache Correctness Hardening: proves {@link
+ * ApplicationMaterialGenerationRepositoryAdapter} against real PostgreSQL - create, version-checked
+ * update, vacancy-not-found translation, optimistic concurrency, newest-first listing, and (V31) the
+ * active-uniqueness index keyed on {@code source_fingerprint} rather than the old candidate-profile-
+ * version/career-history-version pair. Mirrors {@code CareerHistoryRepositoryAdapterTest}'s {@code
+ * @DataJpaTest}/Testcontainers setup, building the adapter directly (a plain {@code @Repository}
+ * class, not a Spring Data interface).
+ *
+ * <p>Sprint 11 note: {@code candidateProfileVersion}/{@code careerHistoryVersion} no longer drive
+ * active-uniqueness at all - two PENDING/IN_PROGRESS rows for the same vacancy now collide
+ * (or don't) purely based on whether their {@code sourceFingerprint} values are equal, independent
+ * of what version numbers happen to be attached. Tests below therefore vary the fingerprint
+ * explicitly rather than the version numbers to control collision behavior.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -69,6 +77,9 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     private EntityManager entityManager;
 
     private static final Instant REQUESTED_AT = Instant.parse("2026-01-01T00:00:00Z");
+    private static final String FINGERPRINT_A = "a".repeat(64);
+    private static final String FINGERPRINT_B = "b".repeat(64);
+    private static final String FINGERPRINT_C = "c".repeat(64);
 
     private ApplicationMaterialGenerationRepositoryAdapter adapter() {
         return new ApplicationMaterialGenerationRepositoryAdapter(generationRepository, vacancyRepository, Clock.systemUTC());
@@ -80,7 +91,7 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void save_newGeneration_persistsAndReturnsItWithDurableIdAndZeroVersion() {
         UUID vacancyId = aVacancy("create-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration requested =
-                ApplicationMaterialGeneration.requestNew(vacancyId, 2L, 5L, REQUESTED_AT);
+                ApplicationMaterialGeneration.requestNew(vacancyId, 2L, 5L, FINGERPRINT_A, REQUESTED_AT);
 
         ApplicationMaterialGeneration saved = adapter().save(requested);
 
@@ -89,16 +100,29 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
         assertThat(saved.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
         assertThat(saved.candidateProfileVersion()).isEqualTo(2L);
         assertThat(saved.careerHistoryVersion()).isEqualTo(5L);
+        assertThat(saved.sourceFingerprint()).isEqualTo(FINGERPRINT_A);
         assertThat(saved.version()).isZero();
     }
 
     @Test
     void save_newGenerationForUnknownVacancy_throwsVacancyNotFound() {
         ApplicationMaterialGeneration requested =
-                ApplicationMaterialGeneration.requestNew(UUID.randomUUID(), 0L, null, REQUESTED_AT);
+                ApplicationMaterialGeneration.requestNew(UUID.randomUUID(), 0L, null, FINGERPRINT_A, REQUESTED_AT);
 
         assertThatThrownBy(() -> adapter().save(requested))
                 .isInstanceOf(ApplicationMaterialGenerationVacancyNotFoundException.class);
+    }
+
+    @Test
+    void save_legacyGenerationWithNullFingerprint_isPersistedAsLegacy() {
+        // A generation requested through the old 4-arg requestNew (pre-Sprint-11 call sites, if any
+        // remained) still persists with a null source_fingerprint - never silently defaulted.
+        UUID vacancyId = aVacancy("legacy-null-fingerprint-" + UUID.randomUUID()).getId();
+        ApplicationMaterialGeneration requested = ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT);
+
+        ApplicationMaterialGeneration saved = adapter().save(requested);
+
+        assertThat(saved.sourceFingerprint()).isNull();
     }
 
     // ==================== Round trip / findById / findByVacancyId ====================
@@ -107,13 +131,14 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void findById_afterSave_returnsTheSameGeneration() {
         UUID vacancyId = aVacancy("find-by-id-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration saved =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
 
         Optional<ApplicationMaterialGeneration> reloaded = adapter().findById(saved.id());
 
         assertThat(reloaded).isPresent();
         assertThat(reloaded.get().id()).isEqualTo(saved.id());
         assertThat(reloaded.get().vacancyId()).isEqualTo(vacancyId);
+        assertThat(reloaded.get().sourceFingerprint()).isEqualTo(FINGERPRINT_A);
     }
 
     @Test
@@ -123,13 +148,13 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
 
     @Test
     void findByVacancyId_multipleGenerations_returnsAllOfThem() {
-        // Distinct candidateProfileVersions - three simultaneously PENDING generations for the same
-        // vacancy and the same effective key would now collide with V25's active-uniqueness index
-        // (see the "V25 active-uniqueness" section below); this test is about listing, not reuse.
+        // Distinct source fingerprints - three simultaneously PENDING generations for the same
+        // vacancy and the same fingerprint would now collide with V31's active-uniqueness index
+        // (see the "V31 active-uniqueness" section below); this test is about listing, not reuse.
         UUID vacancyId = aVacancy("multi-" + UUID.randomUUID()).getId();
-        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
-        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 2L, null, REQUESTED_AT.plusSeconds(1)));
-        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 3L, null, REQUESTED_AT.plusSeconds(2)));
+        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
+        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 2L, null, FINGERPRINT_B, REQUESTED_AT.plusSeconds(1)));
+        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 3L, null, FINGERPRINT_C, REQUESTED_AT.plusSeconds(2)));
 
         List<ApplicationMaterialGeneration> generations = adapter().findByVacancyId(vacancyId);
 
@@ -138,12 +163,12 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
 
     @Test
     void findByVacancyId_ordersNewestRequestedFirst() {
-        // Distinct candidateProfileVersions - see findByVacancyId_multipleGenerations_returnsAllOfThem.
+        // Distinct source fingerprints - see findByVacancyId_multipleGenerations_returnsAllOfThem.
         UUID vacancyId = aVacancy("ordering-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration oldest =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
-        ApplicationMaterialGeneration newest = adapter().save(
-                ApplicationMaterialGeneration.requestNew(vacancyId, 2L, null, REQUESTED_AT.plus(1, ChronoUnit.DAYS)));
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
+        ApplicationMaterialGeneration newest = adapter().save(ApplicationMaterialGeneration.requestNew(
+                vacancyId, 2L, null, FINGERPRINT_B, REQUESTED_AT.plus(1, ChronoUnit.DAYS)));
 
         List<ApplicationMaterialGeneration> generations = adapter().findByVacancyId(vacancyId);
 
@@ -155,7 +180,7 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void findByVacancyId_unrelatedVacancy_isNeverReturned() {
         UUID vacancyA = aVacancy("isolation-a-" + UUID.randomUUID()).getId();
         UUID vacancyB = aVacancy("isolation-b-" + UUID.randomUUID()).getId();
-        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyA, 1L, null, REQUESTED_AT));
+        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyA, 1L, null, FINGERPRINT_A, REQUESTED_AT));
 
         assertThat(adapter().findByVacancyId(vacancyB)).isEmpty();
     }
@@ -166,13 +191,14 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void save_startedGeneration_persistsLifecycleFields() {
         UUID vacancyId = aVacancy("start-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration pending =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
         Instant startedAt = REQUESTED_AT.plusSeconds(5);
 
         ApplicationMaterialGeneration started = adapter().save(pending.start(startedAt));
 
         assertThat(started.status()).isEqualTo(ApplicationMaterialGenerationStatus.IN_PROGRESS);
         assertThat(started.startedAt()).isEqualTo(startedAt);
+        assertThat(started.sourceFingerprint()).isEqualTo(FINGERPRINT_A);
         assertThat(started.version()).isEqualTo(1L);
 
         ApplicationMaterialGeneration reloaded = adapter().findById(started.id()).orElseThrow();
@@ -184,7 +210,7 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void save_completedGeneration_persistsCompletionFields() {
         UUID vacancyId = aVacancy("complete-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration started = adapter()
-                .save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT))
+                .save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT))
                 .start(REQUESTED_AT.plusSeconds(1));
         ApplicationMaterialGeneration savedStarted = adapter().save(started);
         Instant completedAt = REQUESTED_AT.plusSeconds(2);
@@ -193,6 +219,7 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
 
         assertThat(completed.status()).isEqualTo(ApplicationMaterialGenerationStatus.COMPLETED);
         assertThat(completed.completedAt()).isEqualTo(completedAt);
+        assertThat(completed.sourceFingerprint()).isEqualTo(FINGERPRINT_A);
         assertThat(completed.version()).isEqualTo(2L);
     }
 
@@ -200,7 +227,7 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void save_failedGeneration_persistsFailureMetadata() {
         UUID vacancyId = aVacancy("fail-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration savedStarted = adapter()
-                .save(adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT))
+                .save(adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT))
                         .start(REQUESTED_AT.plusSeconds(1)));
         Instant completedAt = REQUESTED_AT.plusSeconds(2);
 
@@ -222,7 +249,7 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void save_staleVersion_throwsConcurrentModification() {
         UUID vacancyId = aVacancy("stale-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration saved =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
         Instant startedAt = REQUESTED_AT.plusSeconds(1);
 
         // First writer succeeds and advances the row to version 1.
@@ -237,7 +264,7 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void save_afterConcurrentModification_leavesTheWinningWriteIntact() {
         UUID vacancyId = aVacancy("stale-preserved-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration saved =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
         Instant startedAt = REQUESTED_AT.plusSeconds(1);
 
         ApplicationMaterialGeneration started = adapter().save(saved.start(startedAt));
@@ -249,25 +276,43 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
         assertThat(reloaded.version()).isEqualTo(1L);
     }
 
-    // ==================== V25 active-uniqueness (production-readiness acceptance fix) ====================
+    // ==================== V31 active-uniqueness (source-fingerprint-keyed) ====================
 
     @Test
-    void save_secondPendingForSameEffectiveKey_throwsActiveConflict() {
+    void save_secondPendingForSameSourceFingerprint_throwsActiveConflict() {
         UUID vacancyId = aVacancy("active-conflict-" + UUID.randomUUID()).getId();
-        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 5L, 2L, REQUESTED_AT));
+        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 5L, 2L, FINGERPRINT_A, REQUESTED_AT));
 
-        assertThatThrownBy(() -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 5L, 2L, REQUESTED_AT.plusSeconds(1))))
+        assertThatThrownBy(() -> adapter().save(
+                        ApplicationMaterialGeneration.requestNew(vacancyId, 5L, 2L, FINGERPRINT_A, REQUESTED_AT.plusSeconds(1))))
                 .isInstanceOf(ApplicationMaterialGenerationActiveConflictException.class);
     }
 
     @Test
-    void save_secondPendingForSameEffectiveKey_nullCareerHistoryVersion_throwsActiveConflict() {
-        // NULLS NOT DISTINCT (V25): two rows both with career_history_version IS NULL must collide
-        // exactly like any other equal value, not be treated as distinct.
+    void save_secondPendingForSameVacancy_differentVersionNumbers_sameFingerprint_stillThrowsActiveConflict() {
+        // The version fields are audit metadata only now - only the fingerprint decides collision.
+        // Two rows with genuinely different candidateProfileVersion/careerHistoryVersion but the
+        // SAME fingerprint (an admittedly synthetic case in a unit test, but it proves the version
+        // fields no longer participate in the uniqueness decision at all) must still collide.
+        UUID vacancyId = aVacancy("active-conflict-version-irrelevant-" + UUID.randomUUID()).getId();
+        adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 5L, 2L, FINGERPRINT_A, REQUESTED_AT));
+
+        assertThatThrownBy(() -> adapter().save(
+                        ApplicationMaterialGeneration.requestNew(vacancyId, 9L, 4L, FINGERPRINT_A, REQUESTED_AT.plusSeconds(1))))
+                .isInstanceOf(ApplicationMaterialGenerationActiveConflictException.class);
+    }
+
+    @Test
+    void save_secondPendingWithNullFingerprint_throwsActiveConflict() {
+        // NULLS NOT DISTINCT (V31, carried over from V25): two rows both with source_fingerprint IS
+        // NULL (the legacy shape) must collide exactly like any other equal value, not be treated as
+        // distinct - this is why legacy call sites must never insert two concurrently-active legacy
+        // rows for one vacancy.
         UUID vacancyId = aVacancy("active-conflict-null-" + UUID.randomUUID()).getId();
         adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 3L, null, REQUESTED_AT));
 
-        assertThatThrownBy(() -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 3L, null, REQUESTED_AT.plusSeconds(1))))
+        assertThatThrownBy(() -> adapter().save(
+                        ApplicationMaterialGeneration.requestNew(vacancyId, 3L, null, REQUESTED_AT.plusSeconds(1))))
                 .isInstanceOf(ApplicationMaterialGenerationActiveConflictException.class);
     }
 
@@ -275,92 +320,85 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
     void save_secondPendingWhileFirstIsInProgress_throwsActiveConflict() {
         UUID vacancyId = aVacancy("active-conflict-in-progress-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration inProgress =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
         adapter().save(inProgress.start(REQUESTED_AT.plusSeconds(1)));
 
-        assertThatThrownBy(() -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT.plusSeconds(2))))
+        assertThatThrownBy(() -> adapter().save(
+                        ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT.plusSeconds(2))))
                 .isInstanceOf(ApplicationMaterialGenerationActiveConflictException.class);
     }
 
     @Test
-    void save_newPendingAlongsideCompletedGenerationForSameKey_succeeds() {
+    void save_newPendingAlongsideCompletedGenerationForSameFingerprint_succeeds() {
         UUID vacancyId = aVacancy("completed-coexists-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration completed = adapter()
-                .save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT))
+                .save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT))
                 .start(REQUESTED_AT.plusSeconds(1));
         adapter().save(adapter().save(completed).complete(REQUESTED_AT.plusSeconds(2)));
 
-        ApplicationMaterialGeneration secondPending =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT.plusSeconds(3)));
+        ApplicationMaterialGeneration secondPending = adapter().save(
+                ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT.plusSeconds(3)));
 
         assertThat(secondPending.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
         assertThat(adapter().findByVacancyId(vacancyId)).hasSize(2);
     }
 
     @Test
-    void save_newPendingAfterFailedGenerationForSameKey_succeeds() {
+    void save_newPendingAfterFailedGenerationForSameFingerprint_succeeds() {
         UUID vacancyId = aVacancy("failed-does-not-block-" + UUID.randomUUID()).getId();
         ApplicationMaterialGeneration started = adapter()
-                .save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT))
+                .save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT))
                 .start(REQUESTED_AT.plusSeconds(1));
         adapter().save(adapter().save(started).fail("AI_PROVIDER_ERROR", "boom", REQUESTED_AT.plusSeconds(2)));
 
-        ApplicationMaterialGeneration secondPending =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT.plusSeconds(3)));
+        ApplicationMaterialGeneration secondPending = adapter().save(
+                ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT.plusSeconds(3)));
 
         assertThat(secondPending.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
     }
 
     @Test
-    void save_activePendingForDifferentVacancies_bothSucceed() {
+    void save_activePendingForDifferentVacancies_sameFingerprint_bothSucceed() {
         UUID vacancyA = aVacancy("independent-vacancy-a-" + UUID.randomUUID()).getId();
         UUID vacancyB = aVacancy("independent-vacancy-b-" + UUID.randomUUID()).getId();
 
-        ApplicationMaterialGeneration a = adapter().save(ApplicationMaterialGeneration.requestNew(vacancyA, 1L, null, REQUESTED_AT));
-        ApplicationMaterialGeneration b = adapter().save(ApplicationMaterialGeneration.requestNew(vacancyB, 1L, null, REQUESTED_AT));
+        ApplicationMaterialGeneration a =
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyA, 1L, null, FINGERPRINT_A, REQUESTED_AT));
+        ApplicationMaterialGeneration b =
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyB, 1L, null, FINGERPRINT_A, REQUESTED_AT));
 
         assertThat(a.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
         assertThat(b.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
     }
 
     @Test
-    void save_activePendingForDifferentCandidateProfileVersions_bothSucceed() {
-        UUID vacancyId = aVacancy("independent-profile-version-" + UUID.randomUUID()).getId();
+    void save_activePendingForDifferentSourceFingerprints_sameVersionNumbers_bothSucceed() {
+        // The inverse of save_secondPendingForSameVacancy_differentVersionNumbers_sameFingerprint_stillThrowsActiveConflict:
+        // identical version numbers no longer force a collision - only the fingerprint does.
+        UUID vacancyId = aVacancy("independent-fingerprint-" + UUID.randomUUID()).getId();
 
-        ApplicationMaterialGeneration a = adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
-        ApplicationMaterialGeneration b = adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 2L, null, REQUESTED_AT.plusSeconds(1)));
+        ApplicationMaterialGeneration a =
+                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_A, REQUESTED_AT));
+        ApplicationMaterialGeneration b = adapter().save(
+                ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, FINGERPRINT_B, REQUESTED_AT.plusSeconds(1)));
 
         assertThat(a.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
         assertThat(b.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
-        assertThat(adapter().findByVacancyId(vacancyId)).hasSize(2);
-    }
-
-    @Test
-    void save_activePendingForDifferentCareerHistoryVersions_bothSucceed() {
-        UUID vacancyId = aVacancy("independent-history-version-" + UUID.randomUUID()).getId();
-
-        ApplicationMaterialGeneration withoutHistory =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT));
-        ApplicationMaterialGeneration withHistory =
-                adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, 1L, REQUESTED_AT.plusSeconds(1)));
-
-        assertThat(withoutHistory.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
-        assertThat(withHistory.status()).isEqualTo(ApplicationMaterialGenerationStatus.PENDING);
         assertThat(adapter().findByVacancyId(vacancyId)).hasSize(2);
     }
 
     /**
      * The AI-cost invariant proven with genuine concurrency rather than sequential calls - two
-     * threads racing to insert the very first generation for the exact same effective key
-     * (including {@code careerHistoryVersion == null}, the case ordinary unique-index semantics get
-     * wrong without {@code NULLS NOT DISTINCT}). Disables the surrounding {@code @DataJpaTest}
+     * threads racing to insert the very first generation for the exact same source fingerprint
+     * (including the fingerprint {@code null} legacy case, the case ordinary unique-index semantics
+     * get wrong without {@code NULLS NOT DISTINCT}). Disables the surrounding {@code @DataJpaTest}
      * per-test transaction (mirrors {@code CareerHistoryImportUseCaseConcurrencyTest}) so each
      * thread's own transaction genuinely commits and can conflict with the other's.
      */
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void save_concurrentFirstInsertsForSameEffectiveKey_nullCareerHistoryVersion_exactlyOneWins() throws Exception {
-        UUID vacancyId = aVacancy("concurrent-null-history-" + UUID.randomUUID()).getId();
+    void save_concurrentFirstInsertsForSameFingerprint_nullFingerprint_exactlyOneWins() throws Exception {
+        UUID vacancyId = aVacancy("concurrent-null-fingerprint-" + UUID.randomUUID()).getId();
 
         List<Object> results = runConcurrently(
                 () -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 1L, null, REQUESTED_AT)),
@@ -372,12 +410,12 @@ class ApplicationMaterialGenerationRepositoryAdapterTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void save_concurrentFirstInsertsForSameEffectiveKey_withCareerHistoryVersion_exactlyOneWins() throws Exception {
-        UUID vacancyId = aVacancy("concurrent-with-history-" + UUID.randomUUID()).getId();
+    void save_concurrentFirstInsertsForSameFingerprint_withRealFingerprint_exactlyOneWins() throws Exception {
+        UUID vacancyId = aVacancy("concurrent-with-fingerprint-" + UUID.randomUUID()).getId();
 
         List<Object> results = runConcurrently(
-                () -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 4L, 7L, REQUESTED_AT)),
-                () -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 4L, 7L, REQUESTED_AT)));
+                () -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 4L, 7L, FINGERPRINT_A, REQUESTED_AT)),
+                () -> adapter().save(ApplicationMaterialGeneration.requestNew(vacancyId, 4L, 7L, FINGERPRINT_A, REQUESTED_AT)));
 
         assertExactlyOneWinnerAndOneConflict(results);
         assertThat(adapter().findByVacancyId(vacancyId)).hasSize(1);

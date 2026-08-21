@@ -20,11 +20,13 @@ import com.darya.jobassistant.exception.VacancyNotFoundException;
 import com.darya.jobassistant.integrations.filestorage.FileStorageException;
 import com.darya.jobassistant.integrations.filestorage.FileStoragePort;
 import com.darya.jobassistant.integrations.filestorage.StoredFileContent;
+import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.service.VacancyQueryService;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -39,15 +41,25 @@ import org.springframework.stereotype.Service;
  * {@link RenderApplicationMaterialsUseCase}, an artifact repository, or {@link FileStoragePort}
  * directly - see this class's package javadoc-equivalent note in the Sprint 10 Step 5 report.
  *
- * <h2>Reuse algorithm</h2>
+ * <h2>Reuse algorithm (Sprint 11 production hardening)</h2>
  *
- * Reuse decisions are keyed on <em>both</em> the target Vacancy and the candidate's current
- * effective versions - {@link CandidateContextSnapshot#candidateProfileVersion()} and the current
- * Career History version (or absence thereof), read once per call via {@link
- * CandidateContextProvider#loadCurrentContext()}. {@link ApplicationMaterialGenerationRepositoryPort#findByVacancyId}
- * returns every generation for the Vacancy newest-requested-first; the first (i.e. most recent)
- * one whose recorded versions match the current ones is the candidate for reuse - older
- * generations, and any generation recorded against different versions, are never considered.
+ * Reuse decisions are keyed on the target Vacancy plus one authoritative, complete-source-state
+ * digest - {@link ApplicationMaterialSourceFingerprint#sha256}, computed once per call from the
+ * candidate's current {@link CandidateContextSnapshot} (read via {@link
+ * CandidateContextProvider#loadCurrentContext()}) and the current {@link JobOffer}. {@link
+ * ApplicationMaterialGenerationRepositoryPort#findByVacancyId} returns every generation for the
+ * Vacancy newest-requested-first; the first (i.e. most recent) one whose stored {@link
+ * ApplicationMaterialGeneration#sourceFingerprint()} exactly equals the freshly computed one is the
+ * candidate for reuse - older generations, any generation recorded against a different fingerprint,
+ * and any <em>legacy</em> generation (a {@code null} stored fingerprint, from before this field
+ * existed) are never considered. {@code candidateProfileVersion}/{@code careerHistoryVersion} are
+ * still recorded on every generation and still gate {@code
+ * ApplicationMaterialsCandidateContextProvider#loadContext}'s own mid-flight staleness check inside
+ * {@code GenerateApplicationMaterialsUseCase}, but they are no longer this class's own reuse
+ * authority - a change that does not move either version (e.g. a Personal-Project-only edit) still
+ * changes {@link ApplicationMaterialSourceFingerprint#sha256}, and therefore still correctly
+ * invalidates a stale {@code COMPLETED} generation, closing exactly the gap those two fields alone
+ * could not.
  *
  * <ul>
  *   <li>{@code COMPLETED}: reused outright - no {@link GenerateApplicationMaterialsUseCase#generate}
@@ -123,6 +135,7 @@ import org.springframework.stereotype.Service;
 public class PrepareApplicationPackageUseCase {
 
     private final VacancyQueryService vacancyQueryService;
+    private final VacancyJobOfferMapper vacancyJobOfferMapper;
     private final CandidateContextProvider candidateContextProvider;
     private final ApplicationMaterialGenerationRepositoryPort generationRepositoryPort;
     private final GenerateApplicationMaterialsUseCase generateApplicationMaterialsUseCase;
@@ -130,6 +143,16 @@ public class PrepareApplicationPackageUseCase {
     private final FileStoragePort fileStoragePort;
     private final ApplicationMaterialGenerationProperties generationProperties;
     private final Clock clock;
+
+    /**
+     * Sprint 11 production hardening: bundles the three values every reuse/creation decision needs
+     * to thread through this class's call graph - {@code candidateProfileVersion}/{@code
+     * careerHistoryVersion} (audit metadata only, still persisted on every generation) and {@code
+     * sourceFingerprint} ({@link ApplicationMaterialSourceFingerprint#sha256}'s output - the sole
+     * reuse-validity authority). Computed exactly once per {@link #prepare} call.
+     */
+    private record EffectiveSourceState(long candidateProfileVersion, Long careerHistoryVersion, String sourceFingerprint) {
+    }
 
     /**
      * Bounds {@link #createOrJoinGeneration}'s retry loop after losing the V25 active-uniqueness
@@ -151,23 +174,27 @@ public class PrepareApplicationPackageUseCase {
     public PrepareApplicationPackageOutcome prepare(UUID vacancyId) {
         log.info("Application package preparation requested for vacancy {}", vacancyId);
 
+        Vacancy vacancy;
         try {
-            vacancyQueryService.getById(vacancyId);
+            vacancy = vacancyQueryService.getById(vacancyId);
         } catch (VacancyNotFoundException e) {
             log.info("Application package preparation requested for unknown vacancy {}", vacancyId);
             return new PrepareApplicationPackageOutcome.VacancyNotFound(vacancyId);
         }
 
         CandidateContextSnapshot snapshot = candidateContextProvider.loadCurrentContext();
-        long candidateProfileVersion = snapshot.candidateProfileVersion();
-        Long careerHistoryVersion = snapshot.careerHistory().map(CareerHistoryAggregate::version).orElse(null);
+        JobOffer jobOffer = vacancyJobOfferMapper.toJobOffer(vacancy);
+        EffectiveSourceState effectiveSourceState = new EffectiveSourceState(
+                snapshot.candidateProfileVersion(),
+                snapshot.careerHistory().map(CareerHistoryAggregate::version).orElse(null),
+                ApplicationMaterialSourceFingerprint.sha256(snapshot, jobOffer));
 
-        Optional<ApplicationMaterialGeneration> matching = findMatchingGeneration(vacancyId, candidateProfileVersion, careerHistoryVersion);
+        Optional<ApplicationMaterialGeneration> matching = findMatchingGeneration(vacancyId, effectiveSourceState);
         if (matching.isPresent()) {
-            return resolve(matching.get(), vacancyId, candidateProfileVersion, careerHistoryVersion);
+            return resolve(matching.get(), vacancyId, effectiveSourceState);
         }
 
-        return createOrJoinGeneration(vacancyId, candidateProfileVersion, careerHistoryVersion);
+        return createOrJoinGeneration(vacancyId, effectiveSourceState);
     }
 
     /**
@@ -178,7 +205,7 @@ public class PrepareApplicationPackageUseCase {
      * instead, exactly like the "no matching generation" case.
      */
     private PrepareApplicationPackageOutcome resolve(
-            ApplicationMaterialGeneration generation, UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
+            ApplicationMaterialGeneration generation, UUID vacancyId, EffectiveSourceState effectiveSourceState) {
         return switch (generation.status()) {
             case COMPLETED -> {
                 log.info("Reusing completed application material generation {} for vacancy {}", generation.id(), vacancyId);
@@ -186,7 +213,7 @@ public class PrepareApplicationPackageUseCase {
             }
             case IN_PROGRESS -> {
                 if (generation.isStaleInProgress(Instant.now(clock), generationProperties.staleInProgressTimeout())) {
-                    yield recoverStaleThenCreateOrJoin(generation, vacancyId, candidateProfileVersion, careerHistoryVersion);
+                    yield recoverStaleThenCreateOrJoin(generation, vacancyId, effectiveSourceState);
                 }
                 log.info("Application material generation {} for vacancy {} is already in progress", generation.id(), vacancyId);
                 yield new PrepareApplicationPackageOutcome.AlreadyInProgress(generation.id());
@@ -195,7 +222,7 @@ public class PrepareApplicationPackageUseCase {
                 log.info("Continuing pending application material generation {} for vacancy {}", generation.id(), vacancyId);
                 yield driveGeneration(generation);
             }
-            case FAILED -> createOrJoinGeneration(vacancyId, candidateProfileVersion, careerHistoryVersion);
+            case FAILED -> createOrJoinGeneration(vacancyId, effectiveSourceState);
         };
     }
 
@@ -206,54 +233,55 @@ public class PrepareApplicationPackageUseCase {
      * always proceeds to {@link #createOrJoinGeneration} for a brand-new generation.
      */
     private PrepareApplicationPackageOutcome recoverStaleThenCreateOrJoin(
-            ApplicationMaterialGeneration stale, UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
+            ApplicationMaterialGeneration stale, UUID vacancyId, EffectiveSourceState effectiveSourceState) {
         try {
             ApplicationMaterialGeneration failed = generationRepositoryPort.save(stale.fail(
                     ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name(),
                     STALE_IN_PROGRESS_FAILURE_MESSAGE, Instant.now(clock)));
             log.warn("Recovered stale IN_PROGRESS application material generation {} for vacancy {} (startedAt={})",
                     failed.id(), vacancyId, stale.startedAt());
-            return createOrJoinGeneration(vacancyId, candidateProfileVersion, careerHistoryVersion);
+            return createOrJoinGeneration(vacancyId, effectiveSourceState);
         } catch (ApplicationMaterialGenerationConcurrentModificationException e) {
             log.info("Lost the stale-recovery race for application material generation {} for vacancy {} - reloading", stale.id(), vacancyId);
             ApplicationMaterialGeneration current = generationRepositoryPort.findById(stale.id())
                     .orElseThrow(() -> new IllegalStateException(
                             "Lost a stale-recovery race for generation '" + stale.id() + "' but it no longer exists"));
-            return resolve(current, vacancyId, candidateProfileVersion, careerHistoryVersion);
+            return resolve(current, vacancyId, effectiveSourceState);
         }
     }
 
-    private Optional<ApplicationMaterialGeneration> findMatchingGeneration(
-            UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
+    /**
+     * The sole reuse-validity check (Sprint 11 production hardening): a generation matches only when
+     * its stored {@link ApplicationMaterialGeneration#sourceFingerprint()} exactly equals the freshly
+     * computed current one. A {@code null} stored fingerprint (a legacy generation, from before this
+     * field existed) never matches anything, even if its old {@code candidateProfileVersion}/{@code
+     * careerHistoryVersion} happen to equal the current ones - see {@code
+     * ApplicationMaterialGeneration#sourceFingerprint()}'s own javadoc.
+     */
+    private Optional<ApplicationMaterialGeneration> findMatchingGeneration(UUID vacancyId, EffectiveSourceState effectiveSourceState) {
         List<ApplicationMaterialGeneration> generations = generationRepositoryPort.findByVacancyId(vacancyId);
         return generations.stream()
-                .filter(g -> versionsMatch(g, candidateProfileVersion, careerHistoryVersion))
+                .filter(g -> effectiveSourceState.sourceFingerprint().equals(g.sourceFingerprint()))
                 .findFirst();
     }
 
-    private boolean versionsMatch(ApplicationMaterialGeneration generation, long candidateProfileVersion, Long careerHistoryVersion) {
-        return generation.candidateProfileVersion() == candidateProfileVersion
-                && Objects.equals(generation.careerHistoryVersion(), careerHistoryVersion);
-    }
-
     /**
-     * Creates a brand-new {@code PENDING} generation and drives it forward. If V25's {@code
-     * uk_amg_active_effective_key} rejects the insert - another request created the active
-     * generation for this exact effective key first - reloads the winning row and, unless it is
-     * itself {@code FAILED} (a narrow window where that winner completed/failed between our
-     * conflict and our reload - V25 never blocks a retry against it, since FAILED is outside its
-     * partial index), dispatches it via {@link #resolve} without ever creating a second row.
-     * Bounded by {@link #MAX_ACTIVE_CONFLICT_ATTEMPTS} so a pathologically repeating race cannot
-     * loop forever; the final attempt is unguarded, exactly like any single first-time call.
+     * Creates a brand-new {@code PENDING} generation and drives it forward. If V31's {@code
+     * uk_amg_active_source_fingerprint} rejects the insert - another request created the active
+     * generation for this exact (vacancy, source fingerprint) key first - reloads the winning row
+     * and, unless it is itself {@code FAILED} (a narrow window where that winner completed/failed
+     * between our conflict and our reload - the index never blocks a retry against it, since FAILED
+     * is outside its partial index), dispatches it via {@link #resolve} without ever creating a
+     * second row. Bounded by {@link #MAX_ACTIVE_CONFLICT_ATTEMPTS} so a pathologically repeating race
+     * cannot loop forever; the final attempt is unguarded, exactly like any single first-time call.
      */
-    private PrepareApplicationPackageOutcome createOrJoinGeneration(
-            UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
+    private PrepareApplicationPackageOutcome createOrJoinGeneration(UUID vacancyId, EffectiveSourceState effectiveSourceState) {
         for (int attempt = 1; attempt < MAX_ACTIVE_CONFLICT_ATTEMPTS; attempt++) {
             try {
-                return insertAndDrive(vacancyId, candidateProfileVersion, careerHistoryVersion);
+                return insertAndDrive(vacancyId, effectiveSourceState);
             } catch (ApplicationMaterialGenerationActiveConflictException e) {
                 log.info("Lost the active application material generation creation race for vacancy {} (attempt {})", vacancyId, attempt);
-                ApplicationMaterialGeneration winner = findMatchingGeneration(vacancyId, candidateProfileVersion, careerHistoryVersion)
+                ApplicationMaterialGeneration winner = findMatchingGeneration(vacancyId, effectiveSourceState)
                         .orElseThrow(() -> new IllegalStateException(
                                 "Lost an active application material generation creation race for vacancy '" + vacancyId
                                         + "' but no matching generation now exists"));
@@ -262,19 +290,20 @@ public class PrepareApplicationPackageUseCase {
                             winner.id(), winner.status(), vacancyId);
                     // Never FAILED here, so resolve's own FAILED branch (which would call back into
                     // this method) cannot be taken - no risk of the attempt bound being reset.
-                    return resolve(winner, vacancyId, candidateProfileVersion, careerHistoryVersion);
+                    return resolve(winner, vacancyId, effectiveSourceState);
                 }
-                // winner is FAILED - loop and retry the insert; V25 does not cover FAILED rows.
+                // winner is FAILED - loop and retry the insert; the active index does not cover FAILED rows.
             }
         }
         // Retries exhausted against a pathologically repeating FAILED-winner race - one final,
         // unguarded attempt, identical to a normal first-time call.
-        return insertAndDrive(vacancyId, candidateProfileVersion, careerHistoryVersion);
+        return insertAndDrive(vacancyId, effectiveSourceState);
     }
 
-    private PrepareApplicationPackageOutcome insertAndDrive(UUID vacancyId, long candidateProfileVersion, Long careerHistoryVersion) {
-        ApplicationMaterialGeneration requested =
-                ApplicationMaterialGeneration.requestNew(vacancyId, candidateProfileVersion, careerHistoryVersion, Instant.now(clock));
+    private PrepareApplicationPackageOutcome insertAndDrive(UUID vacancyId, EffectiveSourceState effectiveSourceState) {
+        ApplicationMaterialGeneration requested = ApplicationMaterialGeneration.requestNew(
+                vacancyId, effectiveSourceState.candidateProfileVersion(), effectiveSourceState.careerHistoryVersion(),
+                effectiveSourceState.sourceFingerprint(), Instant.now(clock));
         ApplicationMaterialGeneration created = generationRepositoryPort.save(requested);
         log.info("Created new application material generation {} for vacancy {}", created.id(), vacancyId);
         return driveGeneration(created);

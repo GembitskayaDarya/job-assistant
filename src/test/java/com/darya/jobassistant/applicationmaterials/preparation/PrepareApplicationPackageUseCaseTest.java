@@ -26,21 +26,30 @@ import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMater
 import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMaterialType;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
+import com.darya.jobassistant.candidates.CandidateEducationFacts;
+import com.darya.jobassistant.candidates.CandidateLanguageFacts;
 import com.darya.jobassistant.candidates.CandidatePreferences;
 import com.darya.jobassistant.candidates.CandidateProfileFacts;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
+import com.darya.jobassistant.candidates.SkillProficiency;
+import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
 import com.darya.jobassistant.exception.VacancyNotFoundException;
 import com.darya.jobassistant.integrations.filestorage.FileStorageNotFoundException;
 import com.darya.jobassistant.integrations.filestorage.FileStoragePort;
 import com.darya.jobassistant.integrations.filestorage.StoredFileContent;
+import com.darya.jobassistant.integrations.jobsource.JobOffer;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProject;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProjectHighlight;
+import com.darya.jobassistant.personalprojects.aggregate.PersonalProjectTechnology;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
+import com.darya.jobassistant.vacancies.mapper.VacancyJobOfferMapper;
 import com.darya.jobassistant.vacancies.service.VacancyQueryService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,9 +66,16 @@ class PrepareApplicationPackageUseCaseTest {
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private static final Duration STALE_TIMEOUT = Duration.ofMinutes(15);
+    private static final JobOffer JOB_OFFER = new JobOffer("job-1", "Backend Engineer", "Acme Corp", "Remote", null,
+            "We need a backend engineer.", "https://example.com/job-1", "test");
+    /** A syntactically plausible but arbitrary "stale"/legacy fingerprint - never equal to any real computed one. */
+    private static final String STALE_FINGERPRINT = "a".repeat(64);
 
     @Mock
     private VacancyQueryService vacancyQueryService;
+
+    @Mock
+    private VacancyJobOfferMapper vacancyJobOfferMapper;
 
     @Mock
     private CandidateContextProvider candidateContextProvider;
@@ -84,7 +100,7 @@ class PrepareApplicationPackageUseCaseTest {
     @BeforeEach
     void setUp() {
         useCase = new PrepareApplicationPackageUseCase(
-                vacancyQueryService, candidateContextProvider, generationRepositoryPort,
+                vacancyQueryService, vacancyJobOfferMapper, candidateContextProvider, generationRepositoryPort,
                 generateApplicationMaterialsUseCase, renderApplicationMaterialsUseCase, fileStoragePort,
                 new ApplicationMaterialGenerationProperties(STALE_TIMEOUT), CLOCK);
     }
@@ -104,12 +120,12 @@ class PrepareApplicationPackageUseCaseTest {
     // ==================== No matching generation: create + generate + render ====================
 
     @Test
-    void prepare_noExistingGeneration_createsNewGenerationAgainstCurrentVersions() {
+    void prepare_noExistingGeneration_createsNewGenerationWithCurrentSourceFingerprint() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
 
-        ApplicationMaterialGeneration pending = pendingGeneration(5L, 2L);
+        ApplicationMaterialGeneration pending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
 
         ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
@@ -119,7 +135,7 @@ class PrepareApplicationPackageUseCaseTest {
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
 
-        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 2L));
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 2L, fingerprint));
         verify(generateApplicationMaterialsUseCase).generate(pending.id());
         assertPrepared(outcome, completed.id(), false);
     }
@@ -127,10 +143,10 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_noExistingGeneration_optionalCareerHistoryAbsent_createsGenerationWithNullCareerHistoryVersion() {
         stubVacancyFound();
-        stubCurrentVersions(1L, null);
+        String fingerprint = stubCurrentVersions(1L, null);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
 
-        ApplicationMaterialGeneration pending = pendingGeneration(1L, null);
+        ApplicationMaterialGeneration pending = pendingGeneration(1L, null, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
         ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(pending.id()))
@@ -139,15 +155,15 @@ class PrepareApplicationPackageUseCaseTest {
 
         useCase.prepare(VACANCY_ID);
 
-        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(1L, null));
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(1L, null, fingerprint));
     }
 
     @Test
     void prepare_newGeneration_rendersAndLoadsPdfsThroughFileStoragePort() {
         stubVacancyFound();
-        stubCurrentVersions(1L, null);
+        String fingerprint = stubCurrentVersions(1L, null);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
-        ApplicationMaterialGeneration pending = pendingGeneration(1L, null);
+        ApplicationMaterialGeneration pending = pendingGeneration(1L, null, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
         ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(pending.id()))
@@ -166,13 +182,13 @@ class PrepareApplicationPackageUseCaseTest {
         assertThat(prepared.coverLetter().content()).isEqualTo("cl-bytes".getBytes());
     }
 
-    // ==================== Matching COMPLETED: reuse, no AI call ====================
+    // ==================== Matching COMPLETED (same fingerprint): reuse, no AI call ====================
 
     @Test
     void prepare_matchingCompletedGeneration_reusesWithoutCallingGenerate() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration completed = pendingGeneration(5L, 2L).start(NOW).complete(NOW);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration completed = pendingGeneration(5L, 2L, fingerprint).start(NOW).complete(NOW);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(completed));
         stubSuccessfulRenderAndLoad(completed.id());
 
@@ -184,14 +200,17 @@ class PrepareApplicationPackageUseCaseTest {
         assertPrepared(outcome, completed.id(), true);
     }
 
-    @Test
-    void prepare_changedCandidateProfileVersion_doesNotReuseCompletedGeneration_createsNew() {
-        stubVacancyFound();
-        stubCurrentVersions(6L, 2L); // profile moved from 5 -> 6
-        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L).start(NOW).complete(NOW);
-        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+    // ==================== Different fingerprint (source content changed): never reused ====================
 
-        ApplicationMaterialGeneration freshPending = pendingGeneration(6L, 2L);
+    @Test
+    void prepare_changedCandidateProfileContent_doesNotReuseCompletedGeneration_createsNew() {
+        stubVacancyFound();
+        // The stale generation was requested against a fingerprint from before the profile changed.
+        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L, STALE_FINGERPRINT).start(NOW).complete(NOW);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+        String currentFingerprint = stubCurrentVersions(5L, 2L);
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
         ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
@@ -200,18 +219,24 @@ class PrepareApplicationPackageUseCaseTest {
 
         useCase.prepare(VACANCY_ID);
 
-        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(6L, 2L));
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 2L, currentFingerprint));
         verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
     }
 
     @Test
-    void prepare_changedCareerHistoryVersion_doesNotReuseCompletedGeneration_createsNew() {
+    void prepare_personalProjectOnlyChange_doesNotReuseCompletedGeneration_createsNew() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 3L); // career history moved from 2 -> 3
-        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L).start(NOW).complete(NOW);
+        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L, STALE_FINGERPRINT).start(NOW).complete(NOW);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+        // Everything else held constant; only the Personal Project list differs from what the stale
+        // generation's (unknown to this test, but by construction different) fingerprint reflects -
+        // this is exactly the real production gap: neither candidateProfileVersion nor
+        // careerHistoryVersion changes for a Personal-Project-only edit.
+        CandidateContextSnapshot snapshot = snapshotWithPersonalProject(5L, 2L, "AI Job Search Assistant");
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(snapshot);
+        String currentFingerprint = ApplicationMaterialSourceFingerprint.sha256(snapshot, JOB_OFFER);
 
-        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 3L);
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
         ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
@@ -220,7 +245,145 @@ class PrepareApplicationPackageUseCaseTest {
 
         useCase.prepare(VACANCY_ID);
 
-        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 3L));
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 2L, currentFingerprint));
+        verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
+    }
+
+    @Test
+    void prepare_educationOnlyChange_doesNotReuseCompletedGeneration_createsNew() {
+        stubVacancyFound();
+        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L, STALE_FINGERPRINT).start(NOW).complete(NOW);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+        CandidateContextSnapshot snapshot = snapshotWithEducation(5L, 2L, "State University");
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(snapshot);
+        String currentFingerprint = ApplicationMaterialSourceFingerprint.sha256(snapshot, JOB_OFFER);
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
+        ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, freshCompleted, null));
+        stubSuccessfulRenderAndLoad(freshCompleted.id());
+
+        useCase.prepare(VACANCY_ID);
+
+        verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
+    }
+
+    @Test
+    void prepare_languageOnlyChange_doesNotReuseCompletedGeneration_createsNew() {
+        stubVacancyFound();
+        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L, STALE_FINGERPRINT).start(NOW).complete(NOW);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+        CandidateContextSnapshot snapshot = snapshotWithLanguage(5L, 2L, "German");
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(snapshot);
+        String currentFingerprint = ApplicationMaterialSourceFingerprint.sha256(snapshot, JOB_OFFER);
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
+        ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, freshCompleted, null));
+        stubSuccessfulRenderAndLoad(freshCompleted.id());
+
+        useCase.prepare(VACANCY_ID);
+
+        verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
+    }
+
+    @Test
+    void prepare_careerHistoryOnlyChange_doesNotReuseCompletedGeneration_createsNew() {
+        stubVacancyFound();
+        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L, STALE_FINGERPRINT).start(NOW).complete(NOW);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+        // Same careerHistoryVersion (2) as the stale generation's metadata, but different company
+        // content - exactly the "version fields alone can't detect this" scenario.
+        CandidateContextSnapshot snapshot = new CandidateContextSnapshot(
+                UUID.randomUUID(), "primary", 5L, validProfile(), Optional.of(careerHistoryWithCompany(2L, "New Company Inc")));
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(snapshot);
+        String currentFingerprint = ApplicationMaterialSourceFingerprint.sha256(snapshot, JOB_OFFER);
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
+        ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, freshCompleted, null));
+        stubSuccessfulRenderAndLoad(freshCompleted.id());
+
+        useCase.prepare(VACANCY_ID);
+
+        verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
+    }
+
+    @Test
+    void prepare_candidateSkillOnlyChange_doesNotReuseCompletedGeneration_createsNew() {
+        stubVacancyFound();
+        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L, STALE_FINGERPRINT).start(NOW).complete(NOW);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+        CandidateContextSnapshot snapshot = snapshotWithSkill(5L, 2L, "Kubernetes");
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(snapshot);
+        String currentFingerprint = ApplicationMaterialSourceFingerprint.sha256(snapshot, JOB_OFFER);
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
+        ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, freshCompleted, null));
+        stubSuccessfulRenderAndLoad(freshCompleted.id());
+
+        useCase.prepare(VACANCY_ID);
+
+        verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
+    }
+
+    @Test
+    void prepare_vacancyContentChange_doesNotReuseCompletedGeneration_createsNew() {
+        when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
+        JobOffer changedVacancy = new JobOffer("job-1", "Staff Backend Engineer", "Acme Corp", "Remote", null,
+                "We need a backend engineer.", "https://example.com/job-1", "test");
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(changedVacancy);
+        ApplicationMaterialGeneration staleCompleted = pendingGeneration(5L, 2L, STALE_FINGERPRINT).start(NOW).complete(NOW);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleCompleted));
+        CandidateContextSnapshot snapshot = new CandidateContextSnapshot(
+                UUID.randomUUID(), "primary", 5L, validProfile(), Optional.of(careerHistory(2L)));
+        when(candidateContextProvider.loadCurrentContext()).thenReturn(snapshot);
+        String currentFingerprint = ApplicationMaterialSourceFingerprint.sha256(snapshot, changedVacancy);
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
+        ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, freshCompleted, null));
+        stubSuccessfulRenderAndLoad(freshCompleted.id());
+
+        useCase.prepare(VACANCY_ID);
+
+        verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
+    }
+
+    @Test
+    void prepare_legacyGenerationWithNullFingerprint_isNeverReused_createsNew() {
+        stubVacancyFound();
+        String currentFingerprint = stubCurrentVersions(5L, 2L);
+        // A legacy generation predating this feature - candidateProfileVersion/careerHistoryVersion
+        // happen to equal the current ones, but sourceFingerprint is null.
+        ApplicationMaterialGeneration legacyCompleted =
+                new ApplicationMaterialGeneration(UUID.randomUUID(), VACANCY_ID, ApplicationMaterialGenerationStatus.PENDING,
+                        5L, 2L, NOW, null, null, null, null, 0).start(NOW).complete(NOW);
+        assertThat(legacyCompleted.sourceFingerprint()).isNull();
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(legacyCompleted));
+
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, currentFingerprint);
+        when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
+        ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
+        when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
+                .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, freshCompleted, null));
+        stubSuccessfulRenderAndLoad(freshCompleted.id());
+
+        useCase.prepare(VACANCY_ID);
+
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 2L, currentFingerprint));
+        verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
     }
 
     // ==================== Matching IN_PROGRESS: no AI call, controlled outcome ====================
@@ -228,8 +391,8 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_matchingInProgressGeneration_returnsAlreadyInProgressWithoutAnyGenerationCall() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration inProgress = pendingGeneration(5L, 2L).start(NOW);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration inProgress = pendingGeneration(5L, 2L, fingerprint).start(NOW);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(inProgress));
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
@@ -245,8 +408,8 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_matchingPendingGeneration_continuesItWithoutCreatingDuplicate() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration existingPending = pendingGeneration(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration existingPending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(existingPending));
 
         ApplicationMaterialGeneration completed = existingPending.start(NOW).complete(NOW);
@@ -263,8 +426,8 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_generateReturnsAlreadyInProgress_returnsAlreadyInProgressOutcome() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration existingPending = pendingGeneration(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration existingPending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(existingPending));
         ApplicationMaterialGeneration inProgress = existingPending.start(NOW);
         when(generateApplicationMaterialsUseCase.generate(existingPending.id()))
@@ -279,8 +442,8 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_generateReturnsAlreadyCompleted_reusesAndMarksAsReused() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration existingPending = pendingGeneration(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration existingPending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(existingPending));
         ApplicationMaterialGeneration completedByConcurrentRequest = existingPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(existingPending.id()))
@@ -298,12 +461,12 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_matchingFailedGeneration_createsNewGenerationRatherThanRetryingOldRow() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration failed = pendingGeneration(5L, 2L).start(NOW)
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration failed = pendingGeneration(5L, 2L, fingerprint).start(NOW)
                 .fail("AI_PROVIDER_ERROR", "boom", NOW);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(failed));
 
-        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L);
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
         ApplicationMaterialGeneration freshCompleted = freshPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
@@ -312,7 +475,7 @@ class PrepareApplicationPackageUseCaseTest {
 
         useCase.prepare(VACANCY_ID);
 
-        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 2L));
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(5L, 2L, fingerprint));
         verify(generateApplicationMaterialsUseCase).generate(freshPending.id());
         // The old FAILED row is never passed to generate() or saved again.
         verify(generateApplicationMaterialsUseCase, never()).generate(failed.id());
@@ -323,9 +486,9 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_generationFails_returnsFailedOutcome() {
         stubVacancyFound();
-        stubCurrentVersions(1L, null);
+        String fingerprint = stubCurrentVersions(1L, null);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
-        ApplicationMaterialGeneration pending = pendingGeneration(1L, null);
+        ApplicationMaterialGeneration pending = pendingGeneration(1L, null, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
         ApplicationMaterialGeneration failed = pending.start(NOW).fail("AI_PROVIDER_ERROR", "boom", NOW);
         when(generateApplicationMaterialsUseCase.generate(pending.id()))
@@ -340,9 +503,9 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_renderThrows_returnsFailedOutcomeWithoutLeakingException() {
         stubVacancyFound();
-        stubCurrentVersions(1L, null);
+        String fingerprint = stubCurrentVersions(1L, null);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
-        ApplicationMaterialGeneration pending = pendingGeneration(1L, null);
+        ApplicationMaterialGeneration pending = pendingGeneration(1L, null, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
         ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(pending.id()))
@@ -361,9 +524,9 @@ class PrepareApplicationPackageUseCaseTest {
         // throwing Reason.ATS_VERIFICATION_FAILED) must surface all the way through prepare() as its
         // own distinct ApplicationPackageFailureReason - never collapsed into the generic RENDERING_FAILED.
         stubVacancyFound();
-        stubCurrentVersions(1L, null);
+        String fingerprint = stubCurrentVersions(1L, null);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
-        ApplicationMaterialGeneration pending = pendingGeneration(1L, null);
+        ApplicationMaterialGeneration pending = pendingGeneration(1L, null, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
         ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(pending.id()))
@@ -380,9 +543,9 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_fileStorageLoadThrows_returnsFailedOutcomeWithoutLeakingException() {
         stubVacancyFound();
-        stubCurrentVersions(1L, null);
+        String fingerprint = stubCurrentVersions(1L, null);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
-        ApplicationMaterialGeneration pending = pendingGeneration(1L, null);
+        ApplicationMaterialGeneration pending = pendingGeneration(1L, null, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
         ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(pending.id()))
@@ -402,9 +565,9 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_repeatedRequestAfterCompletion_reusesAndNeverCallsGenerateAgain() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of());
-        ApplicationMaterialGeneration pending = pendingGeneration(5L, 2L);
+        ApplicationMaterialGeneration pending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(pending);
         ApplicationMaterialGeneration completed = pending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(pending.id()))
@@ -423,16 +586,16 @@ class PrepareApplicationPackageUseCaseTest {
         verify(generationRepositoryPort, times(1)).save(any());
     }
 
-    // ==================== Lost the V25 active-uniqueness creation race ====================
+    // ==================== Lost the active-uniqueness creation race ====================
 
     @Test
     void prepare_activeConflictOnCreate_joinsPendingWinnerWithoutInsertingASecondRow() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration winner = pendingGeneration(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration winner = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(), List.of(winner));
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class)))
-                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, 5L, 2L));
+                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, fingerprint));
         ApplicationMaterialGeneration completed = winner.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(winner.id()))
                 .thenReturn(new GenerateApplicationMaterialsOutcome(GenerationOutcomeStatus.COMPLETED, completed, null));
@@ -448,11 +611,11 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_activeConflictOnCreate_winnerAlreadyInProgress_returnsAlreadyInProgressWithoutSecondInsert() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration winner = pendingGeneration(5L, 2L).start(NOW);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration winner = pendingGeneration(5L, 2L, fingerprint).start(NOW);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(), List.of(winner));
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class)))
-                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, 5L, 2L));
+                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, fingerprint));
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
 
@@ -464,11 +627,11 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_activeConflictOnCreate_winnerAlreadyCompleted_reusesWithoutSecondInsertOrAiCall() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration winner = pendingGeneration(5L, 2L).start(NOW).complete(NOW);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration winner = pendingGeneration(5L, 2L, fingerprint).start(NOW).complete(NOW);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(), List.of(winner));
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class)))
-                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, 5L, 2L));
+                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, fingerprint));
         stubSuccessfulRenderAndLoad(winner.id());
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
@@ -481,14 +644,14 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_activeConflictOnCreate_winnerAlreadyFailed_retriesInsertRatherThanJoiningIt() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration failedWinner = pendingGeneration(5L, 2L).start(NOW).fail("AI_PROVIDER_ERROR", "boom", NOW);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration failedWinner = pendingGeneration(5L, 2L, fingerprint).start(NOW).fail("AI_PROVIDER_ERROR", "boom", NOW);
         // First lookup: nothing. After losing the race: the winner, but it already failed. The
-        // subsequent successful retry insert is never itself blocked (V25 excludes FAILED rows).
+        // subsequent successful retry insert is never itself blocked (the active index excludes FAILED rows).
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(), List.of(failedWinner));
-        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L);
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class)))
-                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, 5L, 2L))
+                .thenThrow(new ApplicationMaterialGenerationActiveConflictException(VACANCY_ID, fingerprint))
                 .thenReturn(freshPending);
         ApplicationMaterialGeneration completed = freshPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
@@ -507,14 +670,14 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_matchingStaleInProgressGeneration_recoversWithSafeFailureCodeAndCreatesNewGeneration() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration stale = staleInProgressGeneration(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration stale = staleInProgressGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(stale));
         ApplicationMaterialGeneration failedStale =
                 stale.fail(ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name(), "recovered", NOW);
         when(generationRepositoryPort.save(argThat(g -> g != null && stale.id().equals(g.id())))).thenReturn(failedStale);
 
-        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L);
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.save(argThat(g -> g != null && g.id() == null))).thenReturn(freshPending);
         ApplicationMaterialGeneration completed = freshPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
@@ -539,8 +702,8 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_freshInProgressGeneration_isNeverTreatedAsStale() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration fresh = pendingGeneration(5L, 2L).start(NOW);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration fresh = pendingGeneration(5L, 2L, fingerprint).start(NOW);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(fresh));
 
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
@@ -553,8 +716,8 @@ class PrepareApplicationPackageUseCaseTest {
     @Test
     void prepare_staleRecoveryLosesRace_reloadsWinnerAndJoinsWithoutDuplicateWork() {
         stubVacancyFound();
-        stubCurrentVersions(5L, 2L);
-        ApplicationMaterialGeneration stale = staleInProgressGeneration(5L, 2L);
+        String fingerprint = stubCurrentVersions(5L, 2L);
+        ApplicationMaterialGeneration stale = staleInProgressGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(stale));
         when(generationRepositoryPort.save(argThat(g -> g != null && stale.id().equals(g.id()))))
                 .thenThrow(new ApplicationMaterialGenerationConcurrentModificationException(stale.id(), VACANCY_ID, stale.version()));
@@ -565,7 +728,7 @@ class PrepareApplicationPackageUseCaseTest {
                 stale.fail(ApplicationMaterialsGenerationFailureCode.STALE_IN_PROGRESS.name(), "recovered", NOW);
         when(generationRepositoryPort.findById(stale.id())).thenReturn(Optional.of(winnerFailedStale));
 
-        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L);
+        ApplicationMaterialGeneration freshPending = pendingGeneration(5L, 2L, fingerprint);
         when(generationRepositoryPort.save(argThat(g -> g != null && g.id() == null))).thenReturn(freshPending);
         ApplicationMaterialGeneration completed = freshPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
@@ -582,15 +745,15 @@ class PrepareApplicationPackageUseCaseTest {
     }
 
     @Test
-    void prepare_staleInProgressForDifferentCandidateVersion_isIgnored_newGenerationCreatedIndependently() {
+    void prepare_staleInProgressForDifferentSourceState_isIgnored_newGenerationCreatedIndependently() {
         stubVacancyFound();
-        // Current versions differ from the stale row below, so it is never even considered a match
-        // - no recovery attempt, no interaction with it at all.
-        stubCurrentVersions(9L, null);
-        ApplicationMaterialGeneration staleForOldVersion = staleInProgressGeneration(5L, 2L);
-        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleForOldVersion));
+        // Stale row was requested against a fingerprint that no longer matches current source state,
+        // so it is never even considered a match - no recovery attempt, no interaction with it at all.
+        ApplicationMaterialGeneration staleForOldState = staleInProgressGeneration(5L, 2L, STALE_FINGERPRINT);
+        when(generationRepositoryPort.findByVacancyId(VACANCY_ID)).thenReturn(List.of(staleForOldState));
+        String currentFingerprint = stubCurrentVersions(9L, null);
 
-        ApplicationMaterialGeneration freshPending = pendingGeneration(9L, null);
+        ApplicationMaterialGeneration freshPending = pendingGeneration(9L, null, currentFingerprint);
         when(generationRepositoryPort.save(any(ApplicationMaterialGeneration.class))).thenReturn(freshPending);
         ApplicationMaterialGeneration completed = freshPending.start(NOW).complete(NOW);
         when(generateApplicationMaterialsUseCase.generate(freshPending.id()))
@@ -600,7 +763,7 @@ class PrepareApplicationPackageUseCaseTest {
         PrepareApplicationPackageOutcome outcome = useCase.prepare(VACANCY_ID);
 
         verify(generationRepositoryPort, never()).findById(any());
-        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(9L, null));
+        verify(generationRepositoryPort).save(argThatRequestsNewGeneration(9L, null, currentFingerprint));
         assertPrepared(outcome, completed.id(), false);
     }
 
@@ -608,13 +771,16 @@ class PrepareApplicationPackageUseCaseTest {
 
     private void stubVacancyFound() {
         when(vacancyQueryService.getById(VACANCY_ID)).thenReturn(vacancy);
+        when(vacancyJobOfferMapper.toJobOffer(vacancy)).thenReturn(JOB_OFFER);
     }
 
-    private void stubCurrentVersions(long candidateProfileVersion, Long careerHistoryVersion) {
+    /** Stubs the current candidate context and returns the resulting source fingerprint (computed the same way production code computes it). */
+    private String stubCurrentVersions(long candidateProfileVersion, Long careerHistoryVersion) {
         CandidateContextSnapshot snapshot = new CandidateContextSnapshot(
                 UUID.randomUUID(), "primary", candidateProfileVersion, validProfile(),
                 careerHistoryVersion == null ? Optional.empty() : Optional.of(careerHistory(careerHistoryVersion)));
         when(candidateContextProvider.loadCurrentContext()).thenReturn(snapshot);
+        return ApplicationMaterialSourceFingerprint.sha256(snapshot, JOB_OFFER);
     }
 
     private void stubSuccessfulRenderAndLoad(UUID generationId) {
@@ -633,29 +799,30 @@ class PrepareApplicationPackageUseCaseTest {
     }
 
     /** An IN_PROGRESS generation whose startedAt is safely past STALE_TIMEOUT relative to NOW. */
-    private ApplicationMaterialGeneration staleInProgressGeneration(long candidateProfileVersion, Long careerHistoryVersion) {
+    private ApplicationMaterialGeneration staleInProgressGeneration(long candidateProfileVersion, Long careerHistoryVersion, String sourceFingerprint) {
         Instant oldStartedAt = NOW.minus(STALE_TIMEOUT).minusSeconds(1);
         Instant oldRequestedAt = oldStartedAt.minusSeconds(1);
         ApplicationMaterialGeneration pending = new ApplicationMaterialGeneration(UUID.randomUUID(), VACANCY_ID,
-                ApplicationMaterialGenerationStatus.PENDING, candidateProfileVersion, careerHistoryVersion, oldRequestedAt,
+                ApplicationMaterialGenerationStatus.PENDING, candidateProfileVersion, careerHistoryVersion, sourceFingerprint, oldRequestedAt,
                 null, null, null, null, 0);
         return pending.start(oldStartedAt);
     }
 
-    private ApplicationMaterialGeneration pendingGeneration(long candidateProfileVersion, Long careerHistoryVersion) {
-        ApplicationMaterialGeneration requested =
-                ApplicationMaterialGeneration.requestNew(VACANCY_ID, candidateProfileVersion, careerHistoryVersion, NOW);
+    private ApplicationMaterialGeneration pendingGeneration(long candidateProfileVersion, Long careerHistoryVersion, String sourceFingerprint) {
+        ApplicationMaterialGeneration requested = ApplicationMaterialGeneration.requestNew(
+                VACANCY_ID, candidateProfileVersion, careerHistoryVersion, sourceFingerprint, NOW);
         // Simulate persistence assigning an id, matching what generationRepositoryPort.save would do.
         return new ApplicationMaterialGeneration(UUID.randomUUID(), requested.vacancyId(), requested.status(),
-                requested.candidateProfileVersion(), requested.careerHistoryVersion(), requested.requestedAt(),
+                requested.candidateProfileVersion(), requested.careerHistoryVersion(), requested.sourceFingerprint(), requested.requestedAt(),
                 null, null, null, null, 0);
     }
 
-    private ApplicationMaterialGeneration argThatRequestsNewGeneration(long candidateProfileVersion, Long careerHistoryVersion) {
+    private ApplicationMaterialGeneration argThatRequestsNewGeneration(long candidateProfileVersion, Long careerHistoryVersion, String sourceFingerprint) {
         return argThat(g -> g != null && g.id() == null
                 && g.vacancyId().equals(VACANCY_ID)
                 && g.candidateProfileVersion() == candidateProfileVersion
-                && Objects.equals(g.careerHistoryVersion(), careerHistoryVersion));
+                && java.util.Objects.equals(g.careerHistoryVersion(), careerHistoryVersion)
+                && sourceFingerprint.equals(g.sourceFingerprint()));
     }
 
     private void verifyNoGenerationWork() {
@@ -680,5 +847,46 @@ class PrepareApplicationPackageUseCaseTest {
 
     private CareerHistoryAggregate careerHistory(long version) {
         return new CareerHistoryAggregate(UUID.randomUUID(), UUID.randomUUID(), List.of(), version);
+    }
+
+    private CareerHistoryAggregate careerHistoryWithCompany(long version, String companyName) {
+        CareerCompany company = new CareerCompany(UUID.randomUUID(), companyName, null, null, null, null, 0, List.of());
+        return new CareerHistoryAggregate(UUID.randomUUID(), UUID.randomUUID(), List.of(company), version);
+    }
+
+    // ==================== Source-content-variation fixtures (fingerprint-change tests) ====================
+
+    private CandidateContextSnapshot snapshotWithPersonalProject(long candidateProfileVersion, Long careerHistoryVersion, String projectName) {
+        PersonalProject project = new PersonalProject(UUID.randomUUID(), UUID.randomUUID(), projectName, "A hobby project",
+                null, null, null, 0,
+                List.of(new PersonalProjectHighlight(UUID.randomUUID(), "Built something", 0)),
+                List.of(new PersonalProjectTechnology(UUID.randomUUID(), "Java", null, 0)), 0);
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", candidateProfileVersion, validProfile(),
+                careerHistoryVersion == null ? Optional.empty() : Optional.of(careerHistory(careerHistoryVersion)), List.of(project));
+    }
+
+    private CandidateContextSnapshot snapshotWithEducation(long candidateProfileVersion, Long careerHistoryVersion, String institution) {
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Senior Java Backend Engineer", "Senior", List.of(), List.of(), 5,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null),
+                null, null, null, null, null, List.of(new CandidateEducationFacts(null, institution, null, null, null, null, null, null, 0)));
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", candidateProfileVersion, profile,
+                careerHistoryVersion == null ? Optional.empty() : Optional.of(careerHistory(careerHistoryVersion)));
+    }
+
+    private CandidateContextSnapshot snapshotWithLanguage(long candidateProfileVersion, Long careerHistoryVersion, String language) {
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Senior Java Backend Engineer", "Senior", List.of(), List.of(new CandidateLanguageFacts(language, "Native")), 5,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", candidateProfileVersion, profile,
+                careerHistoryVersion == null ? Optional.empty() : Optional.of(careerHistory(careerHistoryVersion)));
+    }
+
+    private CandidateContextSnapshot snapshotWithSkill(long candidateProfileVersion, Long careerHistoryVersion, String skillName) {
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Senior Java Backend Engineer", "Senior", List.of(new CandidateSkillFacts(skillName, null, null, SkillProficiency.STRONG)),
+                List.of(), 5, new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+        return new CandidateContextSnapshot(UUID.randomUUID(), "primary", candidateProfileVersion, profile,
+                careerHistoryVersion == null ? Optional.empty() : Optional.of(careerHistory(careerHistoryVersion)));
     }
 }

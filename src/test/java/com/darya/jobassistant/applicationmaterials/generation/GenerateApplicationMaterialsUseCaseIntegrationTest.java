@@ -21,6 +21,7 @@ import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationM
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiException;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
@@ -193,6 +194,62 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
                 .isEqualTo(ApplicationMaterialsGenerationFailureCode.CV_TAILORING_VALIDATION_FAILED.name());
         assertThat(resultRepositoryPort.findByGenerationId(generationId)).isEmpty();
         verify(aiPort, never()).generate(any(), any());
+        // A source-validation failure is a deterministic application/source-data problem, not
+        // something CvTailoringUseCase's bounded retry (Sprint 11 production hardening) ever
+        // retries - the retry loop only wraps the AI call itself, not the validation step after it.
+        verify(cvTailoringAiPort, times(1)).tailor(any(), any());
+    }
+
+    // ==================== CV tailoring bounded retry (Sprint 11 production hardening) ====================
+
+    @Test
+    void generate_cvTailoringProviderFailure_isNeverRetried_exactlyOneAiCall() {
+        UUID vacancyId = aVacancy("cv-provider-failure-" + UUID.randomUUID()).getId();
+        UUID generationId = createMatchingGeneration(vacancyId);
+        when(cvTailoringAiPort.tailor(any(), any()))
+                .thenThrow(new CvTailoringAiException("provider down", new RuntimeException("HTTP 429 secret-detail")));
+
+        GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
+
+        assertThat(outcome.status()).isEqualTo(GenerationOutcomeStatus.FAILED);
+        assertThat(outcome.generation().failureCode()).isEqualTo(ApplicationMaterialsGenerationFailureCode.AI_PROVIDER_ERROR.name());
+        verify(cvTailoringAiPort, times(1)).tailor(any(), any());
+        verify(aiPort, never()).generate(any(), any());
+    }
+
+    @Test
+    void generate_cvTailoringMalformedOnEveryAttempt_exhaustsAllThreeAttempts_neverCallsCoverLetterAi() {
+        UUID vacancyId = aVacancy("cv-malformed-exhausted-" + UUID.randomUUID()).getId();
+        UUID generationId = createMatchingGeneration(vacancyId);
+        when(cvTailoringAiPort.tailor(any(), any())).thenThrow(new CvTailoringAiException("malformed"));
+
+        GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
+
+        assertThat(outcome.status()).isEqualTo(GenerationOutcomeStatus.FAILED);
+        assertThat(outcome.generation().failureCode()).isEqualTo(ApplicationMaterialsGenerationFailureCode.MALFORMED_AI_RESPONSE.name());
+        assertThat(resultRepositoryPort.findByGenerationId(generationId)).isEmpty();
+        // Maximum 3 tailoring attempts total (CvTailoringUseCase.MAX_TAILORING_ATTEMPTS).
+        verify(cvTailoringAiPort, times(3)).tailor(any(), any());
+        verify(aiPort, never()).generate(any(), any());
+    }
+
+    @Test
+    void generate_cvTailoringMalformedTwiceThenSucceeds_completesGenerationAndCallsCoverLetterAiExactlyOnce() {
+        UUID vacancyId = aVacancy("cv-malformed-then-success-" + UUID.randomUUID()).getId();
+        UUID generationId = createMatchingGeneration(vacancyId);
+        when(cvTailoringAiPort.tailor(any(), any()))
+                .thenThrow(new CvTailoringAiException("malformed attempt 1"))
+                .thenThrow(new CvTailoringAiException("malformed attempt 2"))
+                .thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+        when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
+
+        GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
+
+        assertThat(outcome.status()).isEqualTo(GenerationOutcomeStatus.COMPLETED);
+        assertThat(outcome.generation().status()).isEqualTo(ApplicationMaterialGenerationStatus.COMPLETED);
+        assertThat(resultRepositoryPort.findByGenerationId(generationId)).isPresent();
+        verify(cvTailoringAiPort, times(3)).tailor(any(), any());
+        verify(aiPort, times(1)).generate(any(), any());
     }
 
     // ==================== 14. Duplicate concurrent start ====================

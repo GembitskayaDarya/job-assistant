@@ -23,6 +23,8 @@ import com.darya.jobassistant.candidatecontext.cv.tailoring.CvPositionTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvProjectTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvResponsibilityTailoring;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -81,6 +83,21 @@ import java.util.function.Function;
  * distinction this correction introduces - not a general pluggable selection-policy framework: a
  * private {@link AssemblyMode} enum selects between exactly two fixed, hardcoded behaviors above,
  * with no third mode and no injectable strategy.
+ *
+ * <h2>Canonical company/position display order (final acceptance correction)</h2>
+ *
+ * {@link TailoredCvDocument#experience()} (and each {@link TailoredCvCompany#positions()} inside it)
+ * is sorted most-recent/current-first here - once, in this assembler - before it is ever returned;
+ * see {@link #sortedByRecency}/{@link #sortedPositionsByRecency}. This is the single source of truth
+ * for company/position display order: a renderer or verifier must consume {@link
+ * TailoredCvDocument#experience()} exactly as given, never independently re-sort it - a previous
+ * production defect had the PDF renderer silently re-sorting positions into recency order at render
+ * time while {@code AtsCvVerifier} verified the assembler's (then still source/display-order)
+ * output, so the two disagreed about where each position's text actually landed on the page.
+ * {@code CvSourceSnapshot}'s own company/position order (display order as persisted) is still what
+ * every id/text is resolved from - only the final presentation order changes here, purely from each
+ * position's own {@code startDate}/{@code endDate}/{@code currentRole}, never a hardcoded company or
+ * role name.
  */
 public final class CvAssembler {
 
@@ -136,9 +153,9 @@ public final class CvAssembler {
                 snapshot.candidateProfile().cvLocation(), snapshot.candidateProfile().email(),
                 snapshot.candidateProfile().phone(), snapshot.candidateProfile().linkedinUrl());
 
-        List<TailoredCvCompany> experience = snapshot.companies().stream()
+        List<TailoredCvCompany> experience = sortedByRecency(snapshot.companies().stream()
                 .map(company -> assembleCompany(company, mode, positionTailoringById, projectTailoringById))
-                .toList();
+                .toList());
         List<TailoredCvPersonalProject> personalProjects = snapshot.personalProjects().stream()
                 .map(project -> assemblePersonalProject(project, mode, personalProjectTailoringById.get(project.personalProjectId())))
                 .toList();
@@ -170,10 +187,48 @@ public final class CvAssembler {
     private static TailoredCvCompany assembleCompany(
             CvSourceCompany company, AssemblyMode mode,
             Map<UUID, CvPositionTailoring> positionTailoringById, Map<UUID, CvProjectTailoring> projectTailoringById) {
-        List<TailoredCvPosition> positions = company.positions().stream()
+        List<TailoredCvPosition> positions = sortedPositionsByRecency(company.positions().stream()
                 .map(position -> assemblePosition(position, mode, positionTailoringById.get(position.careerPositionId()), projectTailoringById))
-                .toList();
+                .toList());
         return new TailoredCvCompany(company.name(), company.website(), company.industry(), company.location(), company.description(), positions);
+    }
+
+    // ==================== Canonical experience ordering (final display order - see class javadoc) ====================
+
+    /**
+     * Sorts companies most-recent-first, purely from each company's own positions' dates/current-role
+     * flag - a generic, universally-true resume convention ("most recent/current experience first"),
+     * never a check against a specific company/position name. This is the one and only place company/
+     * position display order is decided - {@link TailoredCvDocument#experience()} already carries this
+     * final order; a renderer must iterate it exactly as given, never re-sort it itself.
+     */
+    private static List<TailoredCvCompany> sortedByRecency(List<TailoredCvCompany> companies) {
+        return companies.stream()
+                .sorted(Comparator.comparing(CvAssembler::mostRecentEffectiveDate).reversed())
+                .toList();
+    }
+
+    private static List<TailoredCvPosition> sortedPositionsByRecency(List<TailoredCvPosition> positions) {
+        return positions.stream()
+                .sorted(Comparator.comparing(CvAssembler::effectiveDate).reversed())
+                .toList();
+    }
+
+    private static LocalDate mostRecentEffectiveDate(TailoredCvCompany company) {
+        return company.positions().stream()
+                .map(CvAssembler::effectiveDate)
+                .max(Comparator.naturalOrder())
+                .orElse(LocalDate.MIN);
+    }
+
+    private static LocalDate effectiveDate(TailoredCvPosition position) {
+        if (position.currentRole()) {
+            return LocalDate.MAX;
+        }
+        if (position.endDate() != null) {
+            return position.endDate();
+        }
+        return position.startDate() != null ? position.startDate() : LocalDate.MIN;
     }
 
     private static TailoredCvPosition assemblePosition(
