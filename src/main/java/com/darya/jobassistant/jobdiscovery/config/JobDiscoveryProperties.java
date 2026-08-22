@@ -4,6 +4,8 @@ import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.ZoneId;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.util.StringUtils;
 
@@ -49,6 +51,12 @@ public record JobDiscoveryProperties(boolean enabled, Execution execution, Budge
     private static final int MAX_MAX_UNIQUE_REFERENCES_PER_RUN = 500;
     private static final int MIN_MAX_REPORTED_ISSUES = 0;
     private static final int MAX_MAX_REPORTED_ISSUES = 1000;
+    private static final int MIN_MAX_LISTING_PAGES_PER_RUN = 0;
+    private static final int MAX_MAX_LISTING_PAGES_PER_RUN = 20;
+    private static final int MIN_MAX_CANDIDATE_LINKS_PER_LISTING = 0;
+    private static final int MAX_MAX_CANDIDATE_LINKS_PER_LISTING = 200;
+    private static final int MIN_MIN_CONTENT_CHARS_FOR_EXTRACTION = 0;
+    private static final int MAX_MIN_CONTENT_CHARS_FOR_EXTRACTION = 5000;
     private static final long MIN_MONTHLY_CREDIT_LIMIT = 1;
     private static final long MAX_MONTHLY_CREDIT_LIMIT = 1_000_000;
     private static final long MIN_RESERVE_CREDITS = 0;
@@ -73,6 +81,12 @@ public record JobDiscoveryProperties(boolean enabled, Execution execution, Budge
                     "job-discovery.execution.max-unique-references-per-run");
             requireInRange(execution.maxReportedIssues(), MIN_MAX_REPORTED_ISSUES, MAX_MAX_REPORTED_ISSUES,
                     "job-discovery.execution.max-reported-issues");
+            requireInRange(execution.maxListingPagesPerRun(), MIN_MAX_LISTING_PAGES_PER_RUN, MAX_MAX_LISTING_PAGES_PER_RUN,
+                    "job-discovery.execution.max-listing-pages-per-run");
+            requireInRange(execution.maxCandidateLinksPerListing(), MIN_MAX_CANDIDATE_LINKS_PER_LISTING, MAX_MAX_CANDIDATE_LINKS_PER_LISTING,
+                    "job-discovery.execution.max-candidate-links-per-listing");
+            requireInRange(execution.minContentCharsForExtraction(), MIN_MIN_CONTENT_CHARS_FOR_EXTRACTION, MAX_MIN_CONTENT_CHARS_FOR_EXTRACTION,
+                    "job-discovery.execution.min-content-chars-for-extraction");
             if (execution.maxExtractionsPerRun() > execution.maxScrapesPerRun()) {
                 throw new IllegalArgumentException(
                         "job-discovery.execution.max-extractions-per-run (" + execution.maxExtractionsPerRun()
@@ -156,14 +170,66 @@ public record JobDiscoveryProperties(boolean enabled, Execution execution, Budge
         }
     }
 
-    /** Per-run hard cost bounds - see {@code JobDiscoveryService} for how each one is enforced. */
+    /**
+     * Per-run hard cost bounds - see {@code JobDiscoveryService} for how each one is enforced.
+     *
+     * <p>{@link #maxListingPagesPerRun}, {@link #maxCandidateLinksPerListing}, and {@link
+     * #minContentCharsForExtraction} were added in Sprint 12 for listing-page expansion; a listing
+     * page's own fetch still consumes the same {@link #maxScrapesPerRun} budget as any direct
+     * candidate (there is exactly one Firecrawl-scrape budget, not two), so {@link
+     * #maxListingPagesPerRun} exists only to stop listing pages from crowding out that shared
+     * budget, not to grant them a separate one.
+     */
     public record Execution(
             int maxQueriesPerRun,
             int maxScrapesPerRun,
             int maxExtractionsPerRun,
             int maxUniqueReferencesPerRun,
-            int maxReportedIssues
+            int maxReportedIssues,
+            int maxListingPagesPerRun,
+            int maxCandidateLinksPerListing,
+            int minContentCharsForExtraction
     ) {
+        private static final int DEFAULT_MAX_LISTING_PAGES_PER_RUN = 2;
+        private static final int DEFAULT_MAX_CANDIDATE_LINKS_PER_LISTING = 25;
+        /** {@code 0} - the check is opt-in (see {@code JobDiscoveryService}), never on by surprise. */
+        private static final int DEFAULT_MIN_CONTENT_CHARS_FOR_EXTRACTION = 0;
+
+        /**
+         * Explicit canonical constructor (rather than the implicit one a record normally gets),
+         * annotated {@code @ConstructorBinding}, because this record declares a second,
+         * pre-Sprint-12-shaped constructor below: Spring Boot's relaxed configuration-properties
+         * binder requires an explicit choice whenever a bindable type has more than one
+         * constructor, record or not.
+         */
+        @ConstructorBinding
+        public Execution(
+                int maxQueriesPerRun, int maxScrapesPerRun, int maxExtractionsPerRun,
+                int maxUniqueReferencesPerRun, int maxReportedIssues,
+                @DefaultValue("2") int maxListingPagesPerRun,
+                @DefaultValue("25") int maxCandidateLinksPerListing,
+                @DefaultValue("0") int minContentCharsForExtraction) {
+            this.maxQueriesPerRun = maxQueriesPerRun;
+            this.maxScrapesPerRun = maxScrapesPerRun;
+            this.maxExtractionsPerRun = maxExtractionsPerRun;
+            this.maxUniqueReferencesPerRun = maxUniqueReferencesPerRun;
+            this.maxReportedIssues = maxReportedIssues;
+            this.maxListingPagesPerRun = maxListingPagesPerRun;
+            this.maxCandidateLinksPerListing = maxCandidateLinksPerListing;
+            this.minContentCharsForExtraction = minContentCharsForExtraction;
+        }
+
+        /**
+         * Pre-Sprint-12 shape, kept so every existing caller that predates listing expansion keeps
+         * compiling unchanged, defaulted to conservative, effectively-off Sprint 12 defaults (a
+         * real deployment configures these explicitly - see {@code application.yml}).
+         */
+        public Execution(int maxQueriesPerRun, int maxScrapesPerRun, int maxExtractionsPerRun,
+                          int maxUniqueReferencesPerRun, int maxReportedIssues) {
+            this(maxQueriesPerRun, maxScrapesPerRun, maxExtractionsPerRun, maxUniqueReferencesPerRun,
+                    maxReportedIssues, DEFAULT_MAX_LISTING_PAGES_PER_RUN, DEFAULT_MAX_CANDIDATE_LINKS_PER_LISTING,
+                    DEFAULT_MIN_CONTENT_CHARS_FOR_EXTRACTION);
+        }
     }
 
     /**

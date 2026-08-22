@@ -68,6 +68,36 @@ class JobDiscoveryPropertiesBindingTest {
     }
 
     @Test
+    void binding_listingExpansionFieldsDefaultWhenNotSet() {
+        contextRunner
+                .withPropertyValues(disabledDefaultProperties())
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    JobDiscoveryProperties properties = context.getBean(JobDiscoveryProperties.class);
+                    assertThat(properties.execution().maxListingPagesPerRun()).isEqualTo(2);
+                    assertThat(properties.execution().maxCandidateLinksPerListing()).isEqualTo(25);
+                    assertThat(properties.execution().minContentCharsForExtraction()).isZero();
+                });
+    }
+
+    @Test
+    void binding_listingExpansionFieldsMapWhenExplicitlySet() {
+        String[] base = disabledDefaultProperties();
+        String[] withListingFields = Arrays.copyOf(base, base.length + 3);
+        withListingFields[base.length] = "job-discovery.execution.max-listing-pages-per-run=4";
+        withListingFields[base.length + 1] = "job-discovery.execution.max-candidate-links-per-listing=40";
+        withListingFields[base.length + 2] = "job-discovery.execution.min-content-chars-for-extraction=100";
+
+        contextRunner.withPropertyValues(withListingFields).run(context -> {
+            assertThat(context).hasNotFailed();
+            JobDiscoveryProperties properties = context.getBean(JobDiscoveryProperties.class);
+            assertThat(properties.execution().maxListingPagesPerRun()).isEqualTo(4);
+            assertThat(properties.execution().maxCandidateLinksPerListing()).isEqualTo(40);
+            assertThat(properties.execution().minContentCharsForExtraction()).isEqualTo(100);
+        });
+    }
+
+    @Test
     void binding_enabledWithMaxEstimatedCreditsPerRunAboveMonthlyLimit_failsContext() {
         contextRunner
                 .withPropertyValues(

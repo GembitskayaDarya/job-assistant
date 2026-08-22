@@ -25,6 +25,8 @@ import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetPort;
 import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetRequest;
 import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetStatus;
 import com.darya.jobassistant.jobdiscovery.config.JobDiscoveryProperties;
+import com.darya.jobassistant.jobdiscovery.geo.JobGeographyPolicy;
+import com.darya.jobassistant.jobdiscovery.geo.JobGeographyPolicyProperties;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
 import com.darya.jobassistant.vacancies.entity.Vacancy;
@@ -294,6 +296,88 @@ class JobDiscoveryServiceTest {
         JobDiscoveryRunResult result = service.runDiscovery();
 
         assertThat(result.existingVacanciesSkipped()).isEqualTo(1);
+        assertThat(result.persistencePrecheckFailures()).isZero();
+        assertThat(result.scrapeAttempts()).isZero();
+        assertThat(result.extractionAttempts()).isZero();
+        assertThat(jobPageFetchPort.urlsReceived).isEmpty();
+        verify(vacancyExtractionService, never()).extract(any());
+    }
+
+    @Test
+    void run_newCanonicalIdentity_precheckFailureCounterStaysZero() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        stubScrapeAndExtractSuccess("https://example.com/jobs/1");
+        stubPersistCreated();
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.createdVacancies()).isEqualTo(1);
+        assertThat(result.persistencePrecheckFailures()).isZero();
+        assertThat(result.existingVacanciesSkipped()).isZero();
+    }
+
+    // --- Sprint 12.1: duplicate pre-check failure isolation ----------------------------------
+
+    @Test
+    void run_precheckDatabaseFailure_skipsCandidateWithoutScrapeExtractionOrPersistence() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        when(vacancyRepository.existsByCanonicalUrl(any()))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("timed out"));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.persistencePrecheckFailures()).isEqualTo(1);
+        assertThat(result.existingVacanciesSkipped()).isZero();
+        assertThat(result.scrapeAttempts()).isZero();
+        assertThat(result.extractionAttempts()).isZero();
+        assertThat(result.persistenceAttempts()).isZero();
+        assertThat(result.createdVacancies()).isZero();
+        assertThat(jobPageFetchPort.urlsReceived).isEmpty();
+        verify(vacancyExtractionService, never()).extract(any());
+        verify(vacancyIngestionService, never()).persistDiscovered(any(VacancyCreationCommand.class));
+        assertThat(result.issues()).hasSize(1);
+        assertThat(result.issues().get(0).category()).isEqualTo(JobDiscoveryIssueCategory.PERSISTENCE_PRECHECK_FAILED);
+    }
+
+    @Test
+    void run_precheckFailureIsIsolated_unrelatedCandidateStillSucceeds() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(
+                reference("https://example.com/jobs/1"), reference("https://example.com/jobs/2")));
+        when(vacancyRepository.existsByCanonicalUrl(any()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("connection refused"))
+                .thenReturn(false);
+        stubScrapeAndExtractSuccess("https://example.com/jobs/2");
+        stubPersistCreated();
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.persistencePrecheckFailures()).isEqualTo(1);
+        assertThat(result.createdVacancies()).isEqualTo(1);
+        assertThat(jobPageFetchPort.urlsReceived).containsExactly(URI.create("https://example.com/jobs/2"));
+        verify(vacancyIngestionService, times(1)).persistDiscovered(any(VacancyCreationCommand.class));
+    }
+
+    @Test
+    void run_multiplePrecheckFailures_countExactlyAndNeverTouchPersistenceOrExistingCounters() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(
+                reference("https://example.com/jobs/1"), reference("https://example.com/jobs/2"),
+                reference("https://example.com/jobs/3")));
+        when(vacancyRepository.existsByCanonicalUrl(any()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.persistencePrecheckFailures()).isEqualTo(3);
+        assertThat(result.existingVacanciesSkipped()).isZero();
+        assertThat(result.persistenceAttempts()).isZero();
         assertThat(result.scrapeAttempts()).isZero();
         assertThat(result.extractionAttempts()).isZero();
         assertThat(jobPageFetchPort.urlsReceived).isEmpty();
@@ -522,7 +606,7 @@ class JobDiscoveryServiceTest {
         jobPageFetchPort.respondWith("https://example.com/jobs/1",
                 new JobPageContent(URI.create("https://example.com/jobs/1"), "content"));
         ExtractedVacancyData extracted = new ExtractedVacancyData(
-                "Title", "Company", null, RemotePolicy.UNSPECIFIED, List.of(), List.of(),
+                "Java Backend Engineer", "Company", null, RemotePolicy.UNSPECIFIED, List.of(), List.of(),
                 null, null, null, null, null);
         when(vacancyExtractionService.extract(any())).thenReturn(extracted);
         stubPersistCreated();
@@ -542,7 +626,7 @@ class JobDiscoveryServiceTest {
         jobPageFetchPort.respondWith("https://example.com/jobs/1",
                 new JobPageContent(URI.create("https://example.com/jobs/1"), "content"));
         ExtractedVacancyData extracted = new ExtractedVacancyData(
-                "Title", "Company", null, RemotePolicy.UNSPECIFIED, List.of(), List.of(),
+                "Java Backend Engineer", "Company", null, RemotePolicy.UNSPECIFIED, List.of(), List.of(),
                 null, null, null, null, null);
         when(vacancyExtractionService.extract(any())).thenReturn(extracted);
         stubPersistCreated();
@@ -629,6 +713,34 @@ class JobDiscoveryServiceTest {
     }
 
     @Test
+    void run_persistencePrecheckFailures_isSemanticallyIndependentOfPersistenceAndExistingCounters() {
+        // Candidate 1: pre-check throws -> counted only as persistencePrecheckFailures, never as
+        // a persistence attempt/failure and never as an already-existing skip (existence unknown).
+        // Candidate 2: normal successful create, so persistenceAttempts/createdVacancies move
+        // independently of persistencePrecheckFailures in the same run.
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(
+                reference("https://example.com/jobs/1"), reference("https://example.com/jobs/2")));
+        when(vacancyRepository.existsByCanonicalUrl(any()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"))
+                .thenReturn(false);
+        stubScrapeAndExtractSuccess("https://example.com/jobs/2");
+        stubPersistCreated();
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.persistencePrecheckFailures()).isEqualTo(1);
+        assertThat(result.existingVacanciesSkipped()).isZero();
+        assertThat(result.persistenceAttempts()).isEqualTo(1);
+        assertThat(result.persistenceFailures()).isZero();
+        assertThat(result.createdVacancies()).isEqualTo(1);
+        // The documented persistence invariant still holds unchanged by the new counter.
+        assertThat(result.createdVacancies() + result.alreadyExistingAfterRace() + result.persistenceFailures())
+                .isEqualTo(result.persistenceAttempts());
+    }
+
+    @Test
     void run_issueDetailsRespectMaxReportedIssuesAndOmittedCountIsAccurate() {
         stubPlan(List.of(request("q1")));
         jobSearchPort.respondWith("q1", List.of(
@@ -658,6 +770,197 @@ class JobDiscoveryServiceTest {
         assertThat(result.duplicateReferencesInRun()).isEqualTo(1);
         assertThat(result.existingVacanciesSkipped()).isEqualTo(1);
         assertThat(result.issues()).isEmpty();
+    }
+
+    // --- URL classification / listing expansion (Sprint 12) --------------------------------
+
+    @Test
+    void run_listingPage_expandsIntoDirectCandidatesAndPersistsThem() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://boards.example.com/jobs")));
+        jobPageFetchPort.respondWith("https://boards.example.com/jobs", new JobPageContent(
+                URI.create("https://boards.example.com/jobs"),
+                "[Senior Java Backend Engineer](https://boards.example.com/jobs/111)\n"
+                        + "[Platform Engineer](https://boards.example.com/jobs/222)"));
+        stubScrapeAndExtractSuccess("https://boards.example.com/jobs/111");
+        jobPageFetchPort.respondWith("https://boards.example.com/jobs/222",
+                new JobPageContent(URI.create("https://boards.example.com/jobs/222"), "content"));
+        stubPersistCreated();
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.listingUrlCandidates()).isEqualTo(1);
+        assertThat(result.listingPagesFetched()).isEqualTo(1);
+        assertThat(result.listingCandidateLinksExtracted()).isEqualTo(2);
+        assertThat(result.directUrlCandidates()).isEqualTo(2);
+        assertThat(result.createdVacancies()).isEqualTo(2);
+        verify(vacancyIngestionService, times(2)).persistDiscovered(any(VacancyCreationCommand.class));
+    }
+
+    @Test
+    void run_listingPageWithNoCandidateLinks_rejectedSafelyWithoutFailingRun() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://boards.example.com/jobs")));
+        jobPageFetchPort.respondWith("https://boards.example.com/jobs", new JobPageContent(
+                URI.create("https://boards.example.com/jobs"), "No open roles right now, check back later."));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.listingPagesWithNoCandidates()).isEqualTo(1);
+        assertThat(result.issues()).hasSize(1);
+        assertThat(result.issues().get(0).category()).isEqualTo(JobDiscoveryIssueCategory.SEARCH_OR_LISTING_URL);
+        assertThat(result.createdVacancies()).isZero();
+    }
+
+    @Test
+    void run_listingLinkToAnotherListingPage_isDiscardedNotExpandedAgain() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://boards.example.com/jobs")));
+        jobPageFetchPort.respondWith("https://boards.example.com/jobs", new JobPageContent(
+                URI.create("https://boards.example.com/jobs"),
+                "[More roles](https://boards.example.com/jobs?q=java)"));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.nestedListingLinksDiscarded()).isEqualTo(1);
+        assertThat(jobPageFetchPort.urlsReceived).containsExactly(URI.create("https://boards.example.com/jobs"));
+        assertThat(result.listingPagesFetched()).isEqualTo(1);
+    }
+
+    @Test
+    void run_unsupportedUrl_rejectedWithoutFailingOtherCandidates() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(
+                reference("https://example.com/privacy-policy"), reference("https://example.com/jobs/1")));
+        stubScrapeAndExtractSuccess("https://example.com/jobs/1");
+        stubPersistCreated();
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.unsupportedUrlCandidates()).isEqualTo(1);
+        assertThat(result.issues()).anySatisfy(issue ->
+                assertThat(issue.category()).isEqualTo(JobDiscoveryIssueCategory.UNSUPPORTED_URL));
+        assertThat(result.createdVacancies()).isEqualTo(1);
+    }
+
+    // --- Geography eligibility (Sprint 12) ---------------------------------------------------
+
+    @Test
+    void run_cheapGeoRejection_incompatibleRegionInSnippetSkipsBeforeScrape() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(new DiscoveredJobReference(
+                URI.create("https://example.com/jobs/1"), "Java Backend Engineer", "US only - no exceptions")));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.geoRejected()).isEqualTo(1);
+        assertThat(result.scrapeAttempts()).isZero();
+        assertThat(result.issues().get(0).category()).isEqualTo(JobDiscoveryIssueCategory.OUTSIDE_TARGET_GEO);
+    }
+
+    @Test
+    void run_finalGeoRejection_incompatibleExtractedLocationSkipsBeforePersistence() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        jobPageFetchPort.respondWith("https://example.com/jobs/1",
+                new JobPageContent(URI.create("https://example.com/jobs/1"), "content"));
+        ExtractedVacancyData extracted = new ExtractedVacancyData(
+                "Senior Java Backend Engineer", "Acme Corp", "US only", RemotePolicy.REMOTE, List.of(), List.of(),
+                null, null, null, null, null);
+        when(vacancyExtractionService.extract(any())).thenReturn(extracted);
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.geoRejected()).isEqualTo(1);
+        assertThat(result.createdVacancies()).isZero();
+        verify(vacancyIngestionService, never()).persistDiscovered(any(VacancyCreationCommand.class));
+    }
+
+    @Test
+    void run_missingLocation_isNeverRejectedOnGeographyAlone() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        stubScrapeAndExtractSuccess("https://example.com/jobs/1");
+        stubPersistCreated();
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.geoRejected()).isZero();
+        assertThat(result.createdVacancies()).isEqualTo(1);
+    }
+
+    // --- Backend-role eligibility (Sprint 12) ------------------------------------------------
+
+    @Test
+    void run_cheapBackendRejection_excludedTitleSkipsBeforeScrape() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(new DiscoveredJobReference(
+                URI.create("https://example.com/jobs/1"), "Frontend Engineer", "React role")));
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.nonBackendRoleRejected()).isEqualTo(1);
+        assertThat(result.scrapeAttempts()).isZero();
+        assertThat(result.issues().get(0).category()).isEqualTo(JobDiscoveryIssueCategory.NON_BACKEND_ROLE);
+    }
+
+    @Test
+    void run_finalBackendRejection_extractedContentWithoutJavaBackendSignalsSkipsBeforePersistence() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        jobPageFetchPort.respondWith("https://example.com/jobs/1",
+                new JobPageContent(URI.create("https://example.com/jobs/1"), "We build delightful products."));
+        ExtractedVacancyData extracted = new ExtractedVacancyData(
+                "Product Manager", "Acme Corp", null, RemotePolicy.REMOTE, List.of(), List.of(),
+                null, null, null, null, null);
+        when(vacancyExtractionService.extract(any())).thenReturn(extracted);
+        JobDiscoveryService service = service(execution(3, 5, 5, 30, 50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.nonBackendRoleRejected()).isEqualTo(1);
+        assertThat(result.createdVacancies()).isZero();
+        verify(vacancyIngestionService, never()).persistDiscovered(any(VacancyCreationCommand.class));
+    }
+
+    // --- Insufficient data (Sprint 12) -------------------------------------------------------
+
+    @Test
+    void run_shortScrapedContent_rejectedAsInsufficientDataBeforeExtraction() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        jobPageFetchPort.respondWith("https://example.com/jobs/1",
+                new JobPageContent(URI.create("https://example.com/jobs/1"), "Too short"));
+        JobDiscoveryService service = service(executionWithMinContentChars(50));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.insufficientDataRejected()).isEqualTo(1);
+        assertThat(result.extractionAttempts()).isZero();
+        verify(vacancyExtractionService, never()).extract(any());
+        assertThat(result.issues().get(0).category()).isEqualTo(JobDiscoveryIssueCategory.INSUFFICIENT_DATA);
+    }
+
+    @Test
+    void run_contentAtOrAboveThreshold_proceedsToExtraction() {
+        stubPlan(List.of(request("q1")));
+        jobSearchPort.respondWith("q1", List.of(reference("https://example.com/jobs/1")));
+        stubScrapeAndExtractSuccess("https://example.com/jobs/1");
+        stubPersistCreated();
+        JobDiscoveryService service = service(executionWithMinContentChars(3));
+
+        JobDiscoveryRunResult result = service.runDiscovery();
+
+        assertThat(result.insufficientDataRejected()).isZero();
+        assertThat(result.createdVacancies()).isEqualTo(1);
     }
 
     // --- Unrecoverable orchestration failure ------------------------------------------------
@@ -866,7 +1169,14 @@ class JobDiscoveryServiceTest {
     private JobDiscoveryService service(JobDiscoveryProperties.Execution execution) {
         JobDiscoveryProperties properties = new JobDiscoveryProperties(true, execution, budget(), disabledScheduler());
         return new JobDiscoveryService(candidateProfileProvider, queryPlanner, jobSearchPort, jobPageFetchPort,
-                vacancyExtractionService, vacancyIngestionService, vacancyRepository, budgetPort, properties, CLOCK);
+                vacancyExtractionService, vacancyIngestionService, vacancyRepository, budgetPort, geographyPolicy(),
+                properties, CLOCK);
+    }
+
+    private JobGeographyPolicy geographyPolicy() {
+        return new JobGeographyPolicy(new JobGeographyPolicyProperties(
+                List.of("Poland", "Europe", "European", "EU", "Remote Europe"),
+                List.of("US only", "USA only", "Canada only", "UK only")));
     }
 
     private JobDiscoveryProperties.Scheduler disabledScheduler() {
@@ -877,6 +1187,10 @@ class JobDiscoveryServiceTest {
     private JobDiscoveryProperties.Execution execution(int maxQueries, int maxScrapes, int maxExtractions,
                                                          int maxUniqueReferences, int maxReportedIssues) {
         return new JobDiscoveryProperties.Execution(maxQueries, maxScrapes, maxExtractions, maxUniqueReferences, maxReportedIssues);
+    }
+
+    private JobDiscoveryProperties.Execution executionWithMinContentChars(int minContentChars) {
+        return new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 2, 25, minContentChars);
     }
 
     private JobDiscoveryProperties.Budget budget() {
@@ -913,7 +1227,7 @@ class JobDiscoveryServiceTest {
 
     private ExtractedVacancyData validExtractedData() {
         return new ExtractedVacancyData(
-                "Backend Engineer", "Acme Corp", "Remote", RemotePolicy.REMOTE, List.of(), List.of(),
+                "Senior Java Backend Engineer", "Acme Corp", "Remote", RemotePolicy.REMOTE, List.of(), List.of(),
                 null, null, null, null, null);
     }
 

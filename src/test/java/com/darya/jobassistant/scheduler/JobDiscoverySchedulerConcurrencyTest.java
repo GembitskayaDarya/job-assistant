@@ -212,11 +212,15 @@ class JobDiscoverySchedulerConcurrencyTest {
                 now, now, Duration.ZERO,
                 0, 0, 0,
                 0, 0, 0,
-                0, 0,
+                0, 0, 0,
                 0, 0, 0,
                 0, 0, 0,
                 0, 0, 0, 0,
                 false, false, false, false,
+                0, 0, 0,
+                0, 0, 0,
+                0, 0, false,
+                0, 0, 0,
                 List.of(), List.of(), 0,
                 allowed);
     }

@@ -56,7 +56,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
         "job-discovery.execution.max-scrapes-per-run=5",
         "job-discovery.execution.max-extractions-per-run=5",
         "job-discovery.execution.max-unique-references-per-run=30",
-        "job-discovery.execution.max-reported-issues=50"
+        "job-discovery.execution.max-reported-issues=50",
+        "job-discovery.execution.min-content-chars-for-extraction=0"
 })
 class JobDiscoveryServiceIntegrationTest extends AbstractIntegrationTest {
 
@@ -80,6 +81,9 @@ class JobDiscoveryServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JobDiscoveryProperties properties;
+
+    @Autowired
+    private com.darya.jobassistant.jobdiscovery.geo.JobGeographyPolicy geographyPolicy;
 
     @Autowired
     private Clock clock;
@@ -153,7 +157,7 @@ class JobDiscoveryServiceIntegrationTest extends AbstractIntegrationTest {
         JobDiscoveryService serviceWithStalePreCheck = new JobDiscoveryService(
                 candidateProfileProvider, queryPlanner, jobSearchPort, jobPageFetchPort,
                 vacancyExtractionService, vacancyIngestionService, staleAlwaysFalsePreCheck, budgetPort,
-                properties, clock);
+                geographyPolicy, properties, clock);
 
         // The winning run: commits a real row for this canonical URL first.
         JobDiscoveryRunResult winnerRun = jobDiscoveryService.runDiscovery();

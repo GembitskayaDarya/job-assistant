@@ -8,6 +8,7 @@ import com.darya.jobassistant.integrations.jobsearch.JobPageFetchPort;
 import com.darya.jobassistant.integrations.jobsearch.JobSearchPort;
 import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetPort;
 import com.darya.jobassistant.jobdiscovery.config.JobDiscoveryProperties;
+import com.darya.jobassistant.jobdiscovery.geo.JobGeographyPolicy;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import com.darya.jobassistant.vacancies.service.VacancyIngestionService;
 import com.darya.jobassistant.vacancyextraction.VacancyExtractionService;
@@ -138,6 +139,11 @@ class JobDiscoveryActivationTest {
         @Bean
         VacancyRepository vacancyRepository() {
             return mock(VacancyRepository.class);
+        }
+
+        @Bean
+        JobGeographyPolicy jobGeographyPolicy() {
+            return mock(JobGeographyPolicy.class);
         }
 
         @Bean

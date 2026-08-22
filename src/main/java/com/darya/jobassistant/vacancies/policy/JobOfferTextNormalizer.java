@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
  * regex word-boundary check, which would not by itself stop "java" from matching inside
  * "javascript".
  */
-final class JobOfferTextNormalizer {
+public final class JobOfferTextNormalizer {
 
     private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^a-z0-9]+");
@@ -21,7 +21,7 @@ final class JobOfferTextNormalizer {
     private JobOfferTextNormalizer() {
     }
 
-    static List<String> tokenize(String text) {
+    public static List<String> tokenize(String text) {
         if (text == null || text.isBlank()) {
             return List.of();
         }
@@ -32,7 +32,7 @@ final class JobOfferTextNormalizer {
                 .toList();
     }
 
-    static List<String> tokenizeAll(List<String> values) {
+    public static List<String> tokenizeAll(List<String> values) {
         if (values == null || values.isEmpty()) {
             return List.of();
         }

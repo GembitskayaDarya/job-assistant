@@ -1,5 +1,6 @@
 package com.darya.jobassistant.jobdiscovery.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -381,5 +382,78 @@ class JobDiscoveryPropertiesTest {
                 new JobDiscoveryProperties.Scheduler(true, "0 0 8 * * *", "Europe/Warsaw",
                         Duration.ofMinutes(5), Duration.ofMinutes(6))))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // --- execution: listing expansion (Sprint 12) -----------------------------------------------
+
+    @Test
+    void legacyFiveArgExecutionConstructor_defaultsListingExpansionFieldsToConservativeValues() {
+        JobDiscoveryProperties.Execution execution = new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50);
+
+        assertThat(execution.maxListingPagesPerRun()).isEqualTo(2);
+        assertThat(execution.maxCandidateLinksPerListing()).isEqualTo(25);
+        assertThat(execution.minContentCharsForExtraction()).isZero();
+    }
+
+    @Test
+    void enabled_rejectsNegativeMaxListingPagesPerRun() {
+        assertThatThrownBy(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, -1, 25, 0), VALID_BUDGET, DISABLED_SCHEDULER))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsMaxListingPagesPerRunAboveTwenty() {
+        assertThatThrownBy(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 21, 25, 0), VALID_BUDGET, DISABLED_SCHEDULER))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_acceptsMaxListingPagesPerRunBoundaries() {
+        assertThatCode(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 0, 25, 0), VALID_BUDGET, DISABLED_SCHEDULER))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 20, 25, 0), VALID_BUDGET, DISABLED_SCHEDULER))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void enabled_rejectsNegativeMaxCandidateLinksPerListing() {
+        assertThatThrownBy(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 2, -1, 0), VALID_BUDGET, DISABLED_SCHEDULER))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsMaxCandidateLinksPerListingAboveTwoHundred() {
+        assertThatThrownBy(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 2, 201, 0), VALID_BUDGET, DISABLED_SCHEDULER))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsNegativeMinContentCharsForExtraction() {
+        assertThatThrownBy(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 2, 25, -1), VALID_BUDGET, DISABLED_SCHEDULER))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_rejectsMinContentCharsForExtractionAboveFiveThousand() {
+        assertThatThrownBy(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 2, 25, 5001), VALID_BUDGET, DISABLED_SCHEDULER))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void enabled_acceptsMinContentCharsForExtractionBoundaries() {
+        assertThatCode(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 2, 25, 0), VALID_BUDGET, DISABLED_SCHEDULER))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new JobDiscoveryProperties(true,
+                new JobDiscoveryProperties.Execution(3, 5, 5, 30, 50, 2, 25, 5000), VALID_BUDGET, DISABLED_SCHEDULER))
+                .doesNotThrowAnyException();
     }
 }

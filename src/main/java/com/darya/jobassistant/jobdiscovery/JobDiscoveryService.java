@@ -12,8 +12,15 @@ import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetPort;
 import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetRequest;
 import com.darya.jobassistant.jobdiscovery.budget.JobDiscoveryBudgetStatus;
 import com.darya.jobassistant.jobdiscovery.config.JobDiscoveryProperties;
+import com.darya.jobassistant.jobdiscovery.geo.GeographyEligibility;
+import com.darya.jobassistant.jobdiscovery.geo.JobGeographyPolicy;
+import com.darya.jobassistant.jobdiscovery.listing.ListingCandidateLink;
+import com.darya.jobassistant.jobdiscovery.listing.ListingCandidateLinkExtractor;
+import com.darya.jobassistant.jobdiscovery.url.JobUrlClassifier;
+import com.darya.jobassistant.jobdiscovery.url.JobUrlType;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationCommand;
 import com.darya.jobassistant.vacancies.dto.VacancyCreationResult;
+import com.darya.jobassistant.vacancies.policy.BackendRoleSignals;
 import com.darya.jobassistant.vacancies.repository.VacancyRepository;
 import com.darya.jobassistant.vacancies.service.VacancyIngestionService;
 import com.darya.jobassistant.vacancies.url.CanonicalVacancyUrl;
@@ -33,25 +40,69 @@ import java.util.Set;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
  * Orchestrates one bounded, provider-neutral job-discovery run:
  * <pre>
  * candidate profile -&gt; plan queries -&gt; search (sequential, bounded, early-stopping)
- * -&gt; canonicalize + dedup references -&gt; skip already-persisted identities
- * -&gt; scrape -&gt; extract -&gt; persist each candidate in its own short transaction
+ * -&gt; canonicalize + dedup + classify each reference
+ * -&gt; SEARCH_OR_LISTING_PAGE: fetch (shared scrape budget) -&gt; deterministic link extraction
+ *    -&gt; classify/dedup each link -&gt; feed DIRECT_JOB links back into this same pipeline
+ * -&gt; DIRECT_JOB: skip already-persisted identities -&gt; cheap geo/backend eligibility
+ *    -&gt; scrape -&gt; extract -&gt; final geo/backend validation -&gt; persist each candidate in its own
+ *    short transaction
+ * -&gt; UNSUPPORTED_OR_INVALID: reject with an observable reason
  * </pre>
  *
  * <p>Knows nothing about Firecrawl, Spring AI, WebClient, Telegram, or any provider API key -
  * only the provider-neutral {@link JobSearchPort}/{@link JobPageFetchPort}/{@link
- * VacancyExtractionService} boundaries and the existing, already-transactional {@link
+ * VacancyExtractionService} boundaries, the deterministic, provider-neutral URL/geography/backend
+ * -role policies under {@code jobdiscovery.url}/{@code jobdiscovery.geo}/{@code
+ * vacancies.policy.BackendRoleSignals}, and the existing, already-transactional {@link
  * VacancyIngestionService}. Deliberately not {@code @Transactional} and opens no transaction of
- * its own: search, canonicalization, the persisted-identity pre-check, Scrape, and AI Extraction
- * all run outside any write transaction; only {@link VacancyIngestionService#persistDiscovered(VacancyCreationCommand)}
- * opens a transaction, one short {@code REQUIRES_NEW} transaction per candidate (Vacancy and its
- * durable {@code VacancyRecommendationTask} committed atomically together - see that method),
- * entirely inside that call.
+ * its own: search, canonicalization, classification, listing expansion, the persisted-identity
+ * pre-check, geography/backend checks, Scrape, and AI Extraction all run outside any write
+ * transaction; only {@link VacancyIngestionService#persistDiscovered(VacancyCreationCommand)}
+ * opens a transaction, one short {@code REQUIRES_NEW} transaction per candidate, entirely inside
+ * that call.
+ *
+ * <h2>URL lifecycle (Sprint 12)</h2>
+ * Every canonicalized, not-yet-seen-this-run reference - whether a raw search result or a link
+ * extracted from a listing page - is classified exactly once by {@link JobUrlClassifier}:
+ * <ul>
+ *   <li>{@code DIRECT_JOB} candidates enter the existing dedup/pre-check/eligibility/scrape/
+ *       extract/persist pipeline ({@link #processDirectCandidate});
+ *   <li>{@code SEARCH_OR_LISTING_PAGE} candidates are never scraped-as-a-vacancy, extracted, or
+ *       persisted - {@link #expandListing} fetches them (against the same shared scrape budget as
+ *       any direct candidate - there is one Firecrawl-scrape budget, not two) and deterministically
+ *       extracts, normalizes, and re-classifies candidate links from the Markdown content (see
+ *       {@link ListingCandidateLinkExtractor}), feeding only the resulting {@code DIRECT_JOB} links
+ *       back into {@link #processReference}. A link extracted from a listing that itself classifies
+ *       as another listing is discarded, never expanded again - {@code allowListingExpansion} is
+ *       {@code false} for every candidate reached via listing expansion, which is what bounds this
+ *       to at most one level of recursion regardless of how the provider's search results are
+ *       shaped;
+ *   <li>{@code UNSUPPORTED_OR_INVALID} candidates are rejected immediately with an observable
+ *       {@link JobDiscoveryIssueCategory#UNSUPPORTED_URL} reason.
+ * </ul>
+ * Canonicalization and in-run deduplication ({@code seenCanonicalUrls}) apply uniformly to every
+ * candidate before classification, regardless of its eventual type - this project deliberately
+ * dedupes a listing URL against itself the same way it dedupes a direct job URL, rather than only
+ * after branching on type, so the same listing page discovered by two different search queries is
+ * only ever fetched once.
+ *
+ * <p>Geography ({@link JobGeographyPolicy}) and backend-role ({@link BackendRoleSignals}) checks
+ * run twice, at different confidence levels, over different text - never treating {@code UNKNOWN}
+ * geography or a merely-quiet snippet as a rejection (see Sprint 12's "be conservative about false
+ * rejection" requirement):
+ * <ul>
+ *   <li><b>cheap/early</b>, before any scrape, over the search result's own title/snippet: rejects
+ *       only an explicit incompatible-geography phrase or an explicit non-backend title signal;
+ *   <li><b>final</b>, after AI extraction, over the extracted location/title/content/skills: the
+ *       full, decisive check, since this text is far richer than a short search snippet.
+ * </ul>
  *
  * <p>Conditional on {@code job-discovery.enabled=true}, matching this project's established
  * activation convention ({@code JobMonitoringService}/{@code telegram.enabled}, {@code
@@ -101,6 +152,7 @@ public class JobDiscoveryService {
     private final VacancyIngestionService vacancyIngestionService;
     private final VacancyRepository vacancyRepository;
     private final JobDiscoveryBudgetPort budgetPort;
+    private final JobGeographyPolicy geographyPolicy;
     private final JobDiscoveryProperties properties;
     private final Clock clock;
 
@@ -113,6 +165,7 @@ public class JobDiscoveryService {
             VacancyIngestionService vacancyIngestionService,
             VacancyRepository vacancyRepository,
             JobDiscoveryBudgetPort budgetPort,
+            JobGeographyPolicy geographyPolicy,
             JobDiscoveryProperties properties,
             Clock clock) {
         this.candidateProfileProvider = candidateProfileProvider;
@@ -123,6 +176,7 @@ public class JobDiscoveryService {
         this.vacancyIngestionService = vacancyIngestionService;
         this.vacancyRepository = vacancyRepository;
         this.budgetPort = budgetPort;
+        this.geographyPolicy = geographyPolicy;
         this.properties = properties;
         this.clock = clock;
     }
@@ -206,12 +260,14 @@ public class JobDiscoveryService {
         acc.discoveredReferences += references.size();
 
         for (DiscoveredJobReference reference : references) {
-            processReference(reference, queryIndex, acc, limits);
+            processReference(reference, queryIndex, acc, limits, true);
         }
     }
 
+    // --- URL lifecycle: canonicalize -> in-run dedup -> classify -> branch -----------------------
+
     private void processReference(DiscoveredJobReference reference, int queryIndex, RunAccumulator acc,
-                                   JobDiscoveryProperties.Execution limits) {
+                                   JobDiscoveryProperties.Execution limits, boolean allowListingExpansion) {
         int referenceOrdinal = acc.nextReferenceOrdinal++;
         URI sourceUrl = reference.sourceUrl();
 
@@ -230,14 +286,115 @@ public class JobDiscoveryService {
             return;
         }
 
+        JobUrlType type = JobUrlClassifier.classify(URI.create(canonical.value()));
+        switch (type) {
+            case UNSUPPORTED_OR_INVALID -> {
+                acc.unsupportedUrlCandidates++;
+                acc.addIssue(JobDiscoveryIssueCategory.UNSUPPORTED_URL, queryIndex, safeHost(sourceUrl), null, referenceOrdinal);
+            }
+            case SEARCH_OR_LISTING_PAGE -> {
+                acc.listingUrlCandidates++;
+                if (allowListingExpansion) {
+                    expandListing(reference, queryIndex, referenceOrdinal, acc, limits);
+                } else {
+                    acc.nestedListingLinksDiscarded++;
+                }
+            }
+            case DIRECT_JOB -> {
+                acc.directUrlCandidates++;
+                processDirectCandidate(reference, canonical, queryIndex, referenceOrdinal, acc, limits);
+            }
+        }
+    }
+
+    // --- SEARCH_OR_LISTING_PAGE: fetch (shared scrape budget) -> deterministic link extraction ---
+
+    private void expandListing(DiscoveredJobReference listingReference, int queryIndex, int referenceOrdinal,
+                                RunAccumulator acc, JobDiscoveryProperties.Execution limits) {
+        if (acc.listingPagesFetched >= limits.maxListingPagesPerRun()) {
+            acc.listingPageLimitReached = true;
+            return;
+        }
+        if (acc.scrapeAttempts >= limits.maxScrapesPerRun()) {
+            acc.scrapeLimitReached = true;
+            return;
+        }
+        acc.listingPagesFetched++;
+
+        JobPageContent content = scrape(listingReference.sourceUrl(), queryIndex, referenceOrdinal, acc);
+        if (content == null) {
+            acc.listingPagesFetchFailed++;
+            return;
+        }
+
+        List<ListingCandidateLink> links = ListingCandidateLinkExtractor.extract(
+                content.content(), listingReference.sourceUrl(), limits.maxCandidateLinksPerListing());
+        acc.listingCandidateLinksExtracted += links.size();
+
+        if (links.isEmpty()) {
+            acc.listingPagesWithNoCandidates++;
+            acc.addIssue(JobDiscoveryIssueCategory.SEARCH_OR_LISTING_URL, queryIndex,
+                    safeHost(listingReference.sourceUrl()), null, referenceOrdinal);
+            return;
+        }
+
+        for (ListingCandidateLink link : links) {
+            DiscoveredJobReference synthetic = toReference(link);
+            if (synthetic == null) {
+                acc.unsupportedUrlCandidates++;
+                continue;
+            }
+            processReference(synthetic, queryIndex, acc, limits, false);
+        }
+    }
+
+    private DiscoveredJobReference toReference(ListingCandidateLink link) {
+        try {
+            String title = link.anchorText() != null ? link.anchorText() : link.url().getHost();
+            return new DiscoveredJobReference(link.url(), title);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    // --- DIRECT_JOB: pre-check -> cheap eligibility -> extraction -> final eligibility -> persist -
+
+    private void processDirectCandidate(DiscoveredJobReference reference, CanonicalVacancyUrl canonical, int queryIndex,
+                                         int referenceOrdinal, RunAccumulator acc, JobDiscoveryProperties.Execution limits) {
         if (acc.uniqueReferencesAccepted >= limits.maxUniqueReferencesPerRun()) {
             acc.uniqueReferenceLimitReached = true;
             return;
         }
         acc.uniqueReferencesAccepted++;
 
-        if (vacancyRepository.existsByCanonicalUrl(canonical)) {
+        boolean alreadyPersisted;
+        try {
+            alreadyPersisted = vacancyRepository.existsByCanonicalUrl(canonical);
+        } catch (DataAccessException e) {
+            // Existence is unknown, not false: continuing (scrape/AI/persist) on a candidate whose
+            // duplicate status the database itself could not answer risks wasted Firecrawl/AI spend
+            // and, worse, a persistence attempt this run cannot safely reason about. Only this one
+            // candidate is skipped - the repository failure says nothing about any other candidate.
+            acc.persistencePrecheckFailures++;
+            acc.addIssue(JobDiscoveryIssueCategory.PERSISTENCE_PRECHECK_FAILED, queryIndex, safeHost(reference.sourceUrl()),
+                    e.getClass().getSimpleName(), referenceOrdinal);
+            return;
+        }
+        if (alreadyPersisted) {
             acc.existingVacanciesSkipped++;
+            return;
+        }
+
+        if (geographyPolicy.assess(reference.title(), reference.snippet()) == GeographyEligibility.INELIGIBLE) {
+            acc.geoRejected++;
+            acc.addIssue(JobDiscoveryIssueCategory.OUTSIDE_TARGET_GEO, queryIndex, safeHost(reference.sourceUrl()),
+                    null, referenceOrdinal);
+            return;
+        }
+        if (BackendRoleSignals.hasExcludedTitleSignal(reference.title())) {
+            acc.nonBackendRoleRejected++;
+            acc.addIssue(JobDiscoveryIssueCategory.NON_BACKEND_ROLE, queryIndex, safeHost(reference.sourceUrl()),
+                    null, referenceOrdinal);
             return;
         }
 
@@ -250,8 +407,15 @@ public class JobDiscoveryService {
             return;
         }
 
-        JobPageContent content = scrape(reference, queryIndex, referenceOrdinal, acc);
+        JobPageContent content = scrape(reference.sourceUrl(), queryIndex, referenceOrdinal, acc);
         if (content == null) {
+            return;
+        }
+
+        if (limits.minContentCharsForExtraction() > 0 && content.content().length() < limits.minContentCharsForExtraction()) {
+            acc.insufficientDataRejected++;
+            acc.addIssue(JobDiscoveryIssueCategory.INSUFFICIENT_DATA, queryIndex, safeHost(reference.sourceUrl()),
+                    null, referenceOrdinal);
             return;
         }
 
@@ -260,18 +424,31 @@ public class JobDiscoveryService {
             return;
         }
 
-        persist(sourceUrl, content, extracted, queryIndex, referenceOrdinal, acc);
+        if (geographyPolicy.assess(extracted.location()) == GeographyEligibility.INELIGIBLE) {
+            acc.geoRejected++;
+            acc.addIssue(JobDiscoveryIssueCategory.OUTSIDE_TARGET_GEO, queryIndex, safeHost(reference.sourceUrl()),
+                    null, referenceOrdinal);
+            return;
+        }
+        if (!BackendRoleSignals.matches(extracted.title(), content.content(), extracted.requiredSkills())) {
+            acc.nonBackendRoleRejected++;
+            acc.addIssue(JobDiscoveryIssueCategory.NON_BACKEND_ROLE, queryIndex, safeHost(reference.sourceUrl()),
+                    null, referenceOrdinal);
+            return;
+        }
+
+        persist(reference.sourceUrl(), content, extracted, queryIndex, referenceOrdinal, acc);
     }
 
-    private JobPageContent scrape(DiscoveredJobReference reference, int queryIndex, int referenceOrdinal, RunAccumulator acc) {
+    private JobPageContent scrape(URI sourceUrl, int queryIndex, int referenceOrdinal, RunAccumulator acc) {
         acc.scrapeAttempts++;
         try {
-            JobPageContent content = jobPageFetchPort.fetch(reference.sourceUrl());
+            JobPageContent content = jobPageFetchPort.fetch(sourceUrl);
             acc.scrapeSuccesses++;
             return content;
         } catch (RuntimeException e) {
             acc.scrapeFailures++;
-            acc.addIssue(JobDiscoveryIssueCategory.SCRAPE_FAILED, queryIndex, safeHost(reference.sourceUrl()),
+            acc.addIssue(JobDiscoveryIssueCategory.SCRAPE_FAILED, queryIndex, safeHost(sourceUrl),
                     e.getClass().getSimpleName(), referenceOrdinal);
             return null;
         }
@@ -354,20 +531,30 @@ public class JobDiscoveryService {
     private void logSummary(JobDiscoveryRunResult result) {
         log.info("Job discovery run summary - duration: {}, plannedQueries: {}, executedQueries: {}, failedQueries: {}, "
                         + "discoveredReferences: {}, invalidReferences: {}, duplicateReferencesInRun: {}, "
-                        + "existingVacanciesSkipped: {}, uniqueReferencesAccepted: {}, scrapeAttempts: {}, "
+                        + "directUrlCandidates: {}, listingUrlCandidates: {}, unsupportedUrlCandidates: {}, "
+                        + "listingPagesFetched: {}, listingPagesFetchFailed: {}, listingPagesWithNoCandidates: {}, "
+                        + "listingCandidateLinksExtracted: {}, nestedListingLinksDiscarded: {}, "
+                        + "existingVacanciesSkipped: {}, persistencePrecheckFailures: {}, geoRejected: {}, "
+                        + "nonBackendRoleRejected: {}, "
+                        + "insufficientDataRejected: {}, uniqueReferencesAccepted: {}, scrapeAttempts: {}, "
                         + "scrapeSuccesses: {}, scrapeFailures: {}, extractionAttempts: {}, extractionSuccesses: {}, "
                         + "extractionFailures: {}, persistenceAttempts: {}, createdVacancies: {}, "
                         + "alreadyExistingAfterRace: {}, persistenceFailures: {}, queryLimitReached: {}, "
                         + "scrapeLimitReached: {}, extractionLimitReached: {}, uniqueReferenceLimitReached: {}, "
-                        + "omittedIssueCount: {}",
+                        + "listingPageLimitReached: {}, omittedIssueCount: {}",
                 result.duration(), result.plannedQueries(), result.executedQueries(), result.failedQueries(),
                 result.discoveredReferences(), result.invalidReferences(), result.duplicateReferencesInRun(),
-                result.existingVacanciesSkipped(), result.uniqueReferencesAccepted(), result.scrapeAttempts(),
+                result.directUrlCandidates(), result.listingUrlCandidates(), result.unsupportedUrlCandidates(),
+                result.listingPagesFetched(), result.listingPagesFetchFailed(), result.listingPagesWithNoCandidates(),
+                result.listingCandidateLinksExtracted(), result.nestedListingLinksDiscarded(),
+                result.existingVacanciesSkipped(), result.persistencePrecheckFailures(), result.geoRejected(),
+                result.nonBackendRoleRejected(),
+                result.insufficientDataRejected(), result.uniqueReferencesAccepted(), result.scrapeAttempts(),
                 result.scrapeSuccesses(), result.scrapeFailures(), result.extractionAttempts(), result.extractionSuccesses(),
                 result.extractionFailures(), result.persistenceAttempts(), result.createdVacancies(),
                 result.alreadyExistingAfterRace(), result.persistenceFailures(), result.queryLimitReached(),
                 result.scrapeLimitReached(), result.extractionLimitReached(), result.uniqueReferenceLimitReached(),
-                result.omittedIssueCount());
+                result.listingPageLimitReached(), result.omittedIssueCount());
     }
 
     /** Mutable, run-scoped counters/state - never exposed outside this class; {@link #toResult} builds the immutable result. */
@@ -388,6 +575,7 @@ public class JobDiscoveryService {
         private int invalidReferences = 0;
         private int duplicateReferencesInRun = 0;
         private int existingVacanciesSkipped = 0;
+        private int persistencePrecheckFailures = 0;
         private int uniqueReferencesAccepted = 0;
         private int scrapeAttempts = 0;
         private int scrapeSuccesses = 0;
@@ -403,6 +591,19 @@ public class JobDiscoveryService {
         private boolean scrapeLimitReached = false;
         private boolean extractionLimitReached = false;
         private boolean uniqueReferenceLimitReached = false;
+
+        private int directUrlCandidates = 0;
+        private int listingUrlCandidates = 0;
+        private int unsupportedUrlCandidates = 0;
+        private int listingPagesFetched = 0;
+        private int listingPagesFetchFailed = 0;
+        private int listingPagesWithNoCandidates = 0;
+        private int listingCandidateLinksExtracted = 0;
+        private int nestedListingLinksDiscarded = 0;
+        private boolean listingPageLimitReached = false;
+        private int geoRejected = 0;
+        private int nonBackendRoleRejected = 0;
+        private int insufficientDataRejected = 0;
 
         private RunAccumulator(int maxReportedIssues) {
             this.maxReportedIssues = maxReportedIssues;
@@ -423,11 +624,15 @@ public class JobDiscoveryService {
                     startedAt, completedAt, duration,
                     plannedQueries, executedQueries, failedQueries,
                     discoveredReferences, invalidReferences, duplicateReferencesInRun,
-                    existingVacanciesSkipped, uniqueReferencesAccepted,
+                    existingVacanciesSkipped, persistencePrecheckFailures, uniqueReferencesAccepted,
                     scrapeAttempts, scrapeSuccesses, scrapeFailures,
                     extractionAttempts, extractionSuccesses, extractionFailures,
                     persistenceAttempts, createdVacancies, alreadyExistingAfterRace, persistenceFailures,
                     queryLimitReached, scrapeLimitReached, extractionLimitReached, uniqueReferenceLimitReached,
+                    directUrlCandidates, listingUrlCandidates, unsupportedUrlCandidates,
+                    listingPagesFetched, listingPagesFetchFailed, listingPagesWithNoCandidates,
+                    listingCandidateLinksExtracted, nestedListingLinksDiscarded, listingPageLimitReached,
+                    geoRejected, nonBackendRoleRejected, insufficientDataRejected,
                     createdVacancyIds, issues, omittedIssueCount, budgetDecision);
         }
     }

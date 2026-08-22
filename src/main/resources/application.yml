@@ -150,6 +150,23 @@ job-discovery:
     max-extractions-per-run: ${JOB_DISCOVERY_MAX_EXTRACTIONS_PER_RUN:5}
     max-unique-references-per-run: ${JOB_DISCOVERY_MAX_UNIQUE_REFERENCES_PER_RUN:30}
     max-reported-issues: ${JOB_DISCOVERY_MAX_REPORTED_ISSUES:50}
+    # Listing/search-page expansion (Sprint 12): a listing page's own fetch still consumes the
+    # same max-scrapes-per-run budget above (one Firecrawl-scrape budget, not two) - this only
+    # caps how many of that shared budget's scrapes may be spent on listing pages themselves.
+    max-listing-pages-per-run: ${JOB_DISCOVERY_MAX_LISTING_PAGES_PER_RUN:2}
+    # In-memory cap on candidate links kept from one fetched listing page - no API cost impact.
+    max-candidate-links-per-listing: ${JOB_DISCOVERY_MAX_CANDIDATE_LINKS_PER_LISTING:25}
+    # A scraped direct-job page shorter than this (characters) is rejected as INSUFFICIENT_DATA
+    # before the AI extraction call is even attempted; 0 disables the check.
+    min-content-chars-for-extraction: ${JOB_DISCOVERY_MIN_CONTENT_CHARS_FOR_EXTRACTION:40}
+  # Explicit, configurable target-geography policy (Sprint 12 Part 7) - currently Poland/Europe.
+  # Each entry is a free-text phrase matched as tokenized words, not a raw substring - see
+  # JobGeographyPolicy. Only an incompatible-phrase match ever rejects a candidate; an accepted-
+  # phrase match is informational (observability), and no match at all is always treated as
+  # unknown, never as a rejection.
+  geography:
+    accepted-region-terms: ${JOB_DISCOVERY_GEO_ACCEPTED_TERMS:Poland,Polska,Warsaw,Krakow,Wroclaw,Gdansk,Poznan,Katowice,Lodz,Europe,European,EU,EMEA,CEE,Central Europe,Eastern Europe,Remote Europe,Europe Remote,Remote EU}
+    incompatible-region-terms: ${JOB_DISCOVERY_GEO_INCOMPATIBLE_TERMS:US only,USA only,United States only,US citizens only,USA citizens only,United States citizens only,Canada only,LATAM only,APAC only,Australia only,India only,UK only,North America only,US based candidates only,US residents only}
   # Provider-neutral spend-policy limits enforced by JobDiscoveryBudgetPolicy against a verified
   # Firecrawl credit snapshot before every non-empty discovery run - see firecrawl.cost above for
   # the separate, provider-specific pricing assumptions used to produce the estimate these limits
