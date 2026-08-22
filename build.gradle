@@ -58,16 +58,19 @@ dependencies {
 
     // Sprint 10 Step 4: CV/cover-letter PDF rendering. Pure Java, Apache-2.0, no native/Chromium
     // runtime - PDDocument text is drawn directly with vector positions computed against a
-    // bundled, embedded Unicode font (see ph-fonts-open-sans below), never rasterized.
+    // bundled, embedded Unicode font (see src/main/resources/fonts/ttf/Inter/ below), never
+    // rasterized.
     implementation 'org.apache.pdfbox:pdfbox:3.0.3'
 
-    // Sprint 10 Step 4 (production-readiness fix): embedded Unicode font for PDF rendering.
-    // Apache-2.0-licensed Maven Central wrapper bundling the Open Sans TTF family (SIL Open Font
-    // License 1.1, redistribution-permitted) as classpath resources - so the exact same font bytes
-    // are used on every developer machine and inside Docker, with no dependency on the host OS's
-    // installed fonts and no runtime network fetch. Open Sans covers Latin, Latin Extended
-    // (including Polish diacritics) and Cyrillic.
-    implementation 'com.helger.font:ph-fonts-open-sans:6.1.0'
+    // Sprint 11 Golden Master Typography Calibration: the embedded font is now Inter (matching the
+    // golden master's own typeface, see PdfBoxApplicationMaterialDocumentRenderer's "Fonts"
+    // javadoc), vendored directly as classpath resources under
+    // src/main/resources/fonts/ttf/Inter/ - no Maven-packaged Inter distribution with static
+    // per-weight TTF files exists to depend on instead (see that directory's README.txt for exactly
+    // where the files came from and their SIL Open Font License 1.1). No dependency line is needed
+    // here for it, unlike the Open Sans family it replaces (previously
+    // com.helger.font:ph-fonts-open-sans), since the font bytes live in this project's own
+    // resources rather than a third-party jar.
 
     implementation 'net.javacrumbs.shedlock:shedlock-spring'
     implementation 'net.javacrumbs.shedlock:shedlock-provider-jdbc-template'
@@ -92,6 +95,27 @@ tasks.named('test') {
     // test fixture instead of the developer's real, gitignored config/candidate-profile.yml -
     // otherwise a fresh checkout without that file would fail every Spring context test.
     systemProperty 'CANDIDATE_PROFILE_PATH', file('src/test/resources/candidate-profile-test.yml').absolutePath
+
+    // Sprint 11 Final CV Policy production fix: points spring.config.import's
+    // BASELINE_CV_SELECTION_PATH placeholder at a real, resolvable test fixture, instead of the
+    // developer's real, gitignored config/private/baseline-cv-selection.yml (authored against the
+    // real Career History, never this suite's synthetic fixtures) - or, as this originally read,
+    // a deliberately-absent path. BaselineCvSelectionResolver now fails loudly when EVERY field
+    // (summary/skills/positions/personalProjects) resolves empty at once (see its
+    // requireNonEmptyBaseline javadoc), so "absent = harmless empty binding" is no longer a safe
+    // test assumption. src/test/resources/baseline-cv-selection-test.yml supplies only a
+    // professional-summary (with empty skills/positions/personalProjects) - enough to satisfy that
+    // guard without requiring this suite to seed any real Career History company/position data.
+    systemProperty 'BASELINE_CV_SELECTION_PATH', file('src/test/resources/baseline-cv-selection-test.yml').absolutePath
+
+    // Sprint 11 Golden Master Template Rendering: points GoldenMasterCvTemplateProperties'
+    // CV_GOLDEN_MASTER_TEMPLATE_PATH placeholder at a synthetic, non-private fixture PDF (see
+    // GoldenMasterFixture's javadoc - "JOHN DOE"/"Example Corp", no real personal data) instead of
+    // the developer's real, gitignored config/private/cv/golden-master/Darya_Hembitskaya_CV.pdf -
+    // GoldenMasterCvTemplate fails application startup loudly if this file is missing/invalid, so
+    // every full-Spring-context test needs a real, resolvable file here, exactly like the two
+    // properties above.
+    systemProperty 'CV_GOLDEN_MASTER_TEMPLATE_PATH', file('src/test/resources/golden-master-cv-fixture.pdf').absolutePath
 
     // Sprint 11 Step 5: the default test JVM heap is too small for this suite's growing number of
     // distinct cached Spring ApplicationContext configurations (each @DataJpaTest/@SpringBootTest

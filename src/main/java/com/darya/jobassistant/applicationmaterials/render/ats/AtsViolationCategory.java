@@ -26,6 +26,9 @@ public enum AtsViolationCategory {
     /** A company/position/project's name, date range, or bullet did not extract in the expected reading order. */
     ORDERING_VIOLATION,
 
+    /** Sprint 11 Golden Master CV Lock: the dedicated Mentoring section's organization/role/bullet text did not extract in the expected reading order. */
+    MISSING_MENTORING_CONTENT,
+
     MISSING_PERSONAL_PROJECT_CONTENT,
     MISSING_EDUCATION_CONTENT,
     MISSING_LANGUAGE_CONTENT,

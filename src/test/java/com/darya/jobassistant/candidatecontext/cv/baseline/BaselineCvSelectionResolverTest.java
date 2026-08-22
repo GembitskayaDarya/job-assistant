@@ -69,7 +69,11 @@ class BaselineCvSelectionResolverTest {
 
     @Test
     void resolve_emptySkillList_isADeliberateEmptySelection() {
-        CvTailoringResult result = BaselineCvSelectionResolver.resolve(config(List.of(), List.of(), List.of()), snapshot());
+        // A non-empty position keeps this resolve() call outside requireNonEmptyBaseline's "every
+        // field empty at once" guard (see that method's javadoc) - orthogonal to what this test
+        // actually proves: an empty skill selection is honored as a deliberate zero-skill choice.
+        PositionSelection selection = new PositionSelection("Acme Platform Inc", "Backend Engineer", List.of("*"), List.of(), List.of());
+        CvTailoringResult result = BaselineCvSelectionResolver.resolve(config(List.of(), List.of(selection), List.of()), snapshot());
 
         assertThat(result.orderedSkillIds()).isEmpty();
     }
@@ -204,7 +208,10 @@ class BaselineCvSelectionResolverTest {
 
     @Test
     void resolve_blankProfessionalSummary_isNormalizedToNull() {
-        BaselineCvSelectionProperties config = new BaselineCvSelectionProperties("   ", List.of(), List.of(), List.of());
+        // A non-empty skill selection keeps this resolve() call outside requireNonEmptyBaseline's
+        // "every field empty at once" guard - orthogonal to what this test actually proves: a
+        // blank (whitespace-only) summary string normalizes to null rather than surviving as-is.
+        BaselineCvSelectionProperties config = new BaselineCvSelectionProperties("   ", List.of("Java"), List.of(), List.of(), null);
 
         CvTailoringResult result = BaselineCvSelectionResolver.resolve(config, snapshot());
 
@@ -213,7 +220,7 @@ class BaselineCvSelectionResolverTest {
 
     @Test
     void resolve_nonBlankProfessionalSummary_isPreservedVerbatim() {
-        BaselineCvSelectionProperties config = new BaselineCvSelectionProperties("A concise summary.", List.of(), List.of(), List.of());
+        BaselineCvSelectionProperties config = new BaselineCvSelectionProperties("A concise summary.", List.of(), List.of(), List.of(), null);
 
         CvTailoringResult result = BaselineCvSelectionResolver.resolve(config, snapshot());
 
@@ -236,7 +243,7 @@ class BaselineCvSelectionResolverTest {
     // ==================== Fixtures ====================
 
     private BaselineCvSelectionProperties config(List<String> skills, List<PositionSelection> positions, List<PersonalProjectSelection> personalProjects) {
-        return new BaselineCvSelectionProperties(null, skills, positions, personalProjects);
+        return new BaselineCvSelectionProperties(null, skills, positions, personalProjects, null);
     }
 
     private CvSourceSnapshot snapshot() {

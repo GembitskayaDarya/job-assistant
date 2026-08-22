@@ -20,7 +20,7 @@ import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCov
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
-import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvSkillTailoringResult;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiException;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
 import com.darya.jobassistant.companies.entity.Company;
@@ -72,15 +72,15 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
     private CvTailoringAiPort cvTailoringAiPort;
 
     /**
-     * Sprint 11 Big Block 7: every test in this class that reaches CV tailoring at all needs a
-     * successful {@link CvTailoringAiPort#tailor} result - this class's own focus is cover-letter/
+     * Sprint 11 Final CV Policy: every test in this class that reaches CV tailoring at all needs a
+     * successful {@link CvTailoringAiPort#tailorSkills} result - this class's own focus is cover-letter/
      * lifecycle behavior, not CV tailoring failure classification (see {@code
-     * CvTailoringUseCaseTest} for that). An empty {@link CvTailoringResult} always validates
+     * CvTailoringUseCaseTest} for that). An empty {@link CvSkillTailoringResult} always validates
      * successfully against any candidate context, since it references no ids at all.
      */
     @BeforeEach
     void stubCvTailoringToSucceedByDefault() {
-        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+        when(cvTailoringAiPort.tailorSkills(any(), any())).thenReturn(new CvSkillTailoringResult(List.of()));
     }
 
     // ==================== 1-3. Successful generation, lifecycle, result persisted once ====================
@@ -184,8 +184,8 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
         UUID vacancyId = aVacancy("cv-validation-failure-" + UUID.randomUUID()).getId();
         UUID generationId = createMatchingGeneration(vacancyId);
         // Unknown skill id - CvTailoringValidator rejects this against any real candidate context.
-        when(cvTailoringAiPort.tailor(any(), any()))
-                .thenReturn(new CvTailoringResult(null, List.of(UUID.randomUUID()), List.of(), List.of()));
+        when(cvTailoringAiPort.tailorSkills(any(), any()))
+                .thenReturn(new CvSkillTailoringResult(List.of(UUID.randomUUID())));
 
         GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
 
@@ -197,7 +197,7 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
         // A source-validation failure is a deterministic application/source-data problem, not
         // something CvTailoringUseCase's bounded retry (Sprint 11 production hardening) ever
         // retries - the retry loop only wraps the AI call itself, not the validation step after it.
-        verify(cvTailoringAiPort, times(1)).tailor(any(), any());
+        verify(cvTailoringAiPort, times(1)).tailorSkills(any(), any());
     }
 
     // ==================== CV tailoring bounded retry (Sprint 11 production hardening) ====================
@@ -206,14 +206,14 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
     void generate_cvTailoringProviderFailure_isNeverRetried_exactlyOneAiCall() {
         UUID vacancyId = aVacancy("cv-provider-failure-" + UUID.randomUUID()).getId();
         UUID generationId = createMatchingGeneration(vacancyId);
-        when(cvTailoringAiPort.tailor(any(), any()))
+        when(cvTailoringAiPort.tailorSkills(any(), any()))
                 .thenThrow(new CvTailoringAiException("provider down", new RuntimeException("HTTP 429 secret-detail")));
 
         GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
 
         assertThat(outcome.status()).isEqualTo(GenerationOutcomeStatus.FAILED);
         assertThat(outcome.generation().failureCode()).isEqualTo(ApplicationMaterialsGenerationFailureCode.AI_PROVIDER_ERROR.name());
-        verify(cvTailoringAiPort, times(1)).tailor(any(), any());
+        verify(cvTailoringAiPort, times(1)).tailorSkills(any(), any());
         verify(aiPort, never()).generate(any(), any());
     }
 
@@ -221,7 +221,7 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
     void generate_cvTailoringMalformedOnEveryAttempt_exhaustsAllThreeAttempts_neverCallsCoverLetterAi() {
         UUID vacancyId = aVacancy("cv-malformed-exhausted-" + UUID.randomUUID()).getId();
         UUID generationId = createMatchingGeneration(vacancyId);
-        when(cvTailoringAiPort.tailor(any(), any())).thenThrow(new CvTailoringAiException("malformed"));
+        when(cvTailoringAiPort.tailorSkills(any(), any())).thenThrow(new CvTailoringAiException("malformed"));
 
         GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
 
@@ -229,7 +229,7 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
         assertThat(outcome.generation().failureCode()).isEqualTo(ApplicationMaterialsGenerationFailureCode.MALFORMED_AI_RESPONSE.name());
         assertThat(resultRepositoryPort.findByGenerationId(generationId)).isEmpty();
         // Maximum 3 tailoring attempts total (CvTailoringUseCase.MAX_TAILORING_ATTEMPTS).
-        verify(cvTailoringAiPort, times(3)).tailor(any(), any());
+        verify(cvTailoringAiPort, times(3)).tailorSkills(any(), any());
         verify(aiPort, never()).generate(any(), any());
     }
 
@@ -237,10 +237,10 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
     void generate_cvTailoringMalformedTwiceThenSucceeds_completesGenerationAndCallsCoverLetterAiExactlyOnce() {
         UUID vacancyId = aVacancy("cv-malformed-then-success-" + UUID.randomUUID()).getId();
         UUID generationId = createMatchingGeneration(vacancyId);
-        when(cvTailoringAiPort.tailor(any(), any()))
+        when(cvTailoringAiPort.tailorSkills(any(), any()))
                 .thenThrow(new CvTailoringAiException("malformed attempt 1"))
                 .thenThrow(new CvTailoringAiException("malformed attempt 2"))
-                .thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+                .thenReturn(new CvSkillTailoringResult(List.of()));
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
 
         GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);
@@ -248,7 +248,7 @@ class GenerateApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegra
         assertThat(outcome.status()).isEqualTo(GenerationOutcomeStatus.COMPLETED);
         assertThat(outcome.generation().status()).isEqualTo(ApplicationMaterialGenerationStatus.COMPLETED);
         assertThat(resultRepositoryPort.findByGenerationId(generationId)).isPresent();
-        verify(cvTailoringAiPort, times(3)).tailor(any(), any());
+        verify(cvTailoringAiPort, times(3)).tailorSkills(any(), any());
         verify(aiPort, times(1)).generate(any(), any());
     }
 

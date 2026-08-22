@@ -144,8 +144,10 @@ class RenderApplicationMaterialsUseCaseFailureIntegrationTest extends AbstractIn
         assertThat(stillCompleted.status()).isEqualTo(ApplicationMaterialGenerationStatus.COMPLETED);
 
         // Simulates the underlying rendering defect having been fixed: the extracted text now
-        // actually contains what AtsCvVerifier requires.
-        when(atsTextExtractorPort.extractText(any())).thenReturn("Jane Candidate");
+        // actually contains what AtsCvVerifier requires - the real renderer draws the full name
+        // uppercase (see AtsCvVerifier#toUppercaseHeading's javadoc), so the fixed extracted text
+        // must match that, not the header's raw-case value.
+        when(atsTextExtractorPort.extractText(any())).thenReturn("JANE CANDIDATE");
 
         RenderApplicationMaterialsResult result = useCase.render(generationId);
 

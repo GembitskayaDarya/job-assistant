@@ -26,6 +26,7 @@ import com.darya.jobassistant.candidatecontext.applicationmaterials.model.Candid
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.CandidateContextVersionMismatchException;
 import com.darya.jobassistant.candidatecontext.cv.CvSourceSnapshotFactory;
 import com.darya.jobassistant.candidatecontext.cv.CvTailoringUseCase;
+import com.darya.jobassistant.candidatecontext.cv.baseline.BaselineCvSelectionResolutionException;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceSnapshot;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiException;
@@ -245,6 +246,12 @@ public class GenerateApplicationMaterialsUseCase {
             String message = code == ApplicationMaterialsGenerationFailureCode.AI_PROVIDER_ERROR ? GENERIC_AI_FAILURE_MESSAGE : e.getMessage();
             return failGeneration(started, code, message);
         } catch (CvTailoringValidationException e) {
+            return failGeneration(started, ApplicationMaterialsGenerationFailureCode.CV_TAILORING_VALIDATION_FAILED, e.getMessage());
+        } catch (BaselineCvSelectionResolutionException e) {
+            // The approved CV baseline configuration is missing/broken (e.g. not mounted into a
+            // container) or drifted from the current Career History - see that exception's javadoc.
+            // A real generation failure, never a silent skeleton CV.
+            log.error("Approved CV baseline resolution failed for generation {}", started.id(), e);
             return failGeneration(started, ApplicationMaterialsGenerationFailureCode.CV_TAILORING_VALIDATION_FAILED, e.getMessage());
         }
 

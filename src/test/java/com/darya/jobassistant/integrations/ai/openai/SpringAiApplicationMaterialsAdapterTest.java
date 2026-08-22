@@ -61,6 +61,14 @@ class SpringAiApplicationMaterialsAdapterTest {
     private final UUID positionId = UUID.randomUUID();
     private final UUID responsibilityId = UUID.randomUUID();
 
+    // The reference tokens CoverLetterEvidenceReferenceIndex deterministically assigns for
+    // context()'s items, in the exact order they are walked (company, then position, then its
+    // responsibilities) - fixed here rather than recomputed per test so fixture dtos can be written
+    // directly against them.
+    private static final String COMPANY_REF = "EVIDENCE_001";
+    private static final String POSITION_REF = "EVIDENCE_002";
+    private static final String RESPONSIBILITY_REF = "EVIDENCE_003";
+
     @BeforeEach
     void setUp() {
         adapter = new SpringAiApplicationMaterialsAdapter(chatClient);
@@ -82,8 +90,14 @@ class SpringAiApplicationMaterialsAdapterTest {
         assertThat(response.coverLetter().closing()).isEqualTo("Sincerely, the candidate");
     }
 
+    /**
+     * Production fix: the prompt used to label every evidence item with its raw UUID directly in the
+     * surrounding prose - the model occasionally echoed that citation style back into its own
+     * generated text. The prompt must now show only short reference tokens, and no real database id
+     * may ever appear in the rendered prompt text at all.
+     */
     @Test
-    void generate_sendsProvenanceIdsAndAntiHallucinationRulesInSystemPrompt() {
+    void generate_sendsReferenceTokensAndAntiHallucinationRulesInSystemPrompt_neverARawUuid() {
         stubChatClient(validResponseDto(), "gpt-4o-mini");
 
         adapter.generate(context(), vacancy());
@@ -96,25 +110,31 @@ class SpringAiApplicationMaterialsAdapterTest {
         String systemPrompt = systemPromptCaptor.getValue();
         assertThat(systemPrompt).contains("EVIDENCE ONLY");
         assertThat(systemPrompt).contains("NOT EVIDENCE ABOUT THE CANDIDATE");
-        assertThat(systemPrompt).contains("sourceIds");
+        assertThat(systemPrompt).contains("sourceRefs");
         assertThat(systemPrompt).contains("PROVENANCE");
+        assertThat(systemPrompt).contains("NEVER write a reference token");
 
         String userPrompt = userPromptCaptor.getValue();
-        assertThat(userPrompt).contains(companyId.toString());
-        assertThat(userPrompt).contains(positionId.toString());
-        assertThat(userPrompt).contains(responsibilityId.toString());
+        assertThat(userPrompt).contains(COMPANY_REF);
+        assertThat(userPrompt).contains(POSITION_REF);
+        assertThat(userPrompt).contains(RESPONSIBILITY_REF);
         assertThat(userPrompt).contains("<vacancy_text>");
+        // No real database id ever appears in the prompt text - closing the exact leak surface.
+        assertThat(userPrompt).doesNotContain(companyId.toString());
+        assertThat(userPrompt).doesNotContain(positionId.toString());
+        assertThat(userPrompt).doesNotContain(responsibilityId.toString());
     }
 
     @Test
-    void generate_malformedUuidInSourceIds_throwsApplicationMaterialsAiException() {
+    void generate_unknownEvidenceReference_throwsApplicationMaterialsAiException() {
         GeneratedCoverLetterResponseDto malformed = new GeneratedCoverLetterResponseDto(
-                null, List.of(new GeneratedCoverLetterParagraphResponseDto("Text", List.of("not-a-uuid"))), "Closing");
+                null, List.of(new GeneratedCoverLetterParagraphResponseDto("Text", List.of("EVIDENCE_999"))), "Closing");
         stubChatClient(malformed, "gpt-4o-mini");
 
         assertThatThrownBy(() -> adapter.generate(context(), vacancy()))
                 .isInstanceOf(ApplicationMaterialsAiException.class)
-                .hasMessageContaining("not a valid UUID");
+                .hasNoCause()
+                .hasMessageContaining("unknown evidence reference");
     }
 
     @Test
@@ -170,7 +190,7 @@ class SpringAiApplicationMaterialsAdapterTest {
 
     private GeneratedCoverLetterResponseDto validResponseDto() {
         return new GeneratedCoverLetterResponseDto(
-                "Dear Hiring Manager,", List.of(new GeneratedCoverLetterParagraphResponseDto("I am excited to apply.", List.of(responsibilityId.toString()))),
+                "Dear Hiring Manager,", List.of(new GeneratedCoverLetterParagraphResponseDto("I am excited to apply.", List.of(RESPONSIBILITY_REF))),
                 "Sincerely, the candidate");
     }
 

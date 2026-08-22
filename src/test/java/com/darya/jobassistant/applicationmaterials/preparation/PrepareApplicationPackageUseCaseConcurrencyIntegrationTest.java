@@ -17,7 +17,8 @@ import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCov
 import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCoverLetterParagraph;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
 import com.darya.jobassistant.candidatecontext.CandidateContextSnapshot;
-import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvSkillTailoringResult;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
 import com.darya.jobassistant.careerhistory.aggregate.CareerCompany;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryAggregate;
@@ -112,9 +113,24 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
     @MockitoBean
     private CvTailoringAiPort cvTailoringAiPort;
 
+    /**
+     * Sprint 11 Golden Master Template Rendering: the golden master template always shows a
+     * Technical Skills line, so {@code GoldenMasterCvRenderer} fails loudly on an empty skill
+     * selection (see {@code GoldenMasterCvSkillsFitPolicy}) rather than silently omitting the
+     * section the way the old from-scratch renderer did - an empty stub here would now fail every
+     * test's render step for a reason unrelated to what each test actually verifies (AI call-count
+     * concurrency behavior). Stubbed dynamically (not a fixed id) so it stays valid regardless of
+     * which candidate skill rows exist when each test method runs.
+     */
     @BeforeEach
     void stubCvTailoringToSucceedByDefault() {
-        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+        when(cvTailoringAiPort.tailorSkills(any(), any())).thenAnswer(invocation -> {
+            List<UUID> firstSkillId = candidateContextProvider.loadCurrentContext().candidateProfile().skills().stream()
+                    .map(CandidateSkillFacts::candidateSkillId)
+                    .limit(1)
+                    .toList();
+            return new CvSkillTailoringResult(firstSkillId);
+        });
     }
 
     @Test
@@ -312,7 +328,11 @@ class PrepareApplicationPackageUseCaseConcurrencyIntegrationTest extends Abstrac
         if (careerHistoryRepositoryPort.findByCandidateProfileId(candidateProfileId).isPresent()) {
             return;
         }
-        CareerCompany company = new CareerCompany(null, "Acme Corp", null, null, null, null, 0, List.of());
+        // "Example Corp" - matches GoldenMasterFixture's own fixed company name (see that class's
+        // javadoc): CvAssembler includes a Career History company in the rendered CV even when
+        // baseline-cv-selection-test.yml selects zero of its positions, so AtsCvVerifier checks
+        // this exact company name against the golden master template's extracted text.
+        CareerCompany company = new CareerCompany(null, "Example Corp", null, null, null, null, 0, List.of());
         careerHistoryRepositoryPort.save(new CareerHistoryAggregate(null, candidateProfileId, List.of(company), 0L));
     }
 

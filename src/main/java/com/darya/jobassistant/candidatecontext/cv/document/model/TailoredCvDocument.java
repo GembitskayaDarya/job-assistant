@@ -34,6 +34,7 @@ public record TailoredCvDocument(
         String professionalSummary,
         List<String> skills,
         List<TailoredCvCompany> experience,
+        TailoredCvMentoring mentoring,
         List<TailoredCvPersonalProject> personalProjects,
         List<CandidateEducationFacts> education,
         List<CandidateLanguageFacts> languages
@@ -48,5 +49,30 @@ public record TailoredCvDocument(
         personalProjects = personalProjects == null ? List.of() : List.copyOf(personalProjects);
         education = education == null ? List.of() : List.copyOf(education);
         languages = languages == null ? List.of() : List.copyOf(languages);
+    }
+
+    /**
+     * Convenience constructor matching this type's pre-Golden-Master-Lock shape (no {@link
+     * #mentoring}) - defaults it to {@code null} ("no Mentoring section"), so existing call sites
+     * (mostly tests) keep compiling unchanged.
+     */
+    public TailoredCvDocument(
+            TailoredCvHeader header, String professionalSummary, List<String> skills, List<TailoredCvCompany> experience,
+            List<TailoredCvPersonalProject> personalProjects, List<CandidateEducationFacts> education,
+            List<CandidateLanguageFacts> languages) {
+        this(header, professionalSummary, skills, experience, null, personalProjects, education, languages);
+    }
+
+    /**
+     * Sprint 11 Final CV Policy: the ONLY vacancy-dependent transformation a fully-assembled
+     * approved {@link TailoredCvDocument} may ever undergo - returns a new document with {@link
+     * #skills} replaced and every other field carried through byte-for-byte. This method's own
+     * signature is the enforcement mechanism: it has no parameter through which a caller could
+     * supply a different summary, experience, Mentoring, Personal Project, education, or language
+     * list, so "apply Technical Skills tailoring" is structurally incapable of touching anything
+     * else - not merely a convention documented in a use case's javadoc.
+     */
+    public TailoredCvDocument withSkills(List<String> newSkills) {
+        return new TailoredCvDocument(header, professionalSummary, newSkills, experience, mentoring, personalProjects, education, languages);
     }
 }

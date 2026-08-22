@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.darya.jobassistant.applicationmaterials.render.model.CvDateRangeFormatter;
+import com.darya.jobassistant.applicationmaterials.render.model.CvSectionHeadings;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvCompany;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvMentoring;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPersonalProject;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPosition;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvProject;
@@ -44,7 +46,7 @@ class AtsCvVerifierTest {
                 new TailoredCvHeader("Test Person", "Test Headline", null, null, null, null),
                 null, List.of(), List.of(), List.of(), List.of(), List.of());
 
-        AtsVerificationResult result = AtsCvVerifier.verify(document, "Test Person\nTest Headline\n");
+        AtsVerificationResult result = AtsCvVerifier.verify(document, "TEST PERSON\nTest Headline\n");
 
         assertThat(result.readable()).isTrue();
     }
@@ -74,7 +76,8 @@ class AtsCvVerifierTest {
     @Test
     void verify_missingFullNameInText_fails() {
         TailoredCvDocument document = fullDocument();
-        String text = renderedTextFor(document).replace("Test Person", "");
+        // Renderer draws the full name uppercase (see AtsCvVerifier#toUppercaseHeading) - renderedTextFor mirrors that.
+        String text = renderedTextFor(document).replace("TEST PERSON", "");
 
         AtsVerificationResult result = AtsCvVerifier.verify(document, text);
 
@@ -96,7 +99,7 @@ class AtsCvVerifierTest {
     @Test
     void verify_missingRequiredSectionHeading_fails() {
         TailoredCvDocument document = fullDocument();
-        String text = renderedTextFor(document).replace("Professional Experience", "");
+        String text = renderedTextFor(document).replace(CvSectionHeadings.PROFESSIONAL_EXPERIENCE, "");
 
         AtsVerificationResult result = AtsCvVerifier.verify(document, text);
 
@@ -113,7 +116,7 @@ class AtsCvVerifierTest {
         TailoredCvDocument document = new TailoredCvDocument(
                 new TailoredCvHeader("Test Person", "Engineer", null, null, null, null),
                 null, List.of(), List.of(company), List.of(), List.of(), List.of());
-        String text = "Test Person\nEngineer\nProfessional Experience\nTest Company\nEngineer\n"
+        String text = "TEST PERSON\nEngineer\n" + CvSectionHeadings.PROFESSIONAL_EXPERIENCE + "\nTEST COMPANY\nEngineer\n"
                 + CvDateRangeFormatter.format(LocalDate.of(2020, 1, 1), null, true) + "\nDid work\n";
 
         AtsVerificationResult result = AtsCvVerifier.verify(document, text);
@@ -127,7 +130,8 @@ class AtsCvVerifierTest {
     void verify_educationBeforeExperience_fails() {
         TailoredCvDocument document = fullDocument();
         // Swap the two headings' relative order in the extracted text.
-        String scrambled = "Test Person\nTest Headline\nEducation\nProfessional Experience\nAcme Corp\nEngineer | 2020\nDid work\n";
+        String scrambled = "TEST PERSON\nTest Headline\n" + CvSectionHeadings.EDUCATION + "\n" + CvSectionHeadings.PROFESSIONAL_EXPERIENCE
+                + "\nACME CORP\nEngineer | 2020\nDid work\n";
 
         AtsVerificationResult result = AtsCvVerifier.verify(document, scrambled);
 
@@ -146,7 +150,7 @@ class AtsCvVerifierTest {
                 new TailoredCvHeader("Test Person", "Engineer", null, null, null, null),
                 null, List.of(), List.of(company), List.of(), List.of(), List.of());
         // Position title extracted BEFORE the company name it belongs to - out of reading order.
-        String scrambled = "Test Person\nEngineer\nProfessional Experience\nEngineer | 2020\nTest Company\nDid work\n";
+        String scrambled = "TEST PERSON\nEngineer\n" + CvSectionHeadings.PROFESSIONAL_EXPERIENCE + "\nEngineer | 2020\nTEST COMPANY\nDid work\n";
 
         AtsVerificationResult result = AtsCvVerifier.verify(document, scrambled);
 
@@ -163,11 +167,44 @@ class AtsCvVerifierTest {
                 null, List.of(), List.of(company), List.of(), List.of(), List.of());
         // "Improved reliability" extracted before "Engineer" (the position title) - genuinely
         // out of order relative to the position it belongs to.
-        String scrambled = "Test Person\nEngineer\nProfessional Experience\nTest Company\nImproved reliability\nEngineer | 2020\n";
+        String scrambled = "TEST PERSON\nEngineer\n" + CvSectionHeadings.PROFESSIONAL_EXPERIENCE + "\nTEST COMPANY\nImproved reliability\nEngineer | 2020\n";
 
         AtsVerificationResult result = AtsCvVerifier.verify(document, scrambled);
 
         assertThat(result.readable()).isFalse();
+    }
+
+    // ==================== Long bullet text wrapped onto multiple PDF lines is still found ====================
+
+    /**
+     * Production regression: a long Mentoring achievement sentence wraps onto more than one PDF
+     * line - the renderer draws a plain space at the wrap point, but the PDF text extractor inserts
+     * a newline there instead, so an exact-substring search for the bullet's original (space-only)
+     * text used to fail with a false {@code MISSING_MENTORING_CONTENT} violation on every real
+     * generation with a long enough bullet. {@link AtsCvVerifier#verify} now whitespace-normalizes
+     * both sides before searching (see its javadoc) - proven here directly against extracted text
+     * containing a newline exactly where the original sentence had a space.
+     */
+    @Test
+    void verify_longMentoringBulletWrappedAcrossPdfLines_isStillFound() {
+        String longBullet = "Contributed to hiring 4 new employees by mentoring students through final projects and technical preparation.";
+        TailoredCvMentoring mentoring = new TailoredCvMentoring(
+                "Test Education Center", "Mentor", LocalDate.of(2021, 9, 1), LocalDate.of(2021, 12, 31), false, List.of(longBullet));
+        TailoredCvDocument document = new TailoredCvDocument(
+                new TailoredCvHeader("Test Person", "Engineer", null, null, null, null),
+                null, List.of(), List.of(), mentoring, List.of(), List.of(), List.of());
+
+        // Simulates PDFBox's text stripper: the wrap point (a space in the real bullet) becomes a
+        // newline in the extracted text - the rest of the sentence is otherwise character-identical.
+        String wrappedBullet = "Contributed to hiring 4 new employees by mentoring students through final projects and\ntechnical preparation.";
+        String text = "TEST PERSON\nEngineer\n" + CvSectionHeadings.MENTORING_EXPERIENCE
+                + "\nTEST EDUCATION CENTER\nMentor | " + CvDateRangeFormatter.format(LocalDate.of(2021, 9, 1), LocalDate.of(2021, 12, 31), false)
+                + "\n" + wrappedBullet + "\n";
+
+        AtsVerificationResult result = AtsCvVerifier.verify(document, text);
+
+        assertThat(result.violations()).as("violations: %s", result.violations()).isEmpty();
+        assertThat(result.readable()).isTrue();
     }
 
     // ==================== Missing skill term ====================
@@ -248,19 +285,25 @@ class AtsCvVerifierTest {
                 List.of(new CandidateLanguageFacts("English", "Native")));
     }
 
-    /** Builds extracted text in exactly the order {@link AtsCvVerifier} expects to walk it, so tests can corrupt one specific piece. */
+    /**
+     * Builds extracted text in exactly the order {@link AtsCvVerifier} expects to walk it, so tests
+     * can corrupt one specific piece. Mirrors {@code PdfBoxApplicationMaterialDocumentRenderer}'s
+     * uppercase treatment of the full name and each company name (see {@code AtsCvVerifier#
+     * toUppercaseHeading}'s javadoc) and {@link CvSectionHeadings}' exact heading text - a synthetic
+     * fixture that drifts from either would exercise the wrong renderer/verifier contract.
+     */
     private String renderedTextFor(TailoredCvDocument document) {
         StringBuilder text = new StringBuilder();
-        text.append(document.header().fullName()).append('\n');
+        text.append(document.header().fullName().toUpperCase(java.util.Locale.ROOT)).append('\n');
         text.append(document.header().cvHeadline()).append('\n');
-        text.append(document.header().email()).append('\n');
         text.append(document.header().phone()).append('\n');
+        text.append(document.header().email()).append('\n');
         text.append("example.test/in/test\n");
-        text.append("Professional Summary\n").append(document.professionalSummary()).append('\n');
-        text.append("Technical Skills\n").append(String.join(", ", document.skills())).append('\n');
-        text.append("Professional Experience\n");
+        text.append(CvSectionHeadings.PROFESSIONAL_SUMMARY).append('\n').append(document.professionalSummary()).append('\n');
+        text.append(CvSectionHeadings.TECHNICAL_SKILLS).append('\n').append(String.join(", ", document.skills())).append('\n');
+        text.append(CvSectionHeadings.PROFESSIONAL_EXPERIENCE).append('\n');
         for (TailoredCvCompany company : document.experience()) {
-            text.append(company.name()).append('\n');
+            text.append(company.name().toUpperCase(java.util.Locale.ROOT)).append('\n');
             for (TailoredCvPosition position : company.positions()) {
                 text.append(position.title()).append('\n');
                 text.append(CvDateRangeFormatter.format(position.startDate(), position.endDate(), position.currentRole())).append('\n');
@@ -271,15 +314,15 @@ class AtsCvVerifierTest {
                 }
             }
         }
-        text.append("Personal Projects\n");
+        text.append(CvSectionHeadings.PERSONAL_PROJECT).append('\n');
         for (TailoredCvPersonalProject project : document.personalProjects()) {
             text.append(project.name()).append('\n');
         }
-        text.append("Education\n");
+        text.append(CvSectionHeadings.EDUCATION).append('\n');
         for (CandidateEducationFacts education : document.education()) {
             text.append(education.institution()).append('\n');
         }
-        text.append("Languages\n");
+        text.append(CvSectionHeadings.LANGUAGES).append('\n');
         for (CandidateLanguageFacts language : document.languages()) {
             text.append(language.name()).append('\n');
         }

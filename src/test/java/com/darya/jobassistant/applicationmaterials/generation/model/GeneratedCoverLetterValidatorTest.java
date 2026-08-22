@@ -106,6 +106,72 @@ class GeneratedCoverLetterValidatorTest {
         assertThat(validated.greeting()).isNull();
     }
 
+    // ==================== Provenance-leak defense in depth (production fix) ====================
+
+    /**
+     * The exact real-production leak shape: a generated paragraph's text ending in a literal
+     * {@code "(sourceIds: [uuid, ...])"} suffix even though its own separate {@code sourceIds} field
+     * was empty. The primary fix is architectural ({@code CoverLetterEvidenceReferenceIndex} - the AI
+     * is no longer shown or asked to return a raw UUID at all), so this should never legitimately
+     * happen again; this test proves the independent safety net still catches it if it somehow did.
+     */
+    @Test
+    void validate_paragraphTextLeakingSourceIdsSuffix_isRejected() {
+        CandidateContextForApplicationMaterials context = simpleContext();
+        String leaked = "I optimized performance to support high load (sourceIds: [" + UUID.randomUUID() + "]).";
+        GeneratedCoverLetter raw = new GeneratedCoverLetter(null, List.of(new GeneratedCoverLetterParagraph(leaked, List.of())), "Closing");
+
+        assertThatThrownBy(() -> GeneratedCoverLetterValidator.validate(raw, context))
+                .isInstanceOf(ApplicationMaterialsValidationException.class)
+                .hasMessageContaining("provenance");
+    }
+
+    @Test
+    void validate_paragraphTextLeakingReferenceToken_isRejected() {
+        CandidateContextForApplicationMaterials context = simpleContext();
+        String leaked = "I led the migration (ref: EVIDENCE_003).";
+        GeneratedCoverLetter raw = new GeneratedCoverLetter(null, List.of(new GeneratedCoverLetterParagraph(leaked, List.of())), "Closing");
+
+        assertThatThrownBy(() -> GeneratedCoverLetterValidator.validate(raw, context))
+                .isInstanceOf(ApplicationMaterialsValidationException.class)
+                .hasMessageContaining("provenance");
+    }
+
+    @Test
+    void validate_paragraphTextLeakingRawUuid_isRejected() {
+        CandidateContextForApplicationMaterials context = simpleContext();
+        String leaked = "I led the migration (" + UUID.randomUUID() + ").";
+        GeneratedCoverLetter raw = new GeneratedCoverLetter(null, List.of(new GeneratedCoverLetterParagraph(leaked, List.of())), "Closing");
+
+        assertThatThrownBy(() -> GeneratedCoverLetterValidator.validate(raw, context))
+                .isInstanceOf(ApplicationMaterialsValidationException.class)
+                .hasMessageContaining("provenance");
+    }
+
+    @Test
+    void validate_greetingOrClosingLeakingProvenanceSyntax_isRejected() {
+        CandidateContextForApplicationMaterials context = simpleContext();
+        GeneratedCoverLetter raw = new GeneratedCoverLetter(
+                "Dear Hiring Team (sourceIds: []),", List.of(new GeneratedCoverLetterParagraph("Body.", List.of())), "Closing");
+
+        assertThatThrownBy(() -> GeneratedCoverLetterValidator.validate(raw, context))
+                .isInstanceOf(ApplicationMaterialsValidationException.class)
+                .hasMessageContaining("provenance");
+    }
+
+    @Test
+    void validate_ordinaryProseWithoutProvenanceSyntax_isAccepted() {
+        CandidateContextForApplicationMaterials context = simpleContext();
+        GeneratedCoverLetter raw = new GeneratedCoverLetter(
+                null, List.of(new GeneratedCoverLetterParagraph(
+                        "I led backend service development, focusing on reliability and performance.", List.of())),
+                "Closing");
+
+        GeneratedCoverLetter validated = GeneratedCoverLetterValidator.validate(raw, context);
+
+        assertThat(validated.paragraphs().get(0).text()).doesNotContain("sourceIds", "sourceRefs", "EVIDENCE_");
+    }
+
     // ==================== Structural checks ====================
 
     @Test

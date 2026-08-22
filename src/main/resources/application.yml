@@ -71,6 +71,14 @@ spring:
           model: ${OPENAI_MODEL:gpt-4o-mini}
           temperature: ${OPENAI_ANALYSIS_TEMPERATURE:0.2}
 
+# Sprint 11 Golden Master Template Rendering: the private, gitignored, approved reference CV PDF
+# (config/private/cv/golden-master/Darya_Hembitskaya_CV.pdf) - GoldenMasterCvTemplate reads this
+# path directly as a binary file (not spring.config.import - see
+# GoldenMasterCvTemplateProperties' javadoc) and fails application startup loudly if it is missing
+# or structurally invalid. Never a fallback to a different renderer.
+cv-golden-master-template:
+  path: ${CV_GOLDEN_MASTER_TEMPLATE_PATH:./config/private/cv/golden-master/Darya_Hembitskaya_CV.pdf}
+
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful

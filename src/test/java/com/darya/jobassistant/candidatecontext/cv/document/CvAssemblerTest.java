@@ -349,6 +349,155 @@ class CvAssemblerTest {
 
     // ==================== assembleTailored: defensive guards ====================
 
+    // ==================== Presentation policy: application-owned caps (production hardening) ====================
+
+    /**
+     * Production regression: a real generated CV showed 16 tailored skills, several redundant
+     * sub-variants of the same technology (Kafka/Kafka Producers/Kafka Partitions/...). The
+     * application must never let the final document exceed a curated, recruiter-friendly count
+     * regardless of how many the AI selected - a deterministic backstop, independent of prompt
+     * behavior. Order is preserved exactly (the AI already orders most-relevant-first); only the tail
+     * is cut.
+     */
+    @Test
+    void assembleTailored_skillsExceedingCap_areTruncatedToTen_preservingAiOrder() {
+        List<CandidateSkillFacts> manySkills = java.util.stream.IntStream.range(0, 16)
+                .mapToObj(i -> new CandidateSkillFacts(UUID.randomUUID(), "Skill" + i, null, null, SkillProficiency.STRONG))
+                .toList();
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Senior Backend Engineer", "Senior", manySkills, List.of(), 6,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile, CareerHistoryAvailability.AVAILABLE, List.of(), List.of());
+        List<UUID> orderedSkillIds = manySkills.stream().map(CandidateSkillFacts::candidateSkillId).toList();
+        CvTailoringResult tailoringResult = new CvTailoringResult(null, orderedSkillIds, List.of(), List.of(), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, tailoringResult);
+
+        assertThat(document.skills()).hasSize(10);
+        assertThat(document.skills()).containsExactlyElementsOf(
+                manySkills.subList(0, 10).stream().map(CandidateSkillFacts::name).toList());
+    }
+
+    @Test
+    void assembleTailored_skillsWithinCap_areNotTruncated() {
+        List<CandidateSkillFacts> fewSkills = java.util.stream.IntStream.range(0, 5)
+                .mapToObj(i -> new CandidateSkillFacts(UUID.randomUUID(), "Skill" + i, null, null, SkillProficiency.STRONG))
+                .toList();
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Senior Backend Engineer", "Senior", fewSkills, List.of(), 6,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile, CareerHistoryAvailability.AVAILABLE, List.of(), List.of());
+        List<UUID> orderedSkillIds = fewSkills.stream().map(CandidateSkillFacts::candidateSkillId).toList();
+        CvTailoringResult tailoringResult = new CvTailoringResult(null, orderedSkillIds, List.of(), List.of(), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, tailoringResult);
+
+        assertThat(document.skills()).hasSize(5);
+    }
+
+    /** Baseline mode's own contract ("show every factual item unchanged") must never be affected by the tailored-mode presentation cap. */
+    @Test
+    void assembleBaseline_skills_areNeverCapped_evenWhenExceedingTheTailoredLimit() {
+        List<CandidateSkillFacts> manySkills = java.util.stream.IntStream.range(0, 20)
+                .mapToObj(i -> new CandidateSkillFacts(UUID.randomUUID(), "Skill" + i, null, null, SkillProficiency.STRONG))
+                .toList();
+        CandidateProfileFacts profile = new CandidateProfileFacts(
+                "Senior Backend Engineer", "Senior", manySkills, List.of(), 6,
+                new CandidatePreferences(null, null, null, List.of(), false, List.of(), null, null, null, null));
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile, CareerHistoryAvailability.AVAILABLE, List.of(), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleBaseline(snapshot);
+
+        assertThat(document.skills()).hasSize(20);
+    }
+
+    /**
+     * Production regression: both Spribe "Core Service" positions showed the full 22-technology
+     * project inventory. A project's Technologies list is capped so it never becomes a duplicated
+     * giant dump under every position sharing that project identity.
+     */
+    @Test
+    void assembleTailored_projectTechnologiesExceedingCap_areTruncatedToEight_preservingAiOrder() {
+        List<CvSourceTechnology> manyTechnologies = java.util.stream.IntStream.range(0, 20)
+                .mapToObj(i -> new CvSourceTechnology(UUID.randomUUID(), "Tech" + i, null))
+                .toList();
+        CvSourceProject project = new CvSourceProject(PROJECT_ID, "Core Service", null,
+                LocalDate.of(2023, 1, 1), null, List.of(), List.of(), manyTechnologies);
+        CvSourcePosition position = new CvSourcePosition(POSITION_ID, "Backend Engineer", null, null, null,
+                LocalDate.of(2023, 1, 1), null, true, null, List.of(), List.of(), List.of(project));
+        CvSourceCompany company = new CvSourceCompany(UUID.randomUUID(), "Acme", null, null, null, null, List.of(position));
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile(), CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
+        List<UUID> orderedTechnologyIds = manyTechnologies.stream().map(CvSourceTechnology::careerTechnologyId).toList();
+        CvProjectTailoring projectTailoring = new CvProjectTailoring(PROJECT_ID, List.of(), List.of(), orderedTechnologyIds);
+        CvTailoringResult tailoringResult = new CvTailoringResult(null, List.of(), List.of(), List.of(projectTailoring), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, tailoringResult);
+
+        List<String> technologies = document.experience().get(0).positions().get(0).projects().get(0).technologies();
+        assertThat(technologies).hasSize(8);
+        assertThat(technologies).containsExactlyElementsOf(
+                manyTechnologies.subList(0, 8).stream().map(CvSourceTechnology::name).toList());
+    }
+
+    @Test
+    void assembleBaseline_projectTechnologies_areNeverCapped_evenWhenExceedingTheTailoredLimit() {
+        List<CvSourceTechnology> manyTechnologies = java.util.stream.IntStream.range(0, 20)
+                .mapToObj(i -> new CvSourceTechnology(UUID.randomUUID(), "Tech" + i, null))
+                .toList();
+        CvSourceProject project = new CvSourceProject(PROJECT_ID, "Core Service", null,
+                LocalDate.of(2023, 1, 1), null, List.of(), List.of(), manyTechnologies);
+        CvSourcePosition position = new CvSourcePosition(POSITION_ID, "Backend Engineer", null, null, null,
+                LocalDate.of(2023, 1, 1), null, true, null, List.of(), List.of(), List.of(project));
+        CvSourceCompany company = new CvSourceCompany(UUID.randomUUID(), "Acme", null, null, null, null, List.of(position));
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile(), CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleBaseline(snapshot);
+
+        assertThat(document.experience().get(0).positions().get(0).projects().get(0).technologies()).hasSize(20);
+    }
+
+    /** Production regression: near-identical long Core Service descriptions duplicated in full under both Spribe positions. */
+    @Test
+    void assembleTailored_longDescription_isTruncatedAtSentenceOrWordBoundary_neverMidWordNeverFabricated() {
+        String longDescription = "This is a high-throughput backend platform responsible for authorization and transaction "
+                + "processing, as well as communication between external systems. The service is designed for low-latency "
+                + "concurrent processing under high load and currently supports a very large number of requests per second. "
+                + "Its architecture relies on multithreaded processing, distributed caching, asynchronous messaging, and "
+                + "scalable data storage across multiple regions and providers with strong consistency guarantees.";
+        CvSourceProject project = new CvSourceProject(PROJECT_ID, "Core Service", longDescription,
+                LocalDate.of(2023, 1, 1), null, List.of(), List.of(), List.of());
+        CvSourcePosition position = new CvSourcePosition(POSITION_ID, "Backend Engineer", null, null, null,
+                LocalDate.of(2023, 1, 1), null, true, null, List.of(), List.of(), List.of(project));
+        CvSourceCompany company = new CvSourceCompany(UUID.randomUUID(), "Acme", null, null, null, null, List.of(position));
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile(), CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
+        CvProjectTailoring projectTailoring = new CvProjectTailoring(PROJECT_ID, List.of(), List.of(), List.of());
+        CvTailoringResult tailoringResult = new CvTailoringResult(null, List.of(), List.of(), List.of(projectTailoring), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, tailoringResult);
+
+        String truncated = document.experience().get(0).positions().get(0).projects().get(0).description();
+        assertThat(truncated.length()).isLessThan(longDescription.length());
+        assertThat(longDescription).startsWith(truncated.replace("...", "").stripTrailing());
+        assertThat(truncated).doesNotEndWith(" ");
+    }
+
+    @Test
+    void assembleTailored_shortDescription_isNeverTruncated() {
+        String shortDescription = "A small internal tool.";
+        CvSourceProject project = new CvSourceProject(PROJECT_ID, "Core Service", shortDescription,
+                LocalDate.of(2023, 1, 1), null, List.of(), List.of(), List.of());
+        CvSourcePosition position = new CvSourcePosition(POSITION_ID, "Backend Engineer", null, null, null,
+                LocalDate.of(2023, 1, 1), null, true, null, List.of(), List.of(), List.of(project));
+        CvSourceCompany company = new CvSourceCompany(UUID.randomUUID(), "Acme", null, null, null, null, List.of(position));
+        CvSourceSnapshot snapshot = new CvSourceSnapshot(profile(), CareerHistoryAvailability.AVAILABLE, List.of(company), List.of());
+        CvProjectTailoring projectTailoring = new CvProjectTailoring(PROJECT_ID, List.of(), List.of(), List.of());
+        CvTailoringResult tailoringResult = new CvTailoringResult(null, List.of(), List.of(), List.of(projectTailoring), List.of());
+
+        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, tailoringResult);
+
+        assertThat(document.experience().get(0).positions().get(0).projects().get(0).description()).isEqualTo(shortDescription);
+    }
+
     @Test
     void assembleTailored_nullSnapshot_isRejected() {
         assertThatThrownBy(() -> CvAssembler.assembleTailored(null, emptyTailoring())).isInstanceOf(IllegalArgumentException.class);

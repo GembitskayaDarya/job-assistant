@@ -3,6 +3,7 @@ package com.darya.jobassistant.candidatecontext.cv.document;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvCompany;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvMentoring;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPersonalProject;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPosition;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvProject;
@@ -101,6 +102,25 @@ import java.util.function.Function;
  */
 public final class CvAssembler {
 
+    /**
+     * Sprint 11 Final Application Package Quality Hardening: application-owned presentation limits -
+     * see class javadoc's "PRESENTATION POLICY" boundary. These are deterministic backstops applied
+     * only in {@link AssemblyMode#TAILORED} mode (never {@code BASELINE}, whose whole contract is
+     * "show every factual item unchanged" - see its own javadoc), so the final document a candidate
+     * actually sends never exceeds a recruiter-readable size regardless of how many items an AI
+     * response selected. The AI still freely decides <em>which</em> items are most relevant and in
+     * what order (see the system prompt's matching guidance) - these constants only cap the final
+     * count/length of what survives into {@link com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument},
+     * exactly the "AI chooses meaning, application owns presentation" split this hardening exists for.
+     */
+    private static final int MAX_TAILORED_SKILLS = 10;
+
+    /** A career project's Technologies list is capped so it never becomes a giant duplicated inventory dump under every position sharing that project - see class-level Spribe/Core-Service production regression this fixes. */
+    private static final int MAX_PROJECT_TECHNOLOGIES = 8;
+
+    /** Position/project description text is capped to a short paragraph - a factual field, never AI-selected, but still presentation-limited so a long factual description does not dominate the page, especially when repeated across sibling positions sharing the same project identity. */
+    private static final int MAX_DESCRIPTION_LENGTH = 260;
+
     private CvAssembler() {
     }
 
@@ -153,17 +173,61 @@ public final class CvAssembler {
                 snapshot.candidateProfile().cvLocation(), snapshot.candidateProfile().email(),
                 snapshot.candidateProfile().phone(), snapshot.candidateProfile().linkedinUrl());
 
+        UUID mentoringPositionId = mode == AssemblyMode.TAILORED && tailoringResult.mentoring() != null
+                ? tailoringResult.mentoring().careerPositionId() : null;
+
         List<TailoredCvCompany> experience = sortedByRecency(snapshot.companies().stream()
+                .filter(company -> !isSoleMentoringCompany(company, mentoringPositionId))
                 .map(company -> assembleCompany(company, mode, positionTailoringById, projectTailoringById))
                 .toList());
         List<TailoredCvPersonalProject> personalProjects = snapshot.personalProjects().stream()
                 .map(project -> assemblePersonalProject(project, mode, personalProjectTailoringById.get(project.personalProjectId())))
                 .toList();
         String professionalSummary = mode == AssemblyMode.BASELINE ? null : tailoringResult.professionalSummary();
+        TailoredCvMentoring mentoring = mentoringPositionId == null
+                ? null : assembleMentoring(snapshot, mentoringPositionId, tailoringResult.mentoring());
 
         return new TailoredCvDocument(
                 header, professionalSummary, resolveSkills(snapshot, mode, tailoringResult),
-                experience, personalProjects, snapshot.candidateProfile().education(), snapshot.candidateProfile().languages());
+                experience, mentoring, personalProjects, snapshot.candidateProfile().education(), snapshot.candidateProfile().languages());
+    }
+
+    /**
+     * Sprint 11 Golden Master CV Lock: a company whose ONLY position is the resolved Mentoring
+     * position is never also shown in Professional Experience - it already gets its own dedicated
+     * "MENTORING EXPERIENCE" section (see {@link #assembleMentoring}). Deliberately generic (a
+     * structural "sole position matches the mentoring id" check, never a company name comparison) -
+     * consistent with this class's "no hardcoded company/position name" rule throughout.
+     */
+    private static boolean isSoleMentoringCompany(CvSourceCompany company, UUID mentoringPositionId) {
+        return mentoringPositionId != null && company.positions().size() == 1
+                && mentoringPositionId.equals(company.positions().get(0).careerPositionId());
+    }
+
+    /**
+     * Sprint 11 Golden Master CV Lock: assembles the dedicated Mentoring section from the exact
+     * position {@code mentoringTailoring} resolved against - organization is that position's owning
+     * company's factual name, title/dates are the position's own factual values, and {@link
+     * TailoredCvMentoring#bullets()} is responsibilities then achievements, flattened into one list
+     * (the golden master shows Mentoring's bullets unlabeled, unlike a normal position's separate
+     * Responsibilities/Achievements headings).
+     */
+    private static TailoredCvMentoring assembleMentoring(
+            CvSourceSnapshot snapshot, UUID mentoringPositionId, CvPositionTailoring mentoringTailoring) {
+        for (CvSourceCompany company : snapshot.companies()) {
+            for (CvSourcePosition position : company.positions()) {
+                if (mentoringPositionId.equals(position.careerPositionId())) {
+                    List<String> bullets = new java.util.ArrayList<>();
+                    bullets.addAll(resolveResponsibilities(position.responsibilities(), mentoringTailoring.responsibilities()));
+                    bullets.addAll(resolveAchievements(position.achievements(), mentoringTailoring.achievements()));
+                    return new TailoredCvMentoring(
+                            company.name(), position.title(), position.startDate(), position.endDate(), position.currentRole(), bullets);
+                }
+            }
+        }
+        throw new IllegalStateException(
+                "CV assembler received an unresolved mentoring position id " + mentoringPositionId
+                        + " - the tailoring result must be validated against this exact snapshot before assembly");
     }
 
     private static List<String> resolveSkills(CvSourceSnapshot snapshot, AssemblyMode mode, CvTailoringResult tailoringResult) {
@@ -181,7 +245,8 @@ public final class CvAssembler {
                 nameById.put(skill.candidateSkillId(), skill.name());
             }
         }
-        return tailoringResult.orderedSkillIds().stream().map(id -> requireValue(nameById, id, "skill")).toList();
+        List<String> resolved = tailoringResult.orderedSkillIds().stream().map(id -> requireValue(nameById, id, "skill")).toList();
+        return capped(resolved, MAX_TAILORED_SKILLS);
     }
 
     private static TailoredCvCompany assembleCompany(
@@ -251,10 +316,30 @@ public final class CvAssembler {
         List<TailoredCvProject> projects = position.projects().stream()
                 .map(project -> assembleProject(project, mode, projectTailoringById.get(project.careerProjectId())))
                 .toList();
+        // Sprint 11 Final Technical Skills Eligibility Polish (production fix): a position-level
+        // description is internal Career History context (why this role existed, in the source
+        // data's own words) - never part of the manually-approved CV presentation. The approved CV
+        // only ever shows a description at PROJECT level (see assembleProject), and only where the
+        // baseline config deliberately kept one factually populated. Rendering position.description()
+        // here was exactly the "database-style descriptions instead of the manually-approved CV"
+        // regression - never shown in TAILORED mode; BASELINE mode (the separate, unrelated "every
+        // factual field, unfiltered" dump - see class javadoc) is intentionally unaffected.
+        String description = mode == AssemblyMode.TAILORED ? null : position.description();
+        // Sprint 11 Golden Master CV Lock: the position-level Technologies line the golden master
+        // shows above "Projects" for a multi-project position - the union, in project order, of
+        // every one of this position's own projects' technologies, deduplicated. In practice only
+        // one project ever contributes (see baseline-cv-selection.yml); this stays generic rather
+        // than hardcoding which one.
+        List<String> technologies = capped(dedupePreservingOrder(
+                projects.stream().flatMap(project -> project.technologies().stream())), MAX_PROJECT_TECHNOLOGIES);
         return new TailoredCvPosition(
                 position.title(), position.employmentType(), position.location(), position.workArrangement(),
-                position.startDate(), position.endDate(), position.currentRole(), position.description(),
-                responsibilities, achievements, projects);
+                position.startDate(), position.endDate(), position.currentRole(), description,
+                responsibilities, achievements, projects, technologies);
+    }
+
+    private static List<String> dedupePreservingOrder(java.util.stream.Stream<String> values) {
+        return values.distinct().toList();
     }
 
     private static TailoredCvProject assembleProject(CvSourceProject project, AssemblyMode mode, CvProjectTailoring tailoring) {
@@ -272,11 +357,12 @@ public final class CvAssembler {
         } else {
             responsibilities = resolveResponsibilities(project.responsibilities(), tailoring.responsibilities());
             achievements = resolveAchievements(project.achievements(), tailoring.achievements());
-            technologies = resolveIds(project.technologies(), CvSourceTechnology::careerTechnologyId, CvSourceTechnology::name,
-                    tailoring.orderedTechnologyIds(), "technology");
+            technologies = capped(resolveIds(project.technologies(), CvSourceTechnology::careerTechnologyId, CvSourceTechnology::name,
+                    tailoring.orderedTechnologyIds(), "technology"), MAX_PROJECT_TECHNOLOGIES);
         }
+        String description = mode == AssemblyMode.TAILORED ? truncated(project.description()) : project.description();
         return new TailoredCvProject(
-                project.name(), project.description(), project.startDate(), project.endDate(), responsibilities, achievements, technologies);
+                project.name(), description, project.startDate(), project.endDate(), responsibilities, achievements, technologies);
     }
 
     private static TailoredCvPersonalProject assemblePersonalProject(CvSourcePersonalProject project, AssemblyMode mode, CvPersonalProjectTailoring tailoring) {
@@ -338,6 +424,30 @@ public final class CvAssembler {
             valueById.put(idExtractor.apply(item), valueExtractor.apply(item));
         }
         return orderedIds.stream().map(id -> requireValue(valueById, id, kind)).toList();
+    }
+
+    /** Keeps the AI's own chosen priority order (it already orders most-relevant-first per the system prompt) and simply cuts the tail once {@code max} is reached - never reorders, never picks a "better" subset. */
+    private static List<String> capped(List<String> values, int max) {
+        return values.size() <= max ? values : values.subList(0, max);
+    }
+
+    /**
+     * Truncates {@code text} to at most {@link #MAX_DESCRIPTION_LENGTH} characters, cutting at the
+     * last whole sentence that fits when one exists, otherwise the last whole word - never mid-word,
+     * never adding content. {@code null}/already-short text passes through unchanged.
+     */
+    private static String truncated(String text) {
+        if (text == null || text.length() <= MAX_DESCRIPTION_LENGTH) {
+            return text;
+        }
+        String window = text.substring(0, MAX_DESCRIPTION_LENGTH);
+        int lastSentenceEnd = Math.max(window.lastIndexOf(". "), window.lastIndexOf(".\n"));
+        if (lastSentenceEnd > MAX_DESCRIPTION_LENGTH / 2) {
+            return window.substring(0, lastSentenceEnd + 1).stripTrailing();
+        }
+        int lastSpace = window.lastIndexOf(' ');
+        String cut = lastSpace > 0 ? window.substring(0, lastSpace) : window;
+        return cut.stripTrailing() + "...";
     }
 
     private static String requireValue(Map<UUID, String> valueById, UUID id, String kind) {

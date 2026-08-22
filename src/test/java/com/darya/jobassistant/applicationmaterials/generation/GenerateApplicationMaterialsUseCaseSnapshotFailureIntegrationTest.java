@@ -16,7 +16,7 @@ import com.darya.jobassistant.applicationmaterials.generation.model.GeneratedCov
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
-import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvSkillTailoringResult;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
 import com.darya.jobassistant.companies.entity.Company;
 import com.darya.jobassistant.companies.repository.CompanyRepository;
@@ -72,7 +72,7 @@ class GenerateApplicationMaterialsUseCaseSnapshotFailureIntegrationTest extends 
         Vacancy vacancy = aVacancy("snapshot-failure-" + UUID.randomUUID());
         UUID generationId = createMatchingGeneration(vacancy.getId());
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
-        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+        when(cvTailoringAiPort.tailorSkills(any(), any())).thenReturn(new CvSkillTailoringResult(List.of()));
         when(snapshotRepositoryPort.save(any())).thenThrow(new RuntimeException("simulated snapshot persistence failure"));
 
         GenerateApplicationMaterialsOutcome outcome = useCase.generate(generationId);

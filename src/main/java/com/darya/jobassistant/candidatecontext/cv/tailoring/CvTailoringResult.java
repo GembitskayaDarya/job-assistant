@@ -66,7 +66,8 @@ public record CvTailoringResult(
         List<UUID> orderedSkillIds,
         List<CvPositionTailoring> positionTailoring,
         List<CvProjectTailoring> projectTailoring,
-        List<CvPersonalProjectTailoring> personalProjectTailoring
+        List<CvPersonalProjectTailoring> personalProjectTailoring,
+        CvPositionTailoring mentoring
 ) {
 
     public CvTailoringResult {
@@ -84,6 +85,17 @@ public record CvTailoringResult(
         requireNoDuplicateProjectIds(projectTailoring);
         personalProjectTailoring = personalProjectTailoring == null ? List.of() : List.copyOf(personalProjectTailoring);
         requireNoDuplicatePersonalProjectIds(personalProjectTailoring);
+    }
+
+    /**
+     * Convenience constructor matching this type's pre-Golden-Master-Lock shape - defaults {@link
+     * #mentoring} to {@code null} ("no dedicated Mentoring section"), so the many existing call
+     * sites built before a separate Mentoring section existed keep compiling unchanged.
+     */
+    public CvTailoringResult(
+            String professionalSummary, List<UUID> orderedSkillIds, List<CvPositionTailoring> positionTailoring,
+            List<CvProjectTailoring> projectTailoring, List<CvPersonalProjectTailoring> personalProjectTailoring) {
+        this(professionalSummary, orderedSkillIds, positionTailoring, projectTailoring, personalProjectTailoring, null);
     }
 
     /**

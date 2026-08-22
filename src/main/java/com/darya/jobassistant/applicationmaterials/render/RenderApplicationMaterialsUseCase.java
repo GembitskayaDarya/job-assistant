@@ -25,6 +25,7 @@ import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.App
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.applicationmaterials.model.CandidateContextVersionMismatchException;
+import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
 import com.darya.jobassistant.integrations.filestorage.FileStorageContentConflictException;
 import com.darya.jobassistant.integrations.filestorage.FileStorageException;
 import com.darya.jobassistant.integrations.filestorage.FileStoragePort;
@@ -125,10 +126,14 @@ public class RenderApplicationMaterialsUseCase {
      * This use case's own document-layout/template version - independent of the AI prompt version
      * and both JSONB schema versions (see {@code ApplicationMaterialGenerationResult}/{@code
      * ApplicationMaterialRenderSnapshot}). A future template change bumps this, producing a new
-     * artifact natural key (V24) alongside any already-rendered v1 artifacts, without requiring a
-     * new AI generation.
+     * artifact natural key alongside any already-rendered older-version artifacts, without requiring
+     * a new AI generation. Bumped to 2 for Sprint 11 Golden Master Template Rendering - the CV is no
+     * longer drawn from scratch but stamped from {@code config/private/cv/golden-master/
+     * Darya_Hembitskaya_CV.pdf} (see {@code GoldenMasterCvTemplate#sha256()} for that file's own
+     * content hash, logged at startup for diagnostics), a completely different byte-for-byte output
+     * for the same generation even though no AI content changed.
      */
-    static final int RENDERER_VERSION = 1;
+    static final int RENDERER_VERSION = 2;
 
     private final ApplicationMaterialGenerationRepositoryPort generationRepositoryPort;
     private final ApplicationMaterialGenerationResultRepositoryPort resultRepositoryPort;
@@ -319,7 +324,10 @@ public class RenderApplicationMaterialsUseCase {
                     "failed to extract text from the rendered CV PDF", e);
         }
 
-        AtsVerificationResult result = AtsCvVerifier.verify(snapshot.content().cv(), extractedText);
+        TailoredCvDocument verifiedCv = document.renderedCvSkills().isEmpty()
+                ? snapshot.content().cv()
+                : snapshot.content().cv().withSkills(document.renderedCvSkills());
+        AtsVerificationResult result = AtsCvVerifier.verify(verifiedCv, extractedText);
         if (!result.readable()) {
             log.error("Generated CV PDF failed ATS structural verification for generation {}: {}", generationId, result.violations());
             throw new RenderApplicationMaterialsException(

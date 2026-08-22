@@ -27,6 +27,22 @@ public final class CvUrlDisplay {
         return trimmed;
     }
 
+    /**
+     * Production fix: {@link #displayText(String)} composed with stripping a LinkedIn locale
+     * subdomain ({@code "pl.linkedin.com/..."} -> {@code "linkedin.com/..."} - the same profile
+     * resolves under any locale subdomain) - used for the header's LinkedIn line specifically. This
+     * used to live only inside the renderer as a private method, so {@code AtsCvVerifier} checked the
+     * un-stripped text and could never find it once a real LinkedIn URL actually had a locale
+     * subdomain.
+     */
+    public static String linkedInDisplayText(String url) {
+        String stripped = displayText(url);
+        if (stripped == null) {
+            return null;
+        }
+        return stripped.replaceFirst("(?i)^[a-z]{2}\\.linkedin\\.com", "linkedin.com");
+    }
+
     /** The full, scheme-qualified URL a hyperlink annotation must point at - defaults a bare host/path to {@code https://}. */
     public static String hyperlinkTarget(String url) {
         if (url == null) {

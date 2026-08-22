@@ -13,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Sprint 10 Step 3 (Sprint 11 Big Block 7 correction, renamed from {@code
@@ -42,6 +43,19 @@ public final class GeneratedCoverLetterValidator {
     private static final int MAX_COVER_LETTER_PARAGRAPHS = 8;
     private static final int MAX_TEXT_LENGTH = 2000;
 
+    /**
+     * Defense-in-depth (production hardening): rejects paragraph/greeting/closing text that leaks
+     * internal provenance/reference syntax - the exact real-production shape this exists for was a
+     * generated paragraph ending in a literal {@code "(sourceIds: [uuid, uuid, ...])"} suffix. The
+     * primary fix is architectural (see {@code CoverLetterEvidenceReferenceIndex} - the model is no
+     * longer shown or asked to return a raw UUID at all), so this pattern should never legitimately
+     * match; it exists purely as a second, independent safety net in case a future prompt/schema
+     * regression reintroduces the leak. Matches, case-insensitively: the words "sourceRefs"/
+     * "sourceIds", an {@code EVIDENCE_*}-shaped reference token, or a raw UUID.
+     */
+    private static final Pattern PROVENANCE_LEAK_PATTERN = Pattern.compile(
+            "(?i)sourceRefs|sourceIds|EVIDENCE_\\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+
     private GeneratedCoverLetterValidator() {
     }
 
@@ -54,6 +68,8 @@ public final class GeneratedCoverLetterValidator {
         String greeting = raw.greeting() == null || raw.greeting().isBlank() ? null : raw.greeting();
         requireMaxLength(greeting, "cover letter greeting", MAX_TEXT_LENGTH);
         requireMaxLength(raw.closing(), "cover letter closing", MAX_TEXT_LENGTH);
+        requireNoProvenanceLeak(greeting, "cover letter greeting");
+        requireNoProvenanceLeak(raw.closing(), "cover letter closing");
 
         List<GeneratedCoverLetterParagraph> paragraphs = raw.paragraphs();
         if (paragraphs.size() > MAX_COVER_LETTER_PARAGRAPHS) {
@@ -63,6 +79,7 @@ public final class GeneratedCoverLetterValidator {
         List<GeneratedCoverLetterParagraph> validatedParagraphs = new ArrayList<>();
         for (GeneratedCoverLetterParagraph paragraph : paragraphs) {
             requireMaxLength(paragraph.text(), "cover letter paragraph text", MAX_TEXT_LENGTH);
+            requireNoProvenanceLeak(paragraph.text(), "cover letter paragraph text");
             List<UUID> normalizedSourceIds = new ArrayList<>(new LinkedHashSet<>(paragraph.sourceIds()));
             for (UUID sourceId : normalizedSourceIds) {
                 if (!allNodeIds.contains(sourceId)) {
@@ -73,6 +90,18 @@ public final class GeneratedCoverLetterValidator {
             validatedParagraphs.add(new GeneratedCoverLetterParagraph(paragraph.text(), normalizedSourceIds));
         }
         return new GeneratedCoverLetter(greeting, validatedParagraphs, raw.closing());
+    }
+
+    /**
+     * Defense-in-depth check - see {@link #PROVENANCE_LEAK_PATTERN}'s javadoc. Never logs or includes
+     * {@code value} itself in the thrown exception's message (candidate/vacancy content must never
+     * appear in a message a caller might log or persist) - only the safe field name.
+     */
+    private static void requireNoProvenanceLeak(String value, String field) {
+        if (value != null && PROVENANCE_LEAK_PATTERN.matcher(value).find()) {
+            throw new ApplicationMaterialsValidationException(
+                    "AI provider leaked internal reference/provenance syntax into " + field);
+        }
     }
 
     private static void requireMaxLength(String value, String field, int maxLength) {

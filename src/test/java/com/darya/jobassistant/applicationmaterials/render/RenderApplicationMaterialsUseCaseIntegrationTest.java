@@ -16,10 +16,8 @@ import com.darya.jobassistant.applicationmaterials.render.model.ApplicationMater
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResult;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
-import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvCompany;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvHeader;
-import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvPosition;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.careerhistory.aggregate.CareerHistoryRepositoryPort;
@@ -282,14 +280,22 @@ class RenderApplicationMaterialsUseCaseIntegrationTest extends AbstractIntegrati
         return completed.id();
     }
 
+    /**
+     * Sprint 11 Golden Master Template Rendering: {@code renderCv} now stamps the (test-only,
+     * synthetic - see {@code GoldenMasterFixture}) golden master template rather than drawing from
+     * this document's own header/experience content, so ATS verification of a fixture using
+     * unrelated fake header/company/position text would legitimately fail (the extracted PDF text
+     * is the template's own "JOHN DOE"/"EXAMPLE CORP" content, not this fixture's). This class tests
+     * generation/snapshot/artifact orchestration, not CV content accuracy, so the fixture is
+     * deliberately minimal: only {@link TailoredCvHeader#fullName()} (matching the template's own
+     * name row) and {@link TailoredCvDocument#skills()} (always genuinely rendered, since the
+     * template's Technical Skills line is always replaced) are populated - every other optional
+     * section is empty/null, which {@code AtsCvVerifier} skips entirely rather than requiring.
+     */
     private TailoredCvDocument minimalTailoredCv() {
-        TailoredCvPosition position = new TailoredCvPosition("Senior Backend Engineer", null, null, null,
-                LocalDate.of(2020, 1, 1), null, true, null,
-                List.of("Built backend services"), List.of(), List.of());
-        TailoredCvCompany company = new TailoredCvCompany("Acme Corp", null, null, null, null, List.of(position));
         return new TailoredCvDocument(
-                new TailoredCvHeader("Jane Candidate", "Senior Java Backend Engineer", "Remote", "jane@example.test", null, null),
-                "Experienced backend engineer.", List.of(), List.of(company), List.of(), List.of(), List.of());
+                new TailoredCvHeader("John Doe", null, null, null, null, null),
+                null, List.of("Java"), List.of(), List.of(), List.of(), List.of());
     }
 
     private GeneratedCoverLetter validCoverLetter() {

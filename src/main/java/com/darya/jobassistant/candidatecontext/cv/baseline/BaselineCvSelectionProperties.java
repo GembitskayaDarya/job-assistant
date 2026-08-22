@@ -18,13 +18,22 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * {@code null}/empty when the file is entirely absent (the normal case for a fresh checkout with no
  * private baseline configured yet). {@link GenerateBaselineCvUseCase} is the one place that decides
  * whether an empty/absent configuration is acceptable to act on.
+ *
+ * <p>{@link #mentoring} is {@code null} when there is no dedicated Mentoring section - {@code
+ * CvAssembler} never emits one in that case, matching every other optional facet's null-means-absent
+ * rule. Deliberately a single canonical constructor: a second, narrower convenience overload used to
+ * exist here to keep pre-Mentoring call sites compiling, but a record with more than one constructor
+ * defeats Spring's automatic constructor-binding detection for {@code @ConfigurationProperties}
+ * (it silently falls back to JavaBean-style binding and fails with "No default constructor found") -
+ * every caller must pass all five fields explicitly, {@code mentoring} included.
  */
 @ConfigurationProperties(prefix = "baseline-cv")
 public record BaselineCvSelectionProperties(
         String professionalSummary,
         List<String> skills,
         List<PositionSelection> positions,
-        List<PersonalProjectSelection> personalProjects
+        List<PersonalProjectSelection> personalProjects,
+        PositionSelection mentoring
 ) {
 
     public BaselineCvSelectionProperties {

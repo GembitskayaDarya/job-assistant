@@ -1,0 +1,21 @@
+# Test-only fixture (src/test/resources) - never on the production classpath. Sprint 11 Final CV
+# Policy production fix: BaselineCvSelectionResolver now fails loudly when EVERY field (summary,
+# skills, positions, personalProjects) resolves empty at once - the exact "config file entirely
+# absent" shape - but a single non-blank field is enough to satisfy that guard (see its
+# requireNonEmptyBaseline javadoc). This fixture deliberately selects an empty positions/
+# personalProjects list ("*"/company/position names would otherwise need to match REAL Career
+# History rows this synthetic test suite does not seed) and relies on the summary/skills alone to
+# keep every AbstractIntegrationTest subclass's baseline resolution valid - exercising the exact
+# same safe, "no companies exist yet" path CvAssembler already supports (a company/position node is
+# only ever emitted from what CvSourceSnapshot actually has, independent of this config).
+#
+# Sprint 11 Golden Master Template Rendering: skills is no longer empty - the golden master
+# template always shows a Technical Skills line, so GoldenMasterCvRenderer fails loudly on an
+# empty list (see GoldenMasterCvSkillsFitPolicy) rather than silently omitting the section the way
+# the old from-scratch renderer did. A skill name here is free text, unlike positions/
+# personal-projects, so no Career History seeding is needed for it.
+baseline-cv:
+  professional-summary: "Test approved summary."
+  skills: ["Java"]
+  positions: []
+  personal-projects: []

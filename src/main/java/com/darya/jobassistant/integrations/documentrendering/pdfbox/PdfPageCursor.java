@@ -52,6 +52,67 @@ final class PdfPageCursor implements Closeable {
         cursorY -= amount;
     }
 
+    /** Current vertical position, exposed read-only for layout-invariant tests - never mutated from outside this class. */
+    float cursorY() {
+        return cursorY;
+    }
+
+    /** {@link #bottomMargin}, exposed read-only for layout-invariant tests. */
+    float bottomMargin() {
+        return bottomMargin;
+    }
+
+    /** {@link #topMargin}, exposed read-only for layout-invariant tests (e.g. confirming a fresh page starts with a positive top margin). */
+    float topMargin() {
+        return topMargin;
+    }
+
+    /** {@link #pageSize}'s height, exposed read-only for layout-invariant tests. */
+    float pageHeight() {
+        return pageSize.getHeight();
+    }
+
+    /** {@link #pageSize}'s width, exposed read-only - used by the header background block, which deliberately spans the full page width, not just {@link #contentWidth()}. */
+    float pageWidth() {
+        return pageSize.getWidth();
+    }
+
+    /**
+     * Whether {@code height} of content would still fit above {@link #bottomMargin} without a page
+     * break - a pure peek, no side effect. Used to decide whether to force a page break before a
+     * whole logical block (e.g. a section heading plus its first line of content) rather than letting
+     * an automatic per-line {@link #ensureSpace} split it awkwardly partway through.
+     */
+    boolean hasRoomFor(float height) {
+        return cursorY - height >= bottomMargin;
+    }
+
+    /**
+     * Forces a page break now if {@code height} of content would not otherwise fit above {@link
+     * #bottomMargin} - see {@link #hasRoomFor}. Orphan-prevention primitive (Sprint 11 Final
+     * Application Package Quality Hardening): a caller estimates the minimum height of one logical
+     * block it is about to draw (e.g. a section heading + its rule + one line of content, or a
+     * position's title + meta line) and calls this first, so that block is never split by an
+     * automatic mid-block page break - the whole block starts fresh on the next page instead. Never
+     * used for an entire section's full content (which may legitimately span a page break internally)
+     * - only for the small "heading must not be orphaned from what follows it" guarantee.
+     */
+    void ensureRoomFor(float height) throws IOException {
+        if (!hasRoomFor(height)) {
+            startNewPage();
+        }
+    }
+
+    /**
+     * Sprint 11 Golden Master CV Reproduction: unconditionally starts a new page, regardless of how
+     * much room remains - an explicit, always-applied structural break for one approved CV template
+     * (e.g. the golden master's fixed page-2 start), never an orphan-prevention heuristic. {@link
+     * #ensureRoomFor} decides "does this still fit"; this method never asks that question.
+     */
+    void forcePageBreak() throws IOException {
+        startNewPage();
+    }
+
     /** Writes one already-fitting line at {@code indent} from the left margin - never wrapped or measured. */
     void writeLine(String text, PDType0Font font, float fontSize, float leading, float indent) throws IOException {
         ensureSpace(leading);
@@ -119,14 +180,95 @@ final class PdfPageCursor implements Closeable {
         cursorY -= leading;
     }
 
-    /** Draws one thin horizontal rule spanning {@link #contentWidth()} at the current cursor position, then advances past it. */
+    /**
+     * Sprint 11 Golden Master CV Lock: draws one bulleted item (a real {@code "• "} glyph, not
+     * a hyphen) with a proper hanging indent - the bullet only prefixes the first wrapped line;
+     * every continuation line aligns under the text, not under the bullet. Mirrors {@link
+     * #writeWrapped}'s greedy word-wrap exactly, reserving the bullet's own width from the
+     * available line width up front.
+     */
+    void writeBulletedItem(String text, PDType0Font font, float fontSize, float leading, float indent) throws IOException {
+        String bullet = "• ";
+        float bulletWidth = width(bullet, font, fontSize);
+        List<String> lines = wrap(PdfTextSanitizer.sanitize(text, font), font, fontSize, contentWidth() - indent - bulletWidth);
+        boolean first = true;
+        for (String line : lines) {
+            if (first) {
+                writeLine(bullet + line, font, fontSize, leading, indent);
+                first = false;
+            } else {
+                writeLine(line, font, fontSize, leading, indent + bulletWidth);
+            }
+        }
+    }
+
+    /**
+     * Sprint 11 Golden Master CV Lock: fills a {@code height}-tall, full-page-width light-gray
+     * rectangle immediately below the current cursor position - the header background block the
+     * golden-master reference CV uses. Deliberately spans {@link #pageWidth()} edge to edge, not
+     * just {@link #contentWidth()}, matching the reference exactly; header text itself still starts
+     * at the normal left margin, simply drawn on top of this (painted first, since PDF content
+     * paints in draw order). Does not move {@link #cursorY} - purely a background paint, the caller
+     * still owns all vertical layout via the usual {@link #writeLine}/{@link #addSpacing} calls.
+     */
+    void fillHeaderBackground(float height, float gray) throws IOException {
+        contentStream.setNonStrokingColor(gray, gray, gray);
+        contentStream.addRect(0f, cursorY - height, pageSize.getWidth(), height);
+        contentStream.fill();
+        contentStream.setNonStrokingColor(0f, 0f, 0f);
+    }
+
+    /**
+     * Sprint 11 Golden Master CV Lock: writes one already-fitting line made of a plain {@code
+     * prefix} followed immediately by a hyperlinked {@code linkedText} segment - the header contact
+     * line's LinkedIn entry, which the golden-master reference CV shows inline with location/phone/
+     * email on one pipe-separated line, not on its own separate line. Only {@code linkedText} gets
+     * the clickable annotation; {@code prefix} is ordinary text. Never wrapped - this is used for
+     * one specific, always-short-enough line.
+     */
+    void writeLineWithTrailingLink(
+            String prefix, String linkedText, PDType0Font font, float fontSize, float leading, float indent, String url)
+            throws IOException {
+        ensureSpace(leading);
+        String safePrefix = PdfTextSanitizer.sanitize(prefix, font);
+        String safeLinked = PdfTextSanitizer.sanitize(linkedText, font);
+        float x = leftMargin + indent;
+        float baselineY = cursorY;
+        contentStream.beginText();
+        contentStream.setFont(font, fontSize);
+        contentStream.newLineAtOffset(x, baselineY);
+        contentStream.showText(safePrefix + safeLinked);
+        contentStream.endText();
+        float prefixWidth = width(safePrefix, font, fontSize);
+        if (url != null && !url.isBlank()) {
+            addLinkAnnotation(x + prefixWidth, baselineY, width(safeLinked, font, fontSize), fontSize, url);
+        }
+        cursorY -= leading;
+    }
+
+    /**
+     * Draws one thin horizontal rule spanning {@link #contentWidth()} at the current cursor position,
+     * then advances by exactly {@code thickness} - nothing more. Deliberately honest/minimal (Sprint
+     * 11 Final Application Package Quality Hardening production fix): this used to silently advance by
+     * {@code thickness + 4f}, an undocumented fixed gap baked into the primitive itself rather than a
+     * caller decision - the exact "horizontal rule positioned as a side effect of an approximate
+     * cursor offset" defect this fixes. Every gap around a rule (before it, after it) is now the
+     * caller's own explicit {@link #addSpacing} call, using named layout-policy constants - see {@code
+     * PdfBoxApplicationMaterialDocumentRenderer#writeSectionHeading}.
+     *
+     * <p>Sprint 11 Golden Master CV Reproduction: draws a filled rectangle, not a stroked line -
+     * measured directly from the golden master's own content stream (a {@code PDFGraphicsStreamEngine}
+     * diagnostic against {@code config/private/cv/golden-master/Darya_Hembitskaya_CV.pdf} recovered
+     * every rule as a filled bar extending downward from the current position by its own height, at
+     * consistent left/right X across every rule on both pages), not a centered stroke. A stroked line
+     * of the same nominal width paints half above and half below the path, which is a different
+     * (thinner-looking, differently-positioned) visual than the reference's solid bar.
+     */
     void drawHorizontalRule(float thickness) throws IOException {
-        ensureSpace(thickness + 4f);
-        contentStream.setLineWidth(thickness);
-        contentStream.moveTo(leftMargin, cursorY);
-        contentStream.lineTo(leftMargin + contentWidth(), cursorY);
-        contentStream.stroke();
-        cursorY -= (thickness + 4f);
+        ensureSpace(thickness);
+        contentStream.addRect(leftMargin, cursorY - thickness, contentWidth(), thickness);
+        contentStream.fill();
+        cursorY -= thickness;
     }
 
     private void addLinkAnnotation(float x, float baselineY, float textWidth, float fontSize, String url) throws IOException {

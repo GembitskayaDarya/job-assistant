@@ -18,8 +18,9 @@ import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.App
 import com.darya.jobassistant.applicationmaterials.render.snapshot.aggregate.ApplicationMaterialRenderSnapshotRepositoryPort;
 import com.darya.jobassistant.applicationmaterials.result.aggregate.ApplicationMaterialGenerationResultRepositoryPort;
 import com.darya.jobassistant.candidatecontext.CandidateContextProvider;
-import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvSkillTailoringResult;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
+import com.darya.jobassistant.candidates.CandidateSkillFacts;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileAggregate;
 import com.darya.jobassistant.candidates.aggregate.CandidateProfileRepositoryPort;
 import com.darya.jobassistant.companies.entity.Company;
@@ -96,7 +97,14 @@ class GenerateThenRenderApplicationMaterialsSnapshotIntegrationTest extends Abst
         Vacancy vacancy = aVacancy("eager-snapshot-" + UUID.randomUUID());
         UUID generationId = createMatchingGeneration(vacancy.getId());
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
-        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+        // Sprint 11 Golden Master Template Rendering: the golden master template always shows a
+        // Technical Skills line, so an empty selection now fails rendering loudly - stubbed
+        // dynamically with a real skill id from the seeded test candidate profile.
+        when(cvTailoringAiPort.tailorSkills(any(), any())).thenAnswer(invocation -> new CvSkillTailoringResult(
+                candidateContextProvider.loadCurrentContext().candidateProfile().skills().stream()
+                        .map(CandidateSkillFacts::candidateSkillId)
+                        .limit(1)
+                        .toList()));
 
         GenerateApplicationMaterialsOutcome outcome = generateUseCase.generate(generationId);
 
@@ -116,7 +124,14 @@ class GenerateThenRenderApplicationMaterialsSnapshotIntegrationTest extends Abst
         Vacancy vacancy = aVacancy("eager-then-drift-" + UUID.randomUUID());
         UUID generationId = createMatchingGeneration(vacancy.getId());
         when(aiPort.generate(any(), any())).thenReturn(validAiResponse());
-        when(cvTailoringAiPort.tailor(any(), any())).thenReturn(new CvTailoringResult(null, List.of(), List.of(), List.of()));
+        // Sprint 11 Golden Master Template Rendering: the golden master template always shows a
+        // Technical Skills line, so an empty selection now fails rendering loudly - stubbed
+        // dynamically with a real skill id from the seeded test candidate profile.
+        when(cvTailoringAiPort.tailorSkills(any(), any())).thenAnswer(invocation -> new CvSkillTailoringResult(
+                candidateContextProvider.loadCurrentContext().candidateProfile().skills().stream()
+                        .map(CandidateSkillFacts::candidateSkillId)
+                        .limit(1)
+                        .toList()));
         generateUseCase.generate(generationId);
         UUID snapshotIdRightAfterGeneration = snapshotRepositoryPort.findByGenerationId(generationId).orElseThrow().id();
 

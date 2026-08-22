@@ -90,9 +90,42 @@ public final class BaselineCvSelectionResolver {
         List<CvPersonalProjectTailoring> personalProjectTailoring = config.personalProjects().stream()
                 .map(selection -> resolvePersonalProject(selection, snapshot))
                 .toList();
+        CvPositionTailoring mentoring = config.mentoring() != null ? resolvePosition(config.mentoring(), snapshot) : null;
 
-        return new CvTailoringResult(
-                blankToNull(config.professionalSummary()), skillIds, positionTailoring, projectTailoring, personalProjectTailoring);
+        String professionalSummary = blankToNull(config.professionalSummary());
+        requireNonEmptyBaseline(professionalSummary, skillIds, positionTailoring, personalProjectTailoring);
+
+        return new CvTailoringResult(professionalSummary, skillIds, positionTailoring, projectTailoring, personalProjectTailoring, mentoring);
+    }
+
+    /**
+     * Sprint 11 Final CV Policy production fix: a real production incident had the live deployment
+     * silently binding {@link BaselineCvSelectionProperties} to its all-empty default (the
+     * {@code config/private/baseline-cv-selection.yml} file was not mounted into the container),
+     * which resolved to a {@code CvTailoringResult} with no professional summary, no positions, and
+     * no Personal Project - {@code CvAssembler} then produced a real, renderable, ATS-passing
+     * {@code TailoredCvDocument} missing every approved section except header/skills/education/
+     * languages, with no error anywhere in the pipeline. This is a configuration failure, never a
+     * legitimate CV state.
+     *
+     * <p>Deliberately narrow: fires ONLY when {@code professionalSummary}, {@code skillIds}, {@code
+     * positionTailoring}, AND {@code personalProjectTailoring} are ALL empty at once - the exact
+     * "config file entirely absent" shape - never when a caller (most commonly a focused unit test)
+     * legitimately exercises one facet of the config in isolation with the others left empty by
+     * construction (e.g. an explicit "select zero skills" test with a real position present, or a
+     * personal-project-only selection with no positions). A single empty field is a normal,
+     * expected, valid selection (see this resolver's own "three-value convention" javadoc); every
+     * field empty at once is not.
+     */
+    private static void requireNonEmptyBaseline(String professionalSummary, List<UUID> skillIds,
+            List<CvPositionTailoring> positionTailoring, List<CvPersonalProjectTailoring> personalProjectTailoring) {
+        if (professionalSummary == null && skillIds.isEmpty() && positionTailoring.isEmpty() && personalProjectTailoring.isEmpty()) {
+            throw new BaselineCvSelectionResolutionException(
+                    "Baseline CV selection config resolved to no content at all (professionalSummary=missing, skills=0"
+                            + ", positions=0, personalProjects=0) - this almost always means the "
+                            + "configured baseline-cv-selection.yml file was not found at startup (check BASELINE_CV_SELECTION_PATH "
+                            + "and, in a container, that the file is actually mounted), not a genuinely empty approved CV.");
+        }
     }
 
     private static List<UUID> resolveSkillIds(List<String> skillNames, CvSourceSnapshot snapshot) {

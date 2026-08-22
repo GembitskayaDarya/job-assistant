@@ -1,11 +1,11 @@
 package com.darya.jobassistant.candidatecontext.cv.tailoring.ai;
 
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceSnapshot;
-import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvSkillTailoringResult;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 
 /**
- * Sprint 11 Big Block 6: the provider-neutral application/domain boundary for AI-assisted CV
+ * Sprint 11 Final CV Policy: the provider-neutral application/domain boundary for AI-assisted CV
  * tailoring - the {@code CvSourceSnapshot} counterpart of {@code
  * applicationmaterials.generation.model.ApplicationMaterialsAiPort}. Accepts only the complete,
  * framework-free {@link CvSourceSnapshot} (never a {@code CandidateProfileAggregate}/{@code
@@ -19,15 +19,25 @@ import com.darya.jobassistant.integrations.jobsource.JobOffer;
  * whose signature needs {@link CvSourceSnapshot} cannot live there - this sub-package mirrors {@code
  * candidatecontext.cv.tailoring.validation}'s intentionally more permissive guard instead.
  *
- * <p>Returns the raw, not-yet-source-validated {@link CvTailoringResult} - {@code
- * CvTailoringValidator#validate} against the exact same {@code snapshot} happens afterward, as a
- * separate step the caller performs, never inside an implementation of this method. This method must
- * never call the source-aware validator, never query a repository, and never persist anything.
+ * <p><strong>Skill selection only, as of Sprint 11 Final CV Policy.</strong> This port previously
+ * also produced Professional Summary text and position/project/Personal Project selection/rewrite
+ * decisions ({@code CvTailoringResult}); that responsibility now belongs entirely to the
+ * deterministic, manually-approved baseline ({@code BaselineCvSelectionResolver}, driven by
+ * {@code baseline-cv.*} configuration) - see {@code CvTailoringUseCase}'s class javadoc. AI answers
+ * exactly one question through this contract: which of the candidate's factual Technical Skills are
+ * relevant to this vacancy, and in what order.
+ *
+ * <p>Returns the raw, not-yet-canonicalized, not-yet-source-validated {@link
+ * CvSkillTailoringResult} - {@code CvSkillCanonicalizationPolicy} (collapse narrow variants into
+ * their canonical family, dedupe, cap) and {@code CvTailoringValidator#validate} against the exact
+ * same {@code snapshot} both happen afterward, as separate steps the caller performs, never inside
+ * an implementation of this method. This method must never query a repository and never persist
+ * anything.
  *
  * @throws CvTailoringAiException if the AI provider request fails or returns a structurally
  *     malformed response
  */
 public interface CvTailoringAiPort {
 
-    CvTailoringResult tailor(JobOffer vacancy, CvSourceSnapshot snapshot);
+    CvSkillTailoringResult tailorSkills(JobOffer vacancy, CvSourceSnapshot snapshot);
 }

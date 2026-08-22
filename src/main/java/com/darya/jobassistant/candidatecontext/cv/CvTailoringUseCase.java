@@ -1,8 +1,13 @@
 package com.darya.jobassistant.candidatecontext.cv;
 
+import com.darya.jobassistant.candidatecontext.cv.baseline.BaselineCvSelectionProperties;
+import com.darya.jobassistant.candidatecontext.cv.baseline.BaselineCvSelectionResolver;
 import com.darya.jobassistant.candidatecontext.cv.document.CvAssembler;
 import com.darya.jobassistant.candidatecontext.cv.document.model.TailoredCvDocument;
 import com.darya.jobassistant.candidatecontext.cv.model.CvSourceSnapshot;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.CvSkillTailoringResult;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.skills.CvSkillCanonicalizationPolicy;
+import com.darya.jobassistant.candidatecontext.cv.tailoring.skills.CvSkillEligibilityPolicy;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.CvTailoringResult;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiException;
 import com.darya.jobassistant.candidatecontext.cv.tailoring.ai.CvTailoringAiPort;
@@ -12,41 +17,73 @@ import com.darya.jobassistant.candidatecontext.cv.tailoring.validation.CvTailori
 import com.darya.jobassistant.candidatecontext.cv.tailoring.validation.CvTailoringViolation;
 import com.darya.jobassistant.integrations.jobsource.JobOffer;
 import java.util.List;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * Sprint 11 Big Block 6: the application use case orchestrating one CV tailoring attempt end to
- * end - call the AI provider, source-validate its response against the exact same snapshot, then
- * assemble the final document, or fail safely at any step. The only caller of {@link
- * CvTailoringAiPort} in this codebase. Deliberately additive/parallel to {@code
- * GenerateApplicationMaterialsUseCase} (Sprint 10's "AI generates the whole CV" flow) - nothing here
- * is wired into that use case, its persisted {@code ApplicationMaterialGeneration} workflow, or its
- * renderer path; that wiring is explicitly out of scope for this block (see the block's Part 11).
+ * Sprint 11 Final CV Policy (production fix): the application use case orchestrating one CV
+ * tailoring attempt end to end. CV tailoring = Technical Skills only - everything else in the CV
+ * (Professional Summary, career history text, Mentoring, Personal Project, Education, Languages)
+ * is deterministic, manually-approved baseline content, never an AI decision, and - as of this
+ * fix - never even reachable through the operation that applies skill tailoring:
+ *
+ * <pre>{@code
+ * BaselineCvSelectionResolver.resolve(baselineProperties, snapshot)  -> baseline CvTailoringResult
+ *         (Professional Summary, career history, Personal Project - fixed, no AI)
+ *         -> CvTailoringValidator.validate                          -> fail loudly if invalid
+ *         -> CvAssembler.assembleTailored                           -> approved TailoredCvDocument
+ *              (the COMPLETE, final CV - every section already correct, skills() a placeholder)
+ *
+ * CvTailoringAiPort#tailorSkills(vacancy, snapshot)                  -> CvSkillTailoringResult
+ *         (AI's raw skill selection, ordered - the ONLY thing AI controls)
+ *         -> CvSkillCanonicalizationPolicy.canonicalize              -> canonical, deduped ids
+ *         -> CvSkillEligibilityPolicy.apply(..., vacancy)            -> eligible ids + explicit
+ *              (Sprint 11 Final Technical Skills Eligibility Polish)     requirement exceptions (Git)
+ *         -> CvSkillCanonicalizationPolicy.cap                       -> final skill ids
+ *         -> resolved to factual skill names
+ *
+ * approved.withSkills(finalSkillNames)                               -> final TailoredCvDocument
+ * }</pre>
+ *
+ * <p><strong>Production incident this fixes:</strong> the previous shape of this method built a
+ * new {@code CvTailoringResult} by copying {@code baseline}'s non-skill fields and only then
+ * called {@code CvAssembler.assembleTailored} once, on the merged result - correct in principle,
+ * but it meant a config problem in {@code baseline} (e.g. {@code baseline-cv-selection.yml} not
+ * mounted into the live container, resolving to an empty {@link BaselineCvSelectionProperties})
+ * produced a real, renderable, ATS-passing {@link TailoredCvDocument} missing every approved
+ * section except header/skills/education/languages - with no error anywhere. Two changes close
+ * this: {@link BaselineCvSelectionResolver#resolve} now throws {@code
+ * BaselineCvSelectionResolutionException} immediately when it would resolve to essentially no
+ * content, and this method now assembles the COMPLETE approved document from {@code baseline}
+ * FIRST, then applies {@link TailoredCvDocument#withSkills} - a method whose own signature makes
+ * it structurally incapable of touching anything except {@code skills()}, not merely a convention
+ * this use case happens to follow. This gives Part 18's assembly invariant "for free": the exact
+ * same {@code baseline} result that {@code GenerateBaselineCvUseCase} assembles unchanged also
+ * feeds this use case - the only field a vacancy can ever change between the two is Technical
+ * Skills, because {@code withSkills} is the only operation this method ever applies afterward.
  *
  * <p>No persistence, no transaction, no repository query happens here or in anything it calls
- * ({@link CvTailoringValidator}, {@link CvAssembler} are both pure, framework-free, repository-free
- * functions) - this use case's only side effect is the {@link CvTailoringAiPort#tailor} network
- * call(s). Callers are responsible for loading the {@link CvSourceSnapshot} (via {@code
+ * ({@link BaselineCvSelectionResolver}, {@link CvSkillCanonicalizationPolicy}, {@link
+ * CvTailoringValidator}, {@link CvAssembler} are all pure, framework-free, repository-free
+ * functions) - this use case's only side effect is the {@link CvTailoringAiPort#tailorSkills}
+ * network call(s). Callers are responsible for loading the {@link CvSourceSnapshot} (via {@code
  * CandidateContextProvider#loadCurrentContext()} + {@code CvSourceSnapshotFactory#from}) and the
- * {@link JobOffer} (via {@code VacancyJobOfferMapper}) beforehand, and for persisting the returned
- * {@link TailoredCvDocument} afterward if a future block needs to - out of scope here.
+ * {@link JobOffer} (via {@code VacancyJobOfferMapper}) beforehand.
  *
  * <h2>Bounded retry for stochastic malformed AI output (Sprint 11 production hardening)</h2>
  *
- * Real production traffic showed {@link CvTailoringAiPort#tailor} occasionally producing a
+ * Real production traffic showed {@link CvTailoringAiPort#tailorSkills} occasionally producing a
  * structurally invalid response (most commonly a prompt-local reference the typed-reference
  * resolution layer correctly rejects) that a fresh call to the exact same provider/prompt/snapshot
  * frequently does not reproduce - the AI's own output is stochastic, not the request. {@link #tailor}
  * therefore retries only {@link CvTailoringAiException.Reason#MALFORMED_RESPONSE} failures, up to
  * {@value #MAX_TAILORING_ATTEMPTS} attempts total, with no backoff (a structurally-malformed response
  * is not a rate/capacity problem, so there is nothing to wait out). Every retried attempt builds a
- * brand-new {@link CvTailoringAiPort#tailor} call against the exact same {@code vacancy}/{@code
+ * brand-new {@link CvTailoringAiPort#tailorSkills} call against the exact same {@code vacancy}/{@code
  * snapshot} the caller supplied - the request-scoped typed-reference index inside {@code
  * SpringAiCvTailoringAdapter} is therefore rebuilt fresh per attempt too, never reused stale across
- * attempts, and every attempt's response is source-validated by the exact same {@link
- * CvTailoringValidator} the single-attempt path always used - nothing about validation strictness
- * changes because a retry happened.
+ * attempts.
  *
  * <p>Never retried: {@link CvTailoringAiException.Reason#PROVIDER_ERROR} (a network/auth/rate-limit
  * failure - a fresh call within the same request is not expected to behave differently), a {@link
@@ -63,11 +100,13 @@ import org.springframework.stereotype.Service;
  * tailoring attempt exhausted producing a structurally malformed response when {@link
  * CvTailoringAiException.Reason#MALFORMED_RESPONSE} - the same distinction {@code
  * GenerateApplicationMaterialsUseCase} already draws for its own AI port); a {@link
- * CvTailoringValidationException} (the AI's structurally valid response referenced an id that does
- * not exist in, or does not belong to the claimed parent in, this exact snapshot); or any other
- * unexpected {@code RuntimeException}, which is never caught here and propagates unmasked. Invalid
- * AI output can never reach {@link CvAssembler#assembleTailored} - validation always runs first and this
- * method returns before assembly whenever it fails.
+ * CvTailoringValidationException} (the merged result's skill ids do not actually match this exact
+ * snapshot - can only happen if the baseline config itself references a stale value, since AI skill
+ * ids are already validated as real candidate skill ids by {@code CvTailoringReferenceIndex} before
+ * this use case ever sees them); or any other unexpected {@code RuntimeException}, which is never
+ * caught here and propagates unmasked. Invalid AI output can never reach {@link
+ * CvAssembler#assembleTailored} - validation always runs first and this method returns before
+ * assembly whenever it fails.
  */
 @Service
 @Slf4j
@@ -76,49 +115,97 @@ public class CvTailoringUseCase {
     static final int MAX_TAILORING_ATTEMPTS = 3;
 
     private final CvTailoringAiPort aiPort;
+    private final BaselineCvSelectionProperties baselineProperties;
 
-    public CvTailoringUseCase(CvTailoringAiPort aiPort) {
+    public CvTailoringUseCase(CvTailoringAiPort aiPort, BaselineCvSelectionProperties baselineProperties) {
         this.aiPort = aiPort;
+        this.baselineProperties = baselineProperties;
     }
 
     public TailoredCvDocument tailor(JobOffer vacancy, CvSourceSnapshot snapshot) {
-        CvTailoringResult tailoringResult = tailorWithBoundedRetry(vacancy, snapshot);
+        CvTailoringResult baseline = BaselineCvSelectionResolver.resolve(baselineProperties, snapshot);
 
-        CvTailoringValidationResult validation = CvTailoringValidator.validate(snapshot, tailoringResult);
+        CvTailoringValidationResult validation = CvTailoringValidator.validate(snapshot, baseline);
         if (!validation.valid()) {
-            log.warn("CV tailoring result failed source-aware validation for vacancy '{}' with {} violation(s)",
+            log.warn("Approved CV baseline failed source-aware validation for vacancy '{}' with {} violation(s)",
                     vacancy.id(), validation.violations().size());
             logViolations(vacancy, validation.violations());
             throw new CvTailoringValidationException(validation.violations());
         }
-        log.info("CV tailoring validation passed for vacancy '{}'", vacancy.id());
 
-        TailoredCvDocument document = CvAssembler.assembleTailored(snapshot, tailoringResult);
+        // The complete approved CV, assembled ONCE from the fixed baseline - see class javadoc.
+        // Its own skills() are a placeholder (baseline.skills(), never AI-influenced) - withSkills()
+        // below is the only thing ever allowed to change on this document from here on.
+        TailoredCvDocument approved = CvAssembler.assembleTailored(snapshot, baseline);
+        log.info("Approved CV baseline assembled for vacancy '{}'", vacancy.id());
+
+        CvSkillTailoringResult rawSkills = tailorSkillsWithBoundedRetry(vacancy, snapshot);
+        List<UUID> canonicalized = CvSkillCanonicalizationPolicy.canonicalize(rawSkills.orderedSkillIds(), snapshot);
+        List<UUID> eligible = CvSkillEligibilityPolicy.apply(canonicalized, snapshot, vacancy);
+        List<UUID> finalSkillIds = CvSkillCanonicalizationPolicy.cap(eligible);
+
+        // Skill-only validation, isolated from the baseline validation above: every id at this
+        // stage should already be real (SpringAiCvTailoringAdapter's own reference index only ever
+        // assigns tokens from real candidate skill facts), but a fake/misbehaving CvTailoringAiPort
+        // implementation is still caught here, exactly like before this restructure - never assumed.
+        CvTailoringResult skillOnlyResult = new CvTailoringResult(null, finalSkillIds, List.of(), List.of(), List.of());
+        CvTailoringValidationResult skillValidation = CvTailoringValidator.validate(snapshot, skillOnlyResult);
+        if (!skillValidation.valid()) {
+            log.warn("CV skill tailoring result failed source-aware validation for vacancy '{}' with {} violation(s)",
+                    vacancy.id(), skillValidation.violations().size());
+            logViolations(vacancy, skillValidation.violations());
+            throw new CvTailoringValidationException(skillValidation.violations());
+        }
+
+        List<String> finalSkillNames = resolveSkillNames(finalSkillIds, snapshot);
+
+        TailoredCvDocument document = approved.withSkills(finalSkillNames);
         log.info("CV tailoring completed for vacancy '{}'", vacancy.id());
         return document;
     }
 
+    /** Resolves the final, already-validated skill ids back to their factual display names, in the same order. */
+    private List<String> resolveSkillNames(List<UUID> skillIds, CvSourceSnapshot snapshot) {
+        java.util.Map<UUID, String> nameById = new java.util.LinkedHashMap<>();
+        for (var skill : snapshot.candidateProfile().skills()) {
+            if (skill.candidateSkillId() != null) {
+                nameById.put(skill.candidateSkillId(), skill.name());
+            }
+        }
+        return skillIds.stream()
+                .map(id -> {
+                    String name = nameById.get(id);
+                    if (name == null) {
+                        throw new IllegalStateException(
+                                "CV tailoring received an unresolved skill id " + id + " after canonicalization/eligibility - "
+                                        + "every id at this stage must already be a real candidate skill id");
+                    }
+                    return name;
+                })
+                .toList();
+    }
+
     /**
-     * Calls {@link CvTailoringAiPort#tailor} up to {@link #MAX_TAILORING_ATTEMPTS} times, retrying
-     * only {@link CvTailoringAiException.Reason#MALFORMED_RESPONSE} failures - see class javadoc.
-     * The last attempt's failure (whatever its reason) is always the one that propagates once
-     * attempts are exhausted, never masked or wrapped differently.
+     * Calls {@link CvTailoringAiPort#tailorSkills} up to {@link #MAX_TAILORING_ATTEMPTS} times,
+     * retrying only {@link CvTailoringAiException.Reason#MALFORMED_RESPONSE} failures - see class
+     * javadoc. The last attempt's failure (whatever its reason) is always the one that propagates
+     * once attempts are exhausted, never masked or wrapped differently.
      */
-    private CvTailoringResult tailorWithBoundedRetry(JobOffer vacancy, CvSourceSnapshot snapshot) {
+    private CvSkillTailoringResult tailorSkillsWithBoundedRetry(JobOffer vacancy, CvSourceSnapshot snapshot) {
         for (int attempt = 1; attempt <= MAX_TAILORING_ATTEMPTS; attempt++) {
-            log.info("CV tailoring attempt {}/{} started for vacancy '{}'", attempt, MAX_TAILORING_ATTEMPTS, vacancy.id());
+            log.info("CV skill tailoring attempt {}/{} started for vacancy '{}'", attempt, MAX_TAILORING_ATTEMPTS, vacancy.id());
             try {
-                CvTailoringResult result = aiPort.tailor(vacancy, snapshot);
-                log.info("CV tailoring succeeded on attempt {}/{} for vacancy '{}'", attempt, MAX_TAILORING_ATTEMPTS, vacancy.id());
+                CvSkillTailoringResult result = aiPort.tailorSkills(vacancy, snapshot);
+                log.info("CV skill tailoring succeeded on attempt {}/{} for vacancy '{}'", attempt, MAX_TAILORING_ATTEMPTS, vacancy.id());
                 return result;
             } catch (CvTailoringAiException e) {
                 boolean lastAttempt = attempt == MAX_TAILORING_ATTEMPTS;
                 if (e.reason() != CvTailoringAiException.Reason.MALFORMED_RESPONSE || lastAttempt) {
-                    log.error("CV tailoring AI request failed for vacancy '{}' on attempt {}/{} (reason={})",
+                    log.error("CV skill tailoring AI request failed for vacancy '{}' on attempt {}/{} (reason={})",
                             vacancy.id(), attempt, MAX_TAILORING_ATTEMPTS, e.reason(), e);
                     throw e;
                 }
-                log.warn("CV tailoring attempt {}/{} rejected as malformed for vacancy '{}'", attempt, MAX_TAILORING_ATTEMPTS, vacancy.id());
+                log.warn("CV skill tailoring attempt {}/{} rejected as malformed for vacancy '{}'", attempt, MAX_TAILORING_ATTEMPTS, vacancy.id());
             }
         }
         throw new IllegalStateException("CV tailoring retry loop exited without returning or throwing - unreachable");
